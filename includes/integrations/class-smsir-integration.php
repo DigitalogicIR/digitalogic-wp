@@ -51,19 +51,31 @@ final class Digitalogic_Smsir_Integration
 	 *
 	 * @param string $phone Normalized Iranian phone identity.
 	 * @param string $code Six-digit verification code.
+	 * @param string $format Explicit native format; default preserves the existing template.
 	 */
-	public static function send_native_login_otp( string $phone, string $code ) {
+	public static function send_native_login_otp( string $phone, string $code, string $format = 'default' ) {
 		$settings = self::settings();
 		if ( ! self::native_otp_configured() || ! preg_match( '/^\+989[0-9]{9}$/D', $phone ) || ! preg_match( '/^[0-9]{6}$/D', $code ) ) {
 			return new WP_Error( 'native_otp_unconfigured', 'Native OTP is unavailable.' );
 		}
 		$parameter = self::native_otp_parameter( $settings['variables'] );
+		$template  = (int) $settings['template'];
+		if ( 'android_hash' === $format ) {
+			if ( ! \Digitalogic\Laravel\Services\MobileOtpSmsFormat::available() ) {
+				return new WP_Error( 'android_sms_unavailable', 'Android SMS format is unavailable.' );
+			}
+			$config    = \Digitalogic\Laravel\Services\MobileOtpSmsFormat::configuration( get_option( \Digitalogic\Laravel\Services\MobileOtpSmsFormat::OPTION, array() ) );
+			$template  = $config['template_id'];
+			$parameter = 'CODE'; // The app hash is a fixed literal in the separately approved provider template.
+		} elseif ( 'default' !== $format ) {
+			return new WP_Error( 'invalid_sms_format', 'Invalid SMS format.' );
+		}
 		return self::request(
 			'send/verify',
 			'POST',
 			array(
 				'mobile'     => '0' . substr( $phone, 3 ),
-				'templateId' => (int) $settings['template'],
+				'templateId' => $template,
 				'parameters' => array(
 					array(
 						'name'  => $parameter,

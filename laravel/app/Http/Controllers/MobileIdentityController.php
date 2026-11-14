@@ -20,6 +20,7 @@ use Digitalogic\Laravel\Services\MobilePhoneResolution as PhoneResolution;
 use Digitalogic\Laravel\Services\MobileRegistrationStore as Registration;
 use Digitalogic\Laravel\Services\MobileAddresses as Addresses;
 use Digitalogic\Laravel\Services\MobileOrderPayment;
+use Digitalogic\Laravel\Services\MobileOtpSmsFormat;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -47,6 +48,11 @@ final class MobileIdentityController {
 		if ( ! self::otpEnabled() ) {
 			return $this->error( 'native_auth_unavailable', 'ورود موقتاً در دسترس نیست؛ کمی بعد دوباره تلاش کنید.', 503 );
 		}
+		try {
+			$sms_format = MobileOtpSmsFormat::requested( $request->json()->all() );
+		} catch ( \InvalidArgumentException $error ) {
+			return $this->error( 'invalid_sms_format', 'قالب درخواست پیامک معتبر نیست.', 400 );
+		}
 		$phone      = Store::phone( (string) $request->json( 'phone', '' ) );
 		$request_id = (string) $request->json( 'request_id', '' );
 		if ( null === $phone || ! preg_match( '/\A[A-Za-z0-9-]{16,64}\z/D', $request_id ) ) {
@@ -66,7 +72,13 @@ final class MobileIdentityController {
 		$request_hash = Store::hash( ( $actor ? 'phone-link:' . $actor['user_id'] . ':' . $actor['id'] . ':' : ( $continuation ? 'google-continuation:' . $continuation['token_hash'] . ':' : '' ) ) . $phone . ':' . $request_id );
 		$existing     = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE request_hash=%s', $table, $request_hash ), ARRAY_A );
 		if ( $existing ) {
+			if ( ( $existing['sms_format'] ?? 'default' ) !== $sms_format ) {
+				return $this->error( 'request_conflict', 'این درخواست قبلاً با قالب دیگری ثبت شده است.', 409 );
+			}
 			return (int) $existing['expires_at'] > time() && 'used' !== $existing['state'] ? $this->challengeResponse( $existing ) : $this->error( 'challenge_expired', 'درخواست تازه‌ای برای کد ورود ثبت کنید.', 410 );
+		}
+		if ( 'android_hash' === $sms_format && ! MobileOtpSmsFormat::available() ) {
+			return $this->error( 'android_sms_unavailable', 'دریافت خودکار کد فعلاً در دسترس نیست.', 503 );
 		}
 		$ip = (string) sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ?? 'unknown' ) );
 		if ( ! Store::admit( 'otp-global', 60, 60 ) || ! Store::admit( 'otp-ip:' . $ip, 8, 60 ) || ! Store::admit( 'otp-phone:' . $phone_hash, 1, 60 ) || ! Store::admit( 'otp-phone-hour:' . $phone_hash, 5, 3600 ) ) {
@@ -97,6 +109,9 @@ final class MobileIdentityController {
 		);
 		if ( $actor || Registration::enabled() ) {
 			$row['phone_ciphertext'] = Registration::seal( $phone, 'phone' );}
+		if ( '1' === get_option( 'digitalogic_mobile_otp_format_schema' ) ) {
+			$row['sms_format'] = $sms_format;
+		}
 		if ( $continuation ) {
 			$row['continuation_hash'] = $continuation['token_hash'];
 			$row['phone_ciphertext']  = Registration::seal( $phone, 'phone' );
@@ -105,7 +120,7 @@ final class MobileIdentityController {
 			return $this->error( 'request_conflict', 'درخواست در حال بررسی است؛ چند لحظه صبر کنید.', 409 );
 		}
 		// No retry: a transport timeout may still have delivered the message.
-		$result = \Digitalogic_Smsir_Integration::send_native_login_otp( $phone, $code );
+		$result = \Digitalogic_Smsir_Integration::send_native_login_otp( $phone, $code, $sms_format );
 		unset( $code );
 		$row['state'] = is_wp_error( $result ) ? 'pending' : 'accepted';
 		$wpdb->update( $table, array( 'state' => $row['state'] ), array( 'id' => $id ) );
@@ -860,6 +875,7 @@ final class MobileIdentityController {
 				'expires_in'            => max( 0, (int) $row['expires_at'] - time() ),
 				'expires_at'            => gmdate( 'c', (int) $row['expires_at'] ),
 				'delivery_status'       => 'accepted' === $row['state'] ? 'accepted' : 'pending',
+				'sms_format'            => $row['sms_format'] ?? 'default',
 				'requires_link_consent' => ! empty( $row['continuation_hash'] ),
 			),
 			202

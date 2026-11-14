@@ -33,6 +33,7 @@ final class MobileIdentityStore {
 			phone_hash char(64) NOT NULL,
 			phone_ciphertext text DEFAULT NULL,
 			purpose varchar(20) NOT NULL DEFAULT 'login',
+			sms_format varchar(20) NOT NULL DEFAULT 'default',
 			actor_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
 			actor_session_id char(32) NOT NULL DEFAULT '',
 			result varchar(32) NOT NULL DEFAULT '',
@@ -82,7 +83,7 @@ final class MobileIdentityStore {
 			}
 		}
 		foreach ( array(
-			$otp      => array( 'purpose', 'actor_user_id', 'actor_session_id', 'result', 'phone_ciphertext', 'resolution', 'verified_at' ),
+			$otp      => array( 'purpose', 'sms_format', 'actor_user_id', 'actor_session_id', 'result', 'phone_ciphertext', 'resolution', 'verified_at' ),
 			$sessions => array( 'auth_method', 'verified_at' ),
 		) as $table => $columns ) {
 			foreach ( $columns as $column ) {
@@ -92,6 +93,7 @@ final class MobileIdentityStore {
 			}
 		}
 		update_option( 'digitalogic_mobile_identity_schema', '2', false );
+		update_option( 'digitalogic_mobile_otp_format_schema', '1', false );
 		MobileGoogleChallenge::install();
 	}
 
