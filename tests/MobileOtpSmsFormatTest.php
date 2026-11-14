@@ -112,6 +112,22 @@ final class MobileOtpSmsFormatTest extends TestCase {
 		$r=$this->request(); self::assertSame(503,$r->getStatusCode()); self::assertSame('android_sms_unavailable',$r->getData(true)['code']);
 		self::assertSame([],$this->db->queries); self::assertSame([],$this->db->rows); self::assertSame([],$GLOBALS['native_sms_fixture']['calls']);
 	}
+	public function test_configured_android_without_format_schema_cannot_reserve_or_send(): void {
+		unset($GLOBALS['digitalogic_test_options']['digitalogic_mobile_otp_format_schema']);
+		self::assertFalse(Format::available());
+		$r=$this->request(); self::assertSame(503,$r->getStatusCode()); self::assertSame('android_sms_unavailable',$r->getData(true)['code']);
+		self::assertSame([],$this->db->queries); self::assertSame([],$this->db->rows); self::assertSame([],$GLOBALS['native_sms_fixture']['calls']);
+	}
+	public function test_legacy_challenge_survives_additive_format_migration_without_redelivery(): void {
+		unset($GLOBALS['digitalogic_test_options']['digitalogic_mobile_otp_format_schema']);
+		$before=$this->request(['_legacy'=>true])->getData(true);
+		$GLOBALS['digitalogic_test_options']['digitalogic_mobile_otp_format_schema']='1';
+		foreach($this->db->rows as &$row) $row['sms_format']='default';
+		unset($row);
+		$after=$this->request(['_legacy'=>true])->getData(true);
+		self::assertSame($before['challenge_id'],$after['challenge_id']); self::assertSame('default',$after['sms_format']);
+		self::assertSame(409,$this->request()->getStatusCode()); self::assertCount(1,$GLOBALS['native_sms_fixture']['calls']);
+	}
 	public function test_uncertain_transport_replay_never_sends_again_and_format_change_conflicts(): void {
 		$GLOBALS['native_sms_fixture']['response']=new WP_Error('http_request_failed','Synthetic timeout.');
 		$a=$this->request(); $b=$this->request(); self::assertSame($a->getData(true),$b->getData(true)); self::assertSame('pending',$a->getData(true)['delivery_status']);
@@ -152,5 +168,9 @@ final class MobileOtpSmsFormatTest extends TestCase {
 		$body=json_decode($response->getContent(),true,512,JSON_THROW_ON_ERROR);
 		self::assertSame('android_sms_unavailable',$body['code']); self::assertArrayNotHasKey('data',$body);
 		self::assertSame([],$this->db->rows); self::assertSame([],$this->db->queries); self::assertSame([],$GLOBALS['native_sms_fixture']['calls']);
+		$GLOBALS['digitalogic_test_options'][Format::OPTION]=['enabled'=>true,'template_id'=>456,'app_hash'=>'q3HQy4X3L3v'];
+		$response=$kernel->handle($request); $body=json_decode($response->getContent(),true,512,JSON_THROW_ON_ERROR);
+		self::assertSame(202,$response->getStatusCode()); self::assertSame('android_hash',$body['sms_format']); self::assertSame('accepted',$body['delivery_status']);
+		self::assertArrayNotHasKey('data',$body); self::assertCount(1,$GLOBALS['native_sms_fixture']['calls']); self::assertSame(456,$this->payload()['templateId']);
 	}
 }
