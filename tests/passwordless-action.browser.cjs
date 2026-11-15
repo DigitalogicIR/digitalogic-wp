@@ -491,10 +491,17 @@ async function checkOtpEditor(page, channel) {
     assert.equal(await cells.first().evaluate(element => getComputedStyle(element.closest('.dg-otp-editor')).direction), 'ltr');
     const centers = await cells.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().left));
     assert.ok(centers.every((left, index) => index === 0 || left - centers[index - 1] >= 20), 'All six digits have separate positions');
-    assert.ok(await cells.evaluateAll(elements => elements.every(element => parseFloat(getComputedStyle(element).borderTopWidth) >= 1)), 'Every empty OTP cell has a visible outline');
+    assert.ok(await cells.evaluateAll(elements => elements.every(element => {
+        const surface = element.closest('.dg-auth-field');
+        return element.classList.contains('dg-auth-input') && surface && parseFloat(getComputedStyle(surface).borderTopWidth) >= 1;
+    })), 'Every empty OTP cell uses the shared input and visible field border');
     await cells.first().focus();
     const form = page.locator('form.digloginpage');
     const firstSlot = page.locator('.dg-otp-slot').first();
+    assert.ok(await firstSlot.evaluate(slot => {
+        const style = getComputedStyle(slot);
+        return style.boxShadow === 'none' && style.transitionProperty.includes('border-color');
+    }), 'OTP focus transitions the shared border without adding a shadow');
     const cursor = () => firstSlot.evaluate(slot => {
         const style = getComputedStyle(slot, '::after');
         return { animation: style.animationName, height: style.height };
@@ -506,6 +513,7 @@ async function checkOtpEditor(page, channel) {
     await form.evaluate(element => { element.dataset.dgOtpCursor = 'bar'; });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     assert.deepEqual(await cursor(), { animation: 'none', height: '18px' });
+    assert.equal(await firstSlot.evaluate(slot => getComputedStyle(slot).transitionProperty), 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     const entry = await cells.first().evaluate(cell => {
         cell.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '۱', cancelable: true }));
