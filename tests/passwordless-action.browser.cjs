@@ -245,6 +245,9 @@ async function checkEmailGate(page, labels) {
 async function checkSmsAction(page, labels) {
     let attempts = 0;
     await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => {
+        if (route.request().postData().includes('digitalogic_otp_completion')) {
+            return route.fulfill({ json: { success: true, data: { pending: true } } });
+        }
         if (route.request().postData().includes('name="sms_otp"')) {
             assert.match(route.request().postData(), /name="rememberme"\r\n\r\n1/);
             attempts++;
@@ -336,6 +339,64 @@ async function checkSmsAction(page, labels) {
     await page.locator('dialog.dg-auth-success[open] .dg-auth-success-icon svg').waitFor();
     assert.match(page.url(), /login/);
     await page.waitForURL('**/complete');
+}
+
+async function checkOtpContinuity(page, labels, direction) {
+    let sends = 0;
+    let submits = 0;
+    let checkedAttempt = '';
+    const destination = 'https://digitalogic.test/complete';
+    const token = 'same-provider-challenge';
+    await page.route(destination, route => route.fulfill({ body: 'Signed in' }));
+    await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => {
+        const request = route.request().postData();
+        if (request.includes('digitalogic_otp_completion')) {
+            assert.ok(checkedAttempt);
+            assert.ok(request.includes(checkedAttempt));
+            return route.fulfill({ json: { success: true, data: { redirect: destination } } });
+        }
+        if (request.includes('name="sms_otp"')) {
+            submits++;
+            assert.match(request, /name="sms_otp"\r\n\r\n123456/);
+            assert.ok(request.includes(token));
+            assert.match(request, /name="rememberme"\r\n\r\n1/);
+            checkedAttempt = /name="dg_otp_attempt"\r\n\r\n([0-9a-f-]{36})/.exec(request)?.[1];
+            return route.fulfill({ status: 403, body: 'Forbidden' });
+        }
+        sends++;
+        return route.fulfill({ json: { success: true, data: { resend_timer: 30, html: `
+            <div class="digits-form_tab_container"><div class="digits-form_body_wrapper">
+              <div class="digits-form_tab_body digits-tab_active"><div class="digits-form_input_row">
+                <div class="digits-form_input">
+                  <input name="sms_otp" class="otp_input" maxlength="6">
+                  <input type="hidden" name="otp_token_key" value="${token}">
+                </div>
+              </div></div>
+            </div></div>` } } });
+    });
+    await render(page, direction, labels, false, '?redirect_to=%2Fcomplete');
+    await page.getByRole('checkbox', { name: 'Remember me' }).check();
+    await page.locator('input[name="digits_phone"]').fill('09120000000');
+    await page.getByRole('button', { name: labels.sendSmsCode, exact: true }).click();
+    const cells = page.locator('.dg-otp-slot input');
+    await cells.first().waitFor();
+    await cells.first().focus();
+    await page.keyboard.insertText('98765');
+    assert.equal(await cells.first().inputValue(), '9');
+
+    // Reopen the same URL in the same tab. Only provider continuation data survives.
+    await render(page, direction, labels, false, '?redirect_to=%2Fcomplete');
+    await cells.first().waitFor();
+    assert.equal(sends, 1);
+    assert.equal(await cells.count(), 6);
+    assert.equal(await cells.first().inputValue(), '');
+    assert.equal(await page.locator('[name="otp_token_key"]').inputValue(), token);
+    await cells.first().focus();
+    await page.keyboard.insertText('۱۲۳۴۵۶');
+    await page.locator('dialog.dg-auth-success[open]').waitFor();
+    assert.equal(await page.locator('.dg-otp-feedback').count(), 0);
+    await page.waitForURL(destination);
+    assert.equal(submits, 1);
 }
 
 async function checkVerificationLabels(page, labels) {
@@ -629,6 +690,9 @@ async function checkLoginSwitchers(browser) {
             await render(smsAction, direction, labels, false);
             await checkSmsAction(smsAction, labels);
             await smsAction.close();
+            const continuity = await browser.newPage({ viewport: { width, height: 800 } });
+            await checkOtpContinuity(continuity, labels, direction);
+            await continuity.close();
         }
         console.log('Passwordless actions, OTP, and first-step-only sign-in options passed in RTL and LTR.');
     } finally {

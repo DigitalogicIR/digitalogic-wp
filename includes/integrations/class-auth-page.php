@@ -31,6 +31,10 @@ final class Digitalogic_Plugin_Auth_Routes {
         add_action('login_form_register', [self::class, 'render_digits_register'], 1);
 		add_action( 'login_form_lostpassword', array( self::class, 'redirect_recovery_entry' ), 1 );
 		add_action( 'login_form_retrievepassword', array( self::class, 'redirect_recovery_entry' ), 1 );
+		add_action( 'wp_ajax_nopriv_digits_forms_ajax', array( self::class, 'begin_otp_response' ), 1 );
+		add_action( 'wp_ajax_digits_forms_ajax', array( self::class, 'begin_otp_response' ), 1 );
+		add_action( 'wp_ajax_digitalogic_otp_completion', array( self::class, 'otp_completion' ) );
+		add_action( 'wp_ajax_nopriv_digitalogic_otp_completion', array( self::class, 'otp_completion' ) );
 		add_action( 'wp_ajax_digitalogic_recovery_nonce', array( self::class, 'recovery_nonce' ) );
 		add_action( 'wp_ajax_digitalogic_recovery_password', array( self::class, 'save_recovery_password' ) );
 		add_action( 'wp_ajax_nopriv_digitalogic_email_domain', array( self::class, 'check_email_domain' ) );
@@ -181,6 +185,106 @@ final class Digitalogic_Plugin_Auth_Routes {
 		}
 		// phpcs:enable WordPress.Security.NonceVerification.Missing
 		return false;
+	}
+
+	/**
+	 * Observe only branded Digits verification. Digits owns the OTP and issues the login cookie.
+	 */
+	public static function begin_otp_response(): void {
+		$attempt = self::otp_attempt_id();
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Digits validates the challenge and OTP.
+		if ( '' === $attempt || ! self::has_submitted_recovery_code() || isset( $_POST['sub_action'] ) || isset( $_POST['check_status'] ) ) {
+			return;
+		}
+		$issued = null;
+		$signed_in_user = 0;
+		add_action(
+			'wp_login',
+			static function ( $_login, $user ) use ( &$signed_in_user ): void {
+				$signed_in_user = $user instanceof WP_User ? (int) $user->ID : 0;
+			},
+			PHP_INT_MAX,
+			2
+		);
+		add_action(
+			'set_logged_in_cookie',
+			static function ( string $cookie, int $expire, int $expiration, int $user, string $scheme, string $token ) use ( &$issued ): void {
+				$issued = array(
+					'user'  => $user,
+					'token' => $token,
+				);
+			},
+			10,
+			6
+		);
+		// WordPress can inherit an earlier response status when wp_send_json_success()
+		// is called without one. Inspect the finished, authenticated Digits result.
+		ob_start(
+			static function ( string $body ) use ( &$issued, &$signed_in_user, $attempt ): string {
+				if ( ! $issued || $issued['user'] !== $signed_in_user || headers_sent() ) {
+					return $body;
+				}
+				$cookie_written = false;
+				foreach ( headers_list() as $header ) {
+					if ( 0 === stripos( $header, 'Location:' ) ) {
+						return $body;
+					}
+					$cookie_written = $cookie_written || 0 === stripos( $header, 'Set-Cookie: ' . LOGGED_IN_COOKIE . '=' );
+				}
+				$reply = json_decode( $body, true );
+				$data  = $reply['data'] ?? null;
+				if ( ! $cookie_written || true !== ( $reply['success'] ?? null ) || ! is_array( $data )
+					|| ( empty( $data['process'] ) && empty( $data['redirect'] ) && empty( $data['reload'] ) ) ) {
+					return $body;
+				}
+				$requested   = $data['redirect'] ?? '';
+				$destination = Digitalogic_Call_Verification::login_destination( in_array( $requested, array( -1, -2, '-1', '-2' ), true ) ? '' : $requested );
+				set_transient(
+					self::otp_completion_key( $attempt, $issued['token'] ),
+					array(
+						'user'     => $issued['user'],
+						'redirect' => $destination,
+					),
+					10 * MINUTE_IN_SECONDS
+				);
+				if ( in_array( http_response_code(), array( 401, 403 ), true ) ) {
+					status_header( 200 );
+				}
+				return $body;
+			}
+		);
+	}
+
+	/** Return the completion only to the browser that already holds the verified WordPress session. */
+	public static function otp_completion(): void {
+		nocache_headers();
+		$attempt = self::otp_attempt_id();
+		$token   = wp_get_session_token();
+		$user    = get_current_user_id();
+		if ( '' !== $attempt && '' !== $token && $user > 0 ) {
+			$completion = get_transient( self::otp_completion_key( $attempt, $token ) );
+			if ( is_array( $completion ) && $user === (int) $completion['user'] ) {
+				wp_send_json_success( array( 'redirect' => $completion['redirect'] ) );
+			}
+		}
+		wp_send_json_success( array( 'pending' => true ) );
+	}
+
+	/** Read the per-tab correlation ID. It cannot authenticate a request. */
+	private static function otp_attempt_id(): string {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- This only identifies a result within an authenticated session.
+		$value = $_POST['dg_otp_attempt'] ?? '';
+		return is_string( $value ) && wp_is_uuid( $value, 4 ) ? $value : '';
+	}
+
+	/**
+	 * Bind the completion to the attempt and the existing WordPress session token.
+	 *
+	 * @param string $attempt Browser attempt ID.
+	 * @param string $token   WordPress session token.
+	 */
+	private static function otp_completion_key( string $attempt, string $token ): string {
+		return 'dg_otp_done_' . hash_hmac( 'sha256', $attempt, $token );
 	}
 
 	/**
