@@ -7,6 +7,9 @@
     var digitsSmsWaits = new WeakMap();
     var digitsOtpEditors = new WeakMap();
     var digitsOtpAutoSubmitted = new WeakSet();
+    var digitsOtpContinuations = new WeakMap();
+    var digitsOtpChecking = new WeakSet();
+    var digitsOtpStorageKey = 'digitalogic-login-otp-v1';
     var digitsResendTimers = new WeakMap();
     var digitsEmailChecks = new WeakMap();
     var digitsSmsSelections = new WeakSet();
@@ -1168,20 +1171,20 @@
             return authRequestLabel('Too many attempts. Wait a few minutes before trying again.', 'تعداد تلاش‌ها بیش از حد مجاز است. چند دقیقه صبر کنید و دوباره تلاش کنید.');
         }
         if (status === 401 || status === 403) {
-            return authRequestLabel('The sign-in request was refused (HTTP ' + status + '). Reload this page to start a fresh session.',
-                'سرور درخواست ورود را نپذیرفت (HTTP ' + status + '). برای شروع نشست تازه، صفحه را دوباره بارگذاری کنید.');
+            return authRequestLabel('The sign-in request was blocked. Check your details and try again here.',
+                'درخواست ورود پذیرفته نشد. اطلاعات را بررسی کنید و همین‌جا دوباره تلاش کنید.');
         }
         if (status >= 400) {
             return authRequestLabel('The sign-in service returned HTTP ' + status + '. Try again in a moment.',
                 'سرویس ورود با وضعیت HTTP ' + status + ' پاسخ داد. کمی بعد دوباره تلاش کنید.');
         }
         if (state === 'parsererror' || state === 'malformed') {
-            return authRequestLabel('The sign-in service returned an unreadable response. Reload and try again.',
-                'پاسخ سرویس ورود قابل پردازش نبود. صفحه را دوباره بارگذاری کنید و تلاش کنید.');
+            return authRequestLabel('The sign-in service returned an unreadable response. Try again here.',
+                'پاسخ سرویس ورود قابل پردازش نبود. همین‌جا دوباره تلاش کنید.');
         }
         if (state === 'callback') {
-            return authRequestLabel('The browser received the sign-in response but could not open the next step. Reload and try again.',
-                'پاسخ ورود دریافت شد، اما مرورگر نتوانست مرحلهٔ بعد را باز کند. صفحه را دوباره بارگذاری کنید و تلاش کنید.');
+            return authRequestLabel('The browser received the sign-in response but could not open the next step. Try again here.',
+                'پاسخ ورود دریافت شد، اما مرورگر نتوانست مرحلهٔ بعد را باز کند. همین‌جا دوباره تلاش کنید.');
         }
         return authRequestLabel('The browser could not reach the sign-in service. Check your connection and try again.',
             'مرورگر نتوانست به سرویس ورود وصل شود. اتصال اینترنت را بررسی کنید و دوباره تلاش کنید.');
@@ -1303,13 +1306,13 @@
         }
     }
 
-    function completeRecovery(data) {
+    function completeRecovery(data, loginForm) {
         if (!data || !data.process || !authRecovery) { return false; }
-        showRecoveryDialog(data.redirect);
+        showRecoveryDialog(data.redirect, loginForm);
         return true;
     }
 
-    async function showRecoveryDialog(destination) {
+    async function showRecoveryDialog(destination, loginForm) {
         var endpoint = config.ajaxUrl || '/wp-admin/admin-ajax.php';
         async function post(action, fields) {
             var body = new URLSearchParams(fields);
@@ -1327,7 +1330,13 @@
                 }
             } catch (error) { /* Keep the account page as the fallback. */ }
         }
-        function continueSignIn() { dialog?.close(); showAuthSuccess(function () { window.location.assign(next.href); }); }
+        function continueSignIn() {
+            dialog?.close();
+            showAuthSuccess(function () {
+                if (loginForm) { clearDigitsOtpContinuation(loginForm); }
+                window.location.assign(next.href);
+            });
+        }
 
         var proof;
         try { proof = await post('digitalogic_recovery_nonce'); } catch (error) { /* Continue on network failure. */ }
@@ -1649,6 +1658,7 @@
         form.addEventListener('click', function (event) {
             if (event.target.closest('.digits_form_back')) {
                 digitsSmsSelections.delete(form);
+                clearDigitsOtpContinuation(form);
                 stopDigitsSmsWait(form);
                 if (!form.closest('[data-dg-recovery]')) { authRecovery = false; }
             }
@@ -1820,6 +1830,154 @@
         return true;
     }
 
+    function readDigitsOtpContinuation() {
+        try { return JSON.parse(window.sessionStorage.getItem(digitsOtpStorageKey)); }
+        catch (error) { return null; }
+    }
+
+    function persistDigitsOtpContinuation(state) {
+        try { window.sessionStorage.setItem(digitsOtpStorageKey, JSON.stringify(state)); }
+        catch (error) { /* The live form works when tab storage is unavailable. */ }
+    }
+
+    function clearDigitsOtpContinuation(form) {
+        var state = digitsOtpContinuations.get(form);
+        if (!state) { return; }
+        digitsOtpContinuations.delete(form);
+        try {
+            if (readDigitsOtpContinuation()?.id === state.id) { window.sessionStorage.removeItem(digitsOtpStorageKey); }
+        } catch (error) { /* Storage is optional. */ }
+    }
+
+    function digitsOtpAttempt(form) {
+        var state = digitsOtpContinuations.get(form);
+        if (!state) {
+            var id = window.crypto?.randomUUID?.();
+            if (!id) { return null; }
+            state = { id: id };
+            digitsOtpContinuations.set(form, state);
+        }
+        return state;
+    }
+
+    function isDigitsOtpContinuationField(name) {
+        return /^(?:login_digt_countrycode|digt_countrycode|digits_phone|digits_email|phone|instance_id|action_type|digits_form|digits_login_email_token|digits_step_[1-3]_(?:type|value)|otp_step_1|otp_token_verify_status|otp_token_key|type|action|digits)$/.test(name);
+    }
+
+    function saveDigitsOtpContinuation(form) {
+        var input = visibleDigitsOtpInput(form);
+        if (!input || !form.closest('.dg-digits-login-shell, .dg-digits-register-shell')) { return; }
+        var tab = input.closest('.digits-form_tab_body, .digits_signup_form_step');
+        if (!tab) { return; }
+        var state = digitsOtpAttempt(form);
+        if (!state) { return; }
+
+        // Keep only the provider's current step and allowlisted continuation fields.
+        // Passwords, OTP digits, and captcha answers are never saved.
+        var clone = tab.cloneNode(true);
+        clone.querySelectorAll('.dg-otp-stack, .digits-form_otp_selector, script, iframe, object, embed, textarea').forEach(function (node) { node.remove(); });
+        clone.querySelectorAll('input').forEach(function (node) {
+            if (node.matches('input[name="sms_otp"], input[name="email_otp"]')) {
+                node.value = '';
+                node.removeAttribute('value');
+            } else if (node.type !== 'hidden' || !isDigitsOtpContinuationField(node.name)) {
+                node.remove();
+            }
+        });
+        clone.querySelectorAll('input.dg-otp-native').forEach(function (node) {
+            node.classList.remove('dg-otp-native');
+            node.removeAttribute('aria-hidden');
+            node.removeAttribute('tabindex');
+        });
+        clone.querySelectorAll('.digits-form_resend_otp').forEach(function (node) {
+            node.classList.remove('dg-otp-resend');
+            node.removeAttribute('aria-disabled');
+            delete node.dataset.dgResendKeyboard;
+        });
+        var fields = Array.from(new FormData(form)).filter(function (field) {
+            return typeof field[1] === 'string' && isDigitsOtpContinuationField(field[0]);
+        });
+        var timer = digitsResendTimers.get(form);
+        state.verifying = false;
+        state.path = window.location.pathname + window.location.search;
+        state.signup = form.matches('.digits_register');
+        state.recovery = authRecovery;
+        state.remember = !!form.querySelector('input[name="rememberme"]:checked');
+        state.autoSubmitted = digitsOtpAutoSubmitted.has(form);
+        state.fields = fields;
+        state.html = clone.outerHTML;
+        state.resend = timer ? { seconds: timer.seconds, until: timer.until } : null;
+        persistDigitsOtpContinuation(state);
+    }
+
+    function attachDigitsOtpAttempt(form) {
+        var state = digitsOtpAttempt(form);
+        if (state?.html) {
+            state.verifying = true;
+            state.autoSubmitted = digitsOtpAutoSubmitted.has(form);
+            persistDigitsOtpContinuation(state);
+        }
+        return state?.id;
+    }
+
+    async function recoverDigitsOtpCompletion(form, onFailure) {
+        var state = digitsOtpContinuations.get(form);
+        if (state) {
+            digitsOtpChecking.add(form);
+            try {
+                var response = await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    signal: window.AbortSignal?.timeout?.(8000),
+                    body: new URLSearchParams({ action: 'digitalogic_otp_completion', dg_otp_attempt: state.id })
+                });
+                var reply = response.ok ? await response.json() : null;
+                if (digitsOtpContinuations.get(form) !== state) { return; }
+                if (reply?.success && reply.data?.redirect) {
+                    var data = { process: true, process_type: 'login', redirect: reply.data.redirect };
+                    finishBrandedDigitsLogin(form, data);
+                    if (!completeRecovery(data, form)) {
+                        showAuthSuccess(function () {
+                            clearDigitsOtpContinuation(form);
+                            window.location.assign(data.redirect);
+                        });
+                    }
+                    return;
+                }
+            } catch (error) { /* Keep the current challenge available on a failed check. */ }
+            finally { digitsOtpChecking.delete(form); }
+            if (digitsOtpContinuations.get(form) !== state) { return; }
+            state.verifying = false;
+            if (state.html) { persistDigitsOtpContinuation(state); }
+        }
+        if (onFailure) { onFailure(); }
+    }
+
+    function restoreDigitsOtpContinuation() {
+        var state = readDigitsOtpContinuation();
+        if (!state || !state.html || !Array.isArray(state.fields)
+            || state.path !== window.location.pathname + window.location.search) { return; }
+        var selector = state.signup ? 'form.digits_register' : 'form.digloginpage';
+        var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        var form = shell?.querySelector(selector);
+        if (!form || !form.classList.contains('digits_form_index_section')) { return; }
+        if (state.signup) { setBrandedAuthForm(shell, true); }
+        authRecovery = state.recovery === true;
+        state.fields.forEach(function (field) {
+            var input = form.elements.namedItem(field[0]);
+            if (input && 'value' in input) { input.value = field[1]; }
+        });
+        var remember = form.querySelector('input[name="rememberme"]');
+        if (remember) { remember.checked = state.remember === true; }
+        var html = '<div class="digits-form_tab_container"><div class="digits-form_body_wrapper">' + state.html + '</div></div>';
+        if (!appendDigitsStep(form, html, null)) { return; }
+        digitsOtpContinuations.set(form, state);
+        if (state.autoSubmitted) { digitsOtpAutoSubmitted.add(form); }
+        if (state.resend?.seconds > 0) { digitsResendTimers.set(form, state.resend); }
+        if (state.verifying) { recoverDigitsOtpCompletion(form); }
+    }
+
     function handleDigitsAjaxResult(form, payload) {
         var data = payload && payload.data !== undefined ? payload.data : payload;
 
@@ -1842,7 +2000,7 @@
 
         if (data && data.reload) {
             if (payload.success && (data.process || visibleDigitsOtpInput(form))) {
-                showAuthSuccess(function () { window.location.reload(); });
+                showAuthSuccess(function () { clearDigitsOtpContinuation(form); window.location.reload(); });
                 return;
             }
             window.location.reload();
@@ -1851,8 +2009,8 @@
 
         if (data && data.redirect) {
             if (payload.success && (data.process || visibleDigitsOtpInput(form))) {
-                if (!completeRecovery(data)) {
-                    showAuthSuccess(function () { window.location.assign(data.redirect); });
+                if (!completeRecovery(data, form)) {
+                    showAuthSuccess(function () { clearDigitsOtpContinuation(form); window.location.assign(data.redirect); });
                 }
                 return;
             }
@@ -1863,6 +2021,7 @@
         if (data && data.html && appendDigitsStep(form, data.html, data)) {
             startDigitsResendTimer(form, data);
             updateDigitsResend(form);
+            saveDigitsOtpContinuation(form);
             clearLoading();
             bindDigitsAutoIdentity();
             return;
@@ -1878,6 +2037,18 @@
     function sendDigitsAjaxFallback(form, button) {
         var endpoint = (window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php';
         var body = new FormData(form);
+        var verifiesCode = Boolean(body.get('sms_otp') || body.get('email_otp'));
+        if (verifiesCode) {
+            var attempt = attachDigitsOtpAttempt(form);
+            if (attempt) { body.set('dg_otp_attempt', attempt); }
+            if (authRecovery) { body.set('dg_recovery', '1'); }
+        }
+        function fail(request, state) {
+            var showFailure = function () { showDigitsInlineMessage(form, digitsRequestFailure(request, state), 'error'); };
+            clearLoading();
+            if (verifiesCode) { recoverDigitsOtpCompletion(form, showFailure); }
+            else { showFailure(); }
+        }
         var controller = window.AbortController ? new AbortController() : null;
         var timeout = window.setTimeout(function () {
             if (controller) {
@@ -1897,19 +2068,16 @@
             }
         }).then(function (response) {
             if (!response.ok) {
-                clearLoading();
-                showDigitsInlineMessage(form, digitsRequestFailure(response), 'error');
+                fail(response);
                 return;
             }
             return response.json().then(function (payload) {
                 handleDigitsAjaxResult(form, payload);
             }, function (error) {
-                clearLoading();
-                showDigitsInlineMessage(form, digitsRequestFailure(null, error?.name === 'AbortError' ? 'timeout' : 'malformed'), 'error');
+                fail(null, error?.name === 'AbortError' ? 'timeout' : 'malformed');
             });
         }).catch(function (error) {
-            clearLoading();
-            showDigitsInlineMessage(form, digitsRequestFailure(null, error?.name === 'AbortError' ? 'timeout' : ''), 'error');
+            fail(null, error?.name === 'AbortError' ? 'timeout' : '');
         }).finally(function () { window.clearTimeout(timeout); });
     }
 
@@ -2259,6 +2427,7 @@
                 event.stopImmediatePropagation();
             }
             if (event.target.closest('.digits_form_back')) {
+                clearDigitsOtpContinuation(form);
                 stopDigitsSmsWait(form);
             }
         }, true);
@@ -2445,8 +2614,11 @@
                 var verifiesCode = !sendsCode && !checksStatus && fields.some(function (field) {
                     return field && ['sms_otp', 'email_otp'].includes(field.name) && field.value;
                 });
-                if (authRecovery && verifiesCode) {
-                    guardedSettings.data = fields.concat({ name: 'dg_recovery', value: '1' });
+                if (verifiesCode) {
+                    guardedSettings.data = fields.slice();
+                    var attempt = attachDigitsOtpAttempt(requestForm);
+                    if (attempt) { guardedSettings.data.push({ name: 'dg_otp_attempt', value: attempt }); }
+                    if (authRecovery) { guardedSettings.data.push({ name: 'dg_recovery', value: '1' }); }
                 }
                 if (sendsCode || checksStatus) {
                     guardedSettings.data = fields.map(function (field) {
@@ -2517,11 +2689,14 @@
                         if (payload.success) {
                             finishBrandedDigitsLogin(requestForm, payload.data);
                             if (brandedAuth) {
-                                if (verifiesCode && completeRecovery(payload.data)) { return; }
+                                if (verifiesCode && completeRecovery(payload.data, requestForm)) { return; }
                                 if (payload.data.process || (verifiesCode && (payload.data.redirect || payload.data.reload))) {
                                     var successContext = this;
                                     var successArgs = arguments;
-                                    showAuthSuccess(function () { success?.apply(successContext, successArgs); });
+                                    showAuthSuccess(function () {
+                                        if (verifiesCode) { clearDigitsOtpContinuation(requestForm); }
+                                        success?.apply(successContext, successArgs);
+                                    });
                                     return;
                                 }
                             }
@@ -2531,10 +2706,10 @@
                                 success.call(this, { success: true, data: {} });
                             }
                             return;
-                        } else if (brandedAuth && !payload.data?.reload) {
+                        } else if (brandedAuth && (verifiesCode || !payload.data?.reload)) {
                             var callbackArgs = Array.from(arguments);
                             callbackArgs[0] = Object.assign({}, payload, {
-                                data: typeof payload.data === 'string' ? { message: payload.data } : payload.data
+                                data: typeof payload.data === 'string' ? { message: payload.data } : { ...payload.data, reload: false }
                             });
                             withoutDigitsToast(success, this, callbackArgs);
                             clearLoading();
@@ -2555,6 +2730,9 @@
                             if (brandedAuth && payload.success && digitsResendTimers.has(requestForm)) {
                                 updateDigitsResend(requestForm);
                             }
+                            if (brandedAuth && payload.success && !verifiesCode) {
+                                saveDigitsOtpContinuation(requestForm);
+                            }
                             return result;
                         }
                     } catch (error) {
@@ -2570,7 +2748,12 @@
                         return typeof errorHandler === 'function' ? errorHandler.apply(this, arguments) : undefined;
                     }
                     withoutDigitsToast(errorHandler, this, arguments);
-                    if (state !== 'abort') { showDigitsInlineMessage(requestForm, digitsRequestFailure(request, state), 'error'); }
+                    if (state === 'abort') { return; }
+                    var showFailure = function () {
+                        showDigitsInlineMessage(requestForm, digitsRequestFailure(request, state), 'error');
+                    };
+                    if (verifiesCode) { recoverDigitsOtpCompletion(requestForm, showFailure); }
+                    else { showFailure(); }
                 };
 
                 args[settingsIndex] = guardedSettings;
@@ -2671,6 +2854,7 @@
     }
 
     function submitDigitsSecureForm(form) {
+        if (digitsOtpChecking.has(form)) { return; }
         var identityAction = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         if (identityAction) { digitsSmsSelections.delete(form); }
         if (identityAction && !identityAction.enabled) {
@@ -4489,6 +4673,7 @@
         bindLoginValidation();
         bindDigitsAutoIdentity();
         bindBrandedAuthNavigation();
+        restoreDigitsOtpContinuation();
         observeAuthChrome();
         animateBrandedAuthSteps();
         enforceDigitsRegisterMobile();
