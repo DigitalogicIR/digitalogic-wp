@@ -242,6 +242,64 @@ async function checkEmailGate(page, labels) {
     assert.equal(await primary.isDisabled(), true);
 }
 
+async function checkCountryPicker(page) {
+    const phone = page.locator('[name="digits_phone"]');
+    const code = page.locator('[name="login_digt_countrycode"]');
+    const primary = page.locator('.digits-form_login > .digits-form_submit-btn');
+    const trigger = page.locator('.dg-country-trigger');
+    const menu = page.getByRole('listbox');
+    const focusedCode = () => page.evaluate(() => document.activeElement.dataset.code);
+    const focusCode = country => menu.locator(`[data-code="${country}"]:focus`).waitFor();
+
+    await phone.fill('09120000000');
+    await code.click();
+    await code.locator('xpath=self::*[@data-dg-code-selected]').waitFor();
+    const corners = await code.evaluate(input => getComputedStyle(input).borderRadius);
+    assert.equal(corners, '7px');
+    await code.press('ArrowDown');
+    await focusCode('+98');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await focusedCode(), '+1');
+    await page.keyboard.press('End');
+    assert.equal(await focusedCode(), '+93');
+    assert.ok(await menu.evaluate(list => list.scrollTop > 0), 'Keyboard navigation scrolls the list');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await focusedCode(), '+964');
+    await page.keyboard.press('Escape');
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    assert.ok(await trigger.evaluate(button => button === document.activeElement));
+    assert.equal(await code.inputValue(), '+98', 'Escaping preserves the selected code');
+
+    await code.fill('+۰');
+    assert.equal(await code.inputValue(), '+', 'A country calling code cannot start with zero');
+    assert.equal(await primary.isDisabled(), true);
+    await code.fill('+999');
+    await code.press('Tab');
+    assert.equal(await code.getAttribute('aria-invalid'), 'true');
+    assert.ok(await page.locator('.dg-country-code-status').isVisible());
+    assert.equal(await primary.isDisabled(), true);
+    await code.fill('۰۰۳۵۸');
+    await code.press('Tab');
+    assert.equal(await code.inputValue(), '+358', 'Normalize Persian digits and the international 00 prefix');
+    assert.equal(await code.getAttribute('aria-invalid'), 'false', 'Accept allocated codes beyond the shortcut menu');
+    assert.equal(await page.locator('.dg-country-code-status').isVisible(), false);
+
+    await trigger.press('ArrowDown');
+    await focusCode('+98');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Tab');
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    assert.ok(await phone.evaluate(input => input === document.activeElement), 'Tab advances to the phone number');
+    await trigger.press('Enter');
+    await focusCode('+98');
+    await page.keyboard.press('Space');
+    assert.equal(await code.inputValue(), '+98');
+    assert.equal(await primary.isEnabled(), true);
+    assert.ok(await phone.evaluate(input => input === document.activeElement));
+    await page.locator('.dg-country-flag').click();
+    assert.ok(await phone.evaluate(input => input === document.activeElement));
+}
+
 async function checkSmsAction(page, labels) {
     let attempts = 0;
     await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => {
@@ -696,6 +754,7 @@ async function checkLoginSwitchers(browser) {
             await emailGate.close();
             const smsAction = await browser.newPage({ viewport: { width, height: 800 } });
             await render(smsAction, direction, labels, false);
+            await checkCountryPicker(smsAction);
             await checkSmsAction(smsAction, labels);
             await smsAction.close();
             const continuity = await browser.newPage({ viewport: { width, height: 800 } });
