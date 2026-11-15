@@ -1,6 +1,6 @@
 <?php
 /**
- * Consent, privacy and daily report lifetime fixtures without real devices or traffic.
+ * Operational compatibility, legacy consent and report lifetime fixtures without real devices.
  *
  * @package Digitalogic
  */
@@ -82,17 +82,19 @@ final class MobileDeviceReportTest extends TestCase {
 		self::assertSame($this->db->acquired,$this->db->released);
 		foreach($this->saved as $name=>$value)$GLOBALS[$name]=$value;
 	}
-	private function input(): array { return ['consent'=>true,'version_code'=>14,'sdk_int'=>35,'manufacturer'=>'Samsung','model'=>'SM-G988B','abi'=>'arm64-v8a','ram_class'=>'standard','form_factor'=>'phone']; }
+	private function input(): array { return ['version_code'=>14,'sdk_int'=>35,'manufacturer'=>'Samsung','model'=>'SM-G988B','abi'=>'arm64-v8a','ram_class'=>'standard','form_factor'=>'phone']; }
 	private function session(): array { return ['id'=>str_repeat('a',32),'user_id'=>7,'expires_at'=>time()+1000]; }
 	private function error(string $code,$result): void { self::assertInstanceOf(WP_Error::class,$result); self::assertSame($code,$result->get_error_code()); }
-	public function test_only_explicit_consent_and_seven_bounded_fields_are_accepted(): void {
+	public function test_seven_bounded_fields_are_required_and_legacy_consent_true_is_compatible(): void {
 		$data=Reports::normalize($this->input()); self::assertSame(Reports::FIELDS,array_keys($data)); self::assertSame('samsung',$data['manufacturer']);
+		self::assertSame($data,Reports::normalize($this->input()+['consent'=>true]));
+		foreach([null,false,0,1,'true','false',[]]as$value)$this->error('invalid_device_report',Reports::normalize($this->input()+['consent'=>$value]));
 		foreach(['consent'=>false,'version_code'=>'14','sdk_int'=>101,'manufacturer'=>str_repeat('a',65),'model'=>"name\nserial",'abi'=>'mips','ram_class'=>'huge','form_factor'=>'desktop'] as $field=>$value)$this->error('invalid_device_report',Reports::normalize(array_replace($this->input(),[$field=>$value])));
 		foreach(['user_id','session_id','token','android_id','serial','fingerprint','ip','email','consent_generation'] as $field)$this->error('invalid_device_report',Reports::normalize($this->input()+[$field=>'must-not-store']));
 		foreach(array_keys($this->input()) as $field) { $input=$this->input(); unset($input[$field]); $this->error('invalid_device_report',Reports::normalize($input)); }
 		self::assertSame([],$this->db->queries);
 	}
-	public function test_collection_defaults_off_and_never_writes_without_consent(): void {
+	public function test_operator_disable_and_explicit_legacy_refusal_never_write(): void {
 		unset($GLOBALS['digitalogic_test_options']['digitalogic_mobile_device_reports']); self::assertFalse(Reports::enabled());
 		$this->error('device_reporting_unavailable',Reports::submit($this->session(),$this->input()));
 		foreach(['false','true',[],0] as $value) { $GLOBALS['digitalogic_test_options']['digitalogic_mobile_device_reports']=$value; self::assertFalse(Reports::enabled()); }
@@ -102,10 +104,11 @@ final class MobileDeviceReportTest extends TestCase {
 	}
 	public function test_same_session_day_replaces_metadata_without_duplicate_or_identifier_storage(): void {
 		self::assertSame(['accepted'=>true,'retention_days'=>30],Reports::submit($this->session(),$this->input()));
-		Reports::submit($this->session(),array_replace($this->input(),['version_code'=>15]));
+		Reports::submit($this->session(),array_replace($this->input(),['version_code'=>15,'consent'=>true]));
 		self::assertCount(1,$this->db->rows); $row=array_values($this->db->rows)[0]; self::assertSame(15,$row['version_code']);
 		self::assertSame(['contribution_key','day',...Reports::FIELDS,'expires_at'],array_keys($row));
 		self::assertStringNotContainsString($this->session()['id'],json_encode($row)); self::assertArrayNotHasKey('user_id',$row);
+		self::assertArrayNotHasKey('consent',$row);
 		self::assertLessThanOrEqual(time()+30*DAY_IN_SECONDS,$row['expires_at']); self::assertGreaterThan(time()+29*DAY_IN_SECONDS-5,$row['expires_at']);
 		self::assertNotSame(Reports::contributionKey($this->session()['id'],'2026-11-15'),Reports::contributionKey($this->session()['id'],'2026-11-16'));
 		self::assertNotSame(Reports::contributionKey(str_repeat('b',32),'2026-11-15'),Reports::contributionKey($this->session()['id'],'2026-11-15'));

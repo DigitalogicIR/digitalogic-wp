@@ -130,7 +130,7 @@ final class MobileCatalogController {
 					),
 					'policy'       => array(
 						'product_export'            => false,
-						'telemetry_opt_in_required' => true,
+						'telemetry_opt_in_required' => false,
 						'checkout_online_required'  => true,
 						'max_catalog_age_seconds'   => 60,
 					),
@@ -636,7 +636,7 @@ final class MobileCatalogController {
 	private function cached( Request $request, string $route, array $query, callable $build ): Response {
 		$generation = class_exists( 'Digitalogic_Report_Engine' ) ? \Digitalogic_Report_Engine::instance()->current_projection_generation() : '';
 		$generation = is_wp_error( $generation ) ? '' : $generation;
-		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), 'availability-11' ) ) );
+		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), 'device-report-automatic-1', 'availability-11' ) ) );
 		$private    = get_current_user_id() > 0;
 		$data       = $private ? false : wp_cache_get( $key, 'digitalogic-mobile' );
 		$hit        = is_array( $data );

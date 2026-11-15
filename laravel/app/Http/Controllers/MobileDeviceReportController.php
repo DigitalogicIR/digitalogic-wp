@@ -1,6 +1,6 @@
 <?php
 /**
- * Explicitly consented, authenticated native client reporting.
+ * Authenticated operational native client reporting.
  *
  * @package Digitalogic
  */
@@ -17,7 +17,7 @@ use Symfony\Component\HttpFoundation\Response;
 /** Optional reports never authorize remote device actions. */
 final class MobileDeviceReportController {
 	/**
-	 * Record one bounded report only after native session and consent validation.
+	 * Record one bounded report only after native session and field validation.
 	 *
 	 * @param Request $request Native authenticated request.
 	 * @return Response Acceptance or explicit bounded error.

@@ -1,6 +1,6 @@
 <?php
 /**
- * Opt-in, expiring Android compatibility contributions without device identifiers.
+ * Expiring operational Android compatibility contributions without device identifiers.
  *
  * @package Digitalogic
  */
@@ -77,15 +77,15 @@ final class MobileDeviceReport {
 	}
 
 	/**
-	 * Accept only consent plus the seven declared compatibility fields.
+	 * Accept seven declared fields and tolerate an older client's explicit consent flag.
 	 *
-	 * @param array $input Explicit client report.
+	 * @param array $input Bounded operational client report.
 	 * @return array|\WP_Error Normalized metadata or a definitive pre-write error.
 	 */
 	public static function normalize( array $input ) {
 		if ( array_diff( array_keys( $input ), array_merge( array( 'consent' ), self::FIELDS ) )
-			|| array_diff( array_merge( array( 'consent' ), self::FIELDS ), array_keys( $input ) )
-			|| true !== ( $input['consent'] ?? null ) ) {
+			|| array_diff( self::FIELDS, array_keys( $input ) )
+			|| ( array_key_exists( 'consent', $input ) && true !== $input['consent'] ) ) {
 			return self::error( 'invalid_device_report', 400 );
 		}
 		if ( ! is_int( $input['version_code'] ) || $input['version_code'] < 1 || $input['version_code'] > 2147483647
@@ -132,7 +132,7 @@ final class MobileDeviceReport {
 	 * Replace this session's daily contribution after current native authority is locked.
 	 *
 	 * @param array $session Previously authenticated native session, never persisted here.
-	 * @param array $input Explicit consent and bounded compatibility metadata.
+	 * @param array $input Bounded compatibility metadata; optional legacy consent is never stored.
 	 * @return array|\WP_Error Acceptance receipt or failure without provider side effects.
 	 */
 	public static function submit( array $session, array $input ) {
