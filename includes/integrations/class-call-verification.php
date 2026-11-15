@@ -32,8 +32,6 @@ final class Digitalogic_Call_Verification {
 	private const PBX_KEY_ID            = 'v1';
 	private const SITE_ID               = 'digitalogic.ir';
 	private const ACCESS_DID            = '+982166754123';
-	private const DIAL_DISPLAY          = '021-66754123';
-	private const DIAL_TEL              = '+982166754123';
 	private const CHALLENGE_TTL         = 120;
 	private const CONSUME_TTL           = 120;
 	private const COOKIE_NAME           = 'digitalogic_call_binding';
@@ -551,10 +549,7 @@ final class Digitalogic_Call_Verification {
 				'code'         => $code,
 				'csrf_token'   => $csrf,
 				'expires_in'   => self::CHALLENGE_TTL,
-				'dial'         => array(
-					'display' => self::DIAL_DISPLAY,
-					'tel'     => self::DIAL_TEL,
-				),
+				'dial'         => self::public_dial(),
 			),
 			201
 		);
@@ -1619,6 +1614,21 @@ final class Digitalogic_Call_Verification {
 	}
 
 	/**
+	 * Describe the public inbound number. Keep the PBX's trusted DID checks
+	 * independent of the display setting.
+	 *
+	 * @return array{tel:string, display:string}
+	 */
+	private static function public_dial(): array {
+		$number = apply_filters( 'digitalogic_call_verification_public_number', self::ACCESS_DID );
+		$tel    = is_string( $number ) && preg_match( '/^\+98[1-8][0-9]{9}$/D', $number ) ? $number : self::ACCESS_DID;
+		return array(
+			'tel'     => $tel,
+			'display' => '0' . substr( $tel, 3, 2 ) . '-' . substr( $tel, 5 ),
+		);
+	}
+
+	/**
 	 * Load front-end assets and localized configuration.
 	 */
 	public function enqueue_assets(): void {
@@ -1644,7 +1654,7 @@ final class Digitalogic_Call_Verification {
 				'contactsUrl'  => esc_url_raw( rest_url( self::REST_NAMESPACE . '/contacts' ) ),
 				'wpNonce'      => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
 				'areaCodes'    => Digitalogic_PBX_Phone::area_codes(),
-				'dialNumber'   => self::DIAL_TEL,
+				'dialNumber'   => self::public_dial()['tel'],
 				'messages'     => array(
 					'start'           => __( 'Verify by calling', 'digitalogic' ),
 					'waiting'         => __( 'Waiting for your call…', 'digitalogic' ),
@@ -1691,6 +1701,7 @@ final class Digitalogic_Call_Verification {
 	/** Render call instructions for the shared verification stage. */
 	private function render_branded_login_widget(): void {
 		$persian = str_starts_with( strtolower( determine_locale() ), 'fa' );
+		$dial    = self::public_dial();
 		?>
 		<section class="digitalogic-call-verification dg-call-unified" data-digitalogic-call-widget data-call-unified data-purpose="login" data-call-available="<?php echo esc_attr( defined( 'DIGITALOGIC_PUBLIC_CALL_VERIFICATION' ) && DIGITALOGIC_PUBLIC_CALL_VERIFICATION ? 'true' : 'false' ); ?>">
 			<input type="hidden" data-call-phone>
@@ -1698,11 +1709,11 @@ final class Digitalogic_Call_Verification {
 			<p class="digitalogic-call-error" data-call-error role="alert" hidden></p>
 			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>
 				<div class="digitalogic-call-instructions" data-call-preview hidden>
-				<h2 class="digits-form_heading" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
+				<h2 class="digits-form_heading" id="digitalogic-call-preview-title" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
 				<ol class="dg-call-steps">
 						<li>
 							<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
-							<bdi class="dg-call-number" data-call-preview-dial dir="ltr"><?php echo esc_html( self::DIAL_DISPLAY ); ?></bdi>
+							<a class="dg-call-number" data-call-preview-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><?php echo esc_html( $dial['display'] ); ?></a>
 							<p><?php echo esc_html( $persian ? 'از همان شماره‌ای که وارد کردید تماس بگیرید.' : 'Call from the same number you entered.' ); ?></p>
 						</li>
 						<li>
@@ -1710,7 +1721,7 @@ final class Digitalogic_Call_Verification {
 							<p><?php echo esc_html( $persian ? 'پس از شنیدن «کاربر گرامی»، کد شش‌رقمی مرحلهٔ بعد را وارد کنید.' : 'After you hear «کاربر گرامی», enter the six-digit code from the next step.' ); ?></p>
 						</li>
 					</ol>
-				<button type="button" class="dg-call-next" data-call-confirm><?php echo esc_html( $persian ? 'ادامه و دریافت کد' : 'Continue and get code' ); ?></button>
+				<button type="button" class="dg-auth-primary dg-call-next" data-call-confirm><span><?php echo esc_html( $persian ? 'ادامه و دریافت کد' : 'Continue and get code' ); ?></span></button>
 				<?php if ( self::outbound_queue_directory() ) : ?>
 					<button type="button" class="dg-auth-back" data-call-outbound hidden><?php echo esc_html( $persian ? 'با من تماس بگیرید' : 'Call my phone' ); ?></button>
 				<?php endif; ?>
@@ -1720,7 +1731,7 @@ final class Digitalogic_Call_Verification {
 					<h2 class="digits-form_heading" id="digitalogic-call-code-title" tabindex="-1" data-call-code-title><?php echo esc_html( $persian ? 'کد تأیید' : 'Verification code' ); ?></h2>
 					<p class="dg-call-code-prompt" data-call-code-prompt>
 					<?php echo esc_html( $persian ? 'تماس با' : 'Call' ); ?>
-					<bdi class="dg-call-number" data-call-dial dir="ltr"><?php echo esc_html( self::DIAL_DISPLAY ); ?></bdi>
+					<a class="dg-call-number" data-call-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><?php echo esc_html( $dial['display'] ); ?></a>
 					<?php echo esc_html( $persian ? 'و ورود این شش رقم پس از شنیدن «کاربر گرامی».' : 'and enter these six digits after the greeting.' ); ?>
 				</p>
 				<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
@@ -1766,7 +1777,7 @@ final class Digitalogic_Call_Verification {
 				<p class="digitalogic-call-match-note" id="digitalogic-sidebar-call-phone-help"><?php esc_html_e( 'Place the call from the same phone number you entered so caller ID can confirm ownership.', 'digitalogic' ); ?></p>
 				<button type="button" class="button button-primary" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 				<div class="digitalogic-call-instructions" data-call-instructions hidden>
-					<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::DIAL_TEL ); ?>"><?php echo esc_html( self::DIAL_DISPLAY ); ?></a></p>
+					<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::public_dial()['tel'] ); ?>"><?php echo esc_html( self::public_dial()['display'] ); ?></a></p>
 					<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 					<output class="digitalogic-call-code" data-call-code dir="ltr" aria-live="polite"></output>
 					<p data-call-status role="status" aria-live="polite" aria-atomic="true"><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>
@@ -1807,7 +1818,7 @@ final class Digitalogic_Call_Verification {
 					<label><?php esc_html_e( 'Mobile or landline number (include area code)', 'digitalogic' ); ?> <input type="tel" inputmode="tel" data-call-phone></label>
 					<button type="button" class="button" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 					<div class="digitalogic-call-instructions" data-call-instructions hidden aria-live="polite">
-						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" href="tel:+982166754123">021-66754123</a>.</p>
+						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" href="tel:<?php echo esc_attr( self::public_dial()['tel'] ); ?>"><?php echo esc_html( self::public_dial()['display'] ); ?></a>.</p>
 						<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 						<output class="digitalogic-call-code" data-call-code dir="ltr"></output>
 						<p data-call-status><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>

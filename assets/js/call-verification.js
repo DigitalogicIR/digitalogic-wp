@@ -65,7 +65,7 @@
 	const icons = {
 		check: 'M5 12l4 4L19 6',
 		phone: 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.26a2 2 0 0 1 2.11-.45c.91.33 1.85.56 2.81.69A2 2 0 0 1 22 16.92z',
-		keypad: 'M4 4h16v16H4zM8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01',
+		keypad: 'M7 3h10a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z M8 8h1m6 0h1M8 12h1m6 0h1M8 16h1m6 0h1',
 		arrow: 'M5 12h14m-7-7 7 7-7 7',
 		back: 'M19 12H5m7 7-7-7 7-7',
 	};
@@ -78,6 +78,8 @@
 		const path = document.createElementNS(svg.namespaceURI, 'path');
 		svg.setAttribute('viewBox', '0 0 24 24');
 		svg.setAttribute('aria-hidden', 'true');
+		svg.setAttribute('stroke-linecap', 'round');
+		svg.setAttribute('stroke-linejoin', 'round');
 		svg.classList.add('digitalogic-call-icon', `digitalogic-call-icon--${name}`);
 		path.setAttribute('d', icons[name]);
 		svg.appendChild(path);
@@ -163,6 +165,9 @@
 				if (preview) { preview.hidden = step !== 'preview'; }
 				panel.hidden = step === 'entry';
 				widget.closest('.dg-digits-login-shell')?.classList.toggle('dg-call-code-active', step !== 'entry');
+				widget.dataset.callStep = step;
+				const title = step === 'preview' ? preview?.querySelector('[data-call-preview-title]') : codeTitle;
+				if (title?.id) { panel.setAttribute('aria-labelledby', title.id); }
 				if (step === 'code') {
 					codeTitle.focus();
 				} else if (step === 'preview') {
@@ -491,7 +496,7 @@
 				if (dialNumber && data.dial) {
 					const display = String(data.dial.display || '');
 					const tel = String(data.dial.tel || '');
-					dialNumber.textContent = display;
+					if (display) { dialNumber.textContent = display; }
 				if (dial.matches('a') && /^\+?[0-9]+$/.test(tel)) {
 						dial.setAttribute('href', `tel:${tel}`);
 					}
@@ -534,7 +539,7 @@
 		if (unified) {
 			addIcon(codeTitle, 'keypad');
 			addIcon(cancel, 'back');
-			addIcon(confirm, 'arrow');
+			// The branded auth component supplies the forward arrow and direction.
 			confirm?.addEventListener('click', () => {
 				delivery = 'incoming';
 				start.click();
@@ -549,6 +554,10 @@
 				showStep('entry');
 			});
 			window.DigitalogicCallLogin = {
+				back() {
+					if (widget.dataset.callStep === 'code' || start.disabled) { cancel?.click(); }
+					else { widget.querySelector('[data-call-preview-back]')?.click(); }
+				},
 				start(value) {
 					if (!widget.isConnected || widget.dataset.callAvailable !== 'true'
 						|| !widget.closest('.dg-digits-login-shell') || !/^\+[1-9]\d{7,14}$/.test(value)) { return false; }
