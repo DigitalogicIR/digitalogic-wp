@@ -108,6 +108,16 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertTrue($config['showLoginThemeSwitcher']);
     }
 
+    public function test_login_stories_use_the_same_localized_cards_on_each_transport(): void {
+        $request = new WP_REST_Request(['locale' => 'fa_IR']);
+        $rest = Digitalogic_Plugin_Admin_Branding::login_slides($request);
+        $commands = Digitalogic_Plugin_Admin_Branding::auth_presentation_commands([], 'websocket');
+        $socket = $commands['digitalogic_auth_presentation'];
+        $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
+        $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
+        $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
+    }
+
     public function test_recovery_identity_labels_match_the_wordpress_backend(): void {
         $method = new ReflectionMethod(Digitalogic_Plugin_Admin_Branding::class, 'client_labels');
         $english = $method->invoke(null);

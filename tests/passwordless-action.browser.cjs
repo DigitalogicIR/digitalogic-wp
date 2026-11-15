@@ -627,6 +627,45 @@ async function checkOtpEditor(page, channel) {
     assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
 }
 
+async function checkLoginStories(browser) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 }, reducedMotion: 'reduce' });
+    let requests = 0;
+    await page.route('https://digitalogic.test/login/', route => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<html lang="fa-IR" dir="rtl"><body class="login login-action-login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body></html>'
+    }));
+    await page.route('https://digitalogic.test/stories?locale=fa_IR', route => {
+        requests++;
+        return route.fulfill({ json: ['قطعات', 'ساخت برد', 'تأمین'].map((title, index) => ({
+            image: '/story.webp', tab: title, title, description: 'متن از سرور',
+            notes: ['نمونه'], action: 'مشاهده', link: '/product/' + index
+        })) });
+    });
+    await page.route('https://digitalogic.test/story.webp', route => route.fulfill({
+        contentType: 'image/gif',
+        body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+    }));
+    await page.addInitScript(() => { window.DigitalogicBranding = { loginSlidesUrl: '/stories' }; });
+    await page.goto('https://digitalogic.test/login/');
+    await page.addStyleTag({ path: styles });
+    await page.addScriptTag({ path: branding });
+    await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+    assert.equal(requests, 0, 'The phone layout does not fetch the presentation');
+    await page.setViewportSize({ width: 768, height: 1024 });
+    const panel = page.locator('.dg-login-stories');
+    await panel.waitFor();
+    assert.equal(requests, 1);
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
+    assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
+    await panel.getByRole('button', { name: 'قطعات' }).press('ArrowLeft');
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
+    assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
+    assert.equal(await panel.locator('article[inert]').count(), 2);
+    await page.setViewportSize({ width: 390, height: 850 });
+    await panel.waitFor({ state: 'hidden' });
+    await page.close();
+}
+
 async function checkLoginSwitchers(browser) {
     for (const showTheme of [false, true]) {
         for (const showLanguage of [false, true]) {
@@ -670,6 +709,7 @@ async function checkLoginSwitchers(browser) {
     const browser = await chromium.launch(process.env.DG_BROWSER_CHANNEL ? { channel: process.env.DG_BROWSER_CHANNEL } : {});
     try {
         await checkLoginSwitchers(browser);
+        await checkLoginStories(browser);
         for (const [direction, width, skipPassword, skipPasswordCaption] of [
             ['rtl', 390, 'ورود بدون رمز عبور', 'رمز خود را فراموش کرده اید؟'],
             ['ltr', 1024, 'Sign in without a password', 'Forgot your password?']
