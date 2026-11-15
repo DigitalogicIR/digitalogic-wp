@@ -238,7 +238,9 @@ async function checkEmailGate(page, labels) {
     assert.equal(colors.size, 4);
     await primary.click();
     await form.locator('.dg-username-password-input').waitFor();
-    assert.ok(await form.getByText(labels.skipPasswordCaption, { exact: true }).isVisible());
+    const passwordStep = form.locator('.dg-username-password-step');
+    assert.ok(await passwordStep.getByText(labels.skipPasswordCaption, { exact: true }).isVisible());
+    assert.ok(await passwordStep.getByRole('button', { name: labels.skipPassword, exact: true }).isVisible());
     await form.locator('.dg-username-login-back').click();
     await email.fill('preview');
     assert.equal(await primary.isEnabled(), true);
