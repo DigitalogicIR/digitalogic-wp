@@ -592,8 +592,6 @@
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="email"] .digits-form_input_row:has(input[name="digits_email"]){direction:ltr!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper{display:flex!important;align-items:center!important;gap:10px!important;width:100%!important;direction:ltr;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper:before{content:none!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-form_countrycode{position:relative!important;z-index:60!important;display:inline-flex!important;min-width:0!important;min-height:40px!important;justify-content:center!important;padding-inline:0 6px!important;border:0!important;border-inline-end:1px solid var(--dg-border)!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-form_countrycode input{width:42px!important;min-height:0!important;height:auto!important;padding:0!important;line-height:1!important;text-align:left!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper>.digits-form_input:not(.digits-form_countrycode){flex:1 1 auto!important;min-width:0!important;width:auto!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .mobile_field{flex:1 1 auto!important;min-width:0!important;width:100%!important;direction:ltr!important;text-align:left!important;}',
             'body.login .dg-digits-login-shell :is(.digits-form_button,.digits-form_submit-btn):not(.digits-form_passwordless_login){min-height:56px!important;border:0!important;border-radius:18px!important;background:linear-gradient(135deg,var(--dg-accent),var(--dg-accent-strong))!important;color:#fff!important;font-family:var(--dg-font)!important;font-size:16px!important;font-weight:800!important;overflow:hidden!important;}',
@@ -650,6 +648,9 @@
         var normalized = normalizeDigits(value).trim();
         var compact = normalized.replace(/[\s().-]+/g, '');
         var country = selectedCountry || '+98';
+        if (selectedCountry && !isCountryCallingCode(selectedCountry) && /^\d+$/.test(compact)) {
+            return { type: 'phone', national: compact, normalized: normalized, valid: false, countryCode: selectedCountry };
+        }
         // The picker already displays +98. Wait for the second digit so a typed 00 can still start an international number.
         var iranTrunkPrefix = country === '+98' && /^0[1-9]\d*$/.test(compact);
         if (window.libphonenumber && /^(?:\+\d*|\d+)$/.test(compact)) {
@@ -1510,7 +1511,9 @@
             return { type: 'password', enabled: true };
         }
         if (mode === 'phone') {
-            var number = phonePartsFromValue(value, form.querySelector('[name="login_digt_countrycode"]')?.value);
+            var prefix = form.querySelector('[name="login_digt_countrycode"]');
+            if (prefix && !isCountryCallingCode(prefix.value)) { return { type: 'continue', enabled: false }; }
+            var number = phonePartsFromValue(value, prefix?.value);
             if (number.valid && (!number.kind || ['MOBILE', 'FIXED_LINE_OR_MOBILE', 'FIXED_LINE'].includes(number.kind))) {
                 var byCall = number.kind === 'FIXED_LINE'
                     || (form.dataset.dgPhoneChannel === 'call' && canChoosePhoneChannel(number, shell));
@@ -3255,10 +3258,6 @@
         { code: '+93', flag: 'af', label: 'Afghanistan', labelFa: 'افغانستان' }
     ];
 
-    function countryLabel(option) {
-        return isPersianLocale() ? (option.labelFa || option.label) : option.label;
-    }
-
     function countryFlagUrl(option) {
         var base = config.flagBaseUrl || '/wp-content/plugins/digitalogic-wp/assets/images/flags/';
         return base.replace(/\/?$/, '/') + encodeURIComponent(option.flag || 'intl') + '.svg';
@@ -3269,133 +3268,229 @@
     }
 
     function normalizeCountryCode(value) {
-        var digits = normalizeDigits(value).replace(/\D/g, '');
-        if (!digits) {
-            return '';
-        }
+        var text = normalizeDigits(value).normalize('NFKC').trim();
+        var digits = text.replace(/\D/g, '');
+        if (!digits && !text) { return ''; }
+        return '+' + digits.replace(/^0+/, '');
+    }
 
-        if (digits.indexOf('00') === 0) {
-            digits = digits.slice(2);
+    var countryCallingCodes;
+    function isCountryCallingCode(value) {
+        if (!countryCallingCodes) {
+            var library = window.libphonenumber;
+            countryCallingCodes = new Set(dgCountryOptions.map(function (option) { return option.code; }));
+            library?.getCountries().forEach(function (region) {
+                countryCallingCodes.add('+' + library.getCountryCallingCode(region));
+            });
         }
-
-        return '+' + digits.slice(0, 4);
+        return countryCallingCodes.has(value);
     }
 
     function countryOptionForCode(code) {
-        var normalized = normalizeCountryCode(code);
-        return dgCountryOptions.find(function (option) {
-            return option.code === normalized;
-        }) || { code: normalized || (config.defaultCountryCode || '+98'), flag: 'intl', label: 'International', labelFa: 'بین المللی' };
+        return dgCountryOptions.find(function (option) { return option.code === code; }) ||
+            { flag: 'intl', label: 'International', labelFa: 'بین‌المللی' };
     }
 
     function bindCountryCodePicker(shell) {
-        var wrap = shell && shell.querySelector('.digits-form_countrycode');
-        var input = wrap && wrap.querySelector('input[name="login_digt_countrycode"]');
-
-        if (!wrap || !input || wrap.dataset.dgCountryReady === 'true') {
-            return;
-        }
+        var input = shell?.querySelector('input[name="login_digt_countrycode"]');
+        var wrap = input?.closest('.digits-form_countrycode');
+        if (!wrap || wrap.dataset.dgCountryReady === 'true') { return; }
 
         wrap.dataset.dgCountryReady = 'true';
         wrap.classList.add('dg-country-code-control');
-        input.setAttribute('inputmode', 'tel');
-        input.setAttribute('autocomplete', 'tel-country-code');
+        input.classList.add('dg-auth-input', 'dg-country-input');
+        input.dir = 'ltr';
+        input.inputMode = 'tel';
+        input.autocomplete = 'tel-country-code';
+        input.maxLength = 8;
+        var lang = document.documentElement.lang;
+        var persian = lang ? /^fa(?:[-_]|$)/i.test(lang) : isPersianLocale();
+        function countryLabel(option) {
+            return persian ? (option.labelFa || option.label) : option.label;
+        }
+        var label = getLabel('chooseCountryCode', 'Choose country code');
+        input.setAttribute('aria-label', persian ? 'پیش‌شماره کشور' : 'Country calling code');
 
         var flag = document.createElement('button');
         flag.type = 'button';
         flag.className = 'dg-country-flag';
+        flag.setAttribute('aria-label', persian ? 'وارد کردن شماره تلفن' : 'Enter phone number');
         function focusPhone() {
-            var phone = shell.querySelector('input[name="digits_phone"]');
-            if (phone) { phone.focus({ preventScroll: true }); }
+            shell.querySelector('input[name="digits_phone"]')?.focus({ preventScroll: true });
         }
-        flag.addEventListener('click', function () {
-            closeMenu();
-            focusPhone();
-        });
 
         var chevron = document.createElement('button');
         chevron.type = 'button';
         chevron.className = 'dg-country-trigger';
-        chevron.setAttribute('aria-label', getLabel('chooseCountryCode', 'Choose country code'));
+        chevron.setAttribute('aria-label', label);
         chevron.setAttribute('aria-haspopup', 'listbox');
         chevron.setAttribute('aria-expanded', 'false');
-        chevron.innerHTML = '<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>';
+        chevron.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
         var menu = document.createElement('div');
+        menu.id = 'dg-country-code-options';
         menu.className = 'dg-country-menu';
         menu.setAttribute('role', 'listbox');
+        menu.setAttribute('aria-label', label);
         menu.setAttribute('aria-hidden', 'true');
+        menu.inert = true;
+        chevron.setAttribute('aria-controls', menu.id);
+
+        var status = document.createElement('p');
+        status.id = 'dg-country-code-status';
+        status.className = 'dg-country-code-status';
+        status.setAttribute('role', 'status');
+        wrap.closest('.digits-mobile_wrapper')?.after(status);
+        input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
+
+        var options = dgCountryOptions.map(function (option) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.tabIndex = -1;
+            button.className = 'dg-country-option';
+            button.dataset.code = option.code;
+            button.setAttribute('role', 'option');
+            button.innerHTML = countryFlagMarkup(option, 'dg-country-option-flag') +
+                '<span class="dg-country-option-code" dir="ltr">' + escapeHtml(option.code) + '</span>' +
+                '<span class="dg-country-option-name" dir="auto">' + escapeHtml(countryLabel(option)) + '</span>';
+            button.addEventListener('click', function () {
+                input.value = option.code;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                focusPhone();
+                closeMenu();
+            });
+            menu.appendChild(button);
+            return button;
+        });
 
         function closeMenu() {
             wrap.classList.remove('is-open');
             chevron.setAttribute('aria-expanded', 'false');
             menu.setAttribute('aria-hidden', 'true');
+            menu.inert = true;
         }
 
-        function toggleMenu() {
-            var open = !wrap.classList.contains('is-open');
-            wrap.classList.toggle('is-open', open);
-            chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-            menu.setAttribute('aria-hidden', open ? 'false' : 'true');
+        function openMenu(fromEnd) {
+            wrap.classList.add('is-open');
+            chevron.setAttribute('aria-expanded', 'true');
+            menu.setAttribute('aria-hidden', 'false');
+            menu.inert = false;
+            var selected = options.find(function (button) { return button.dataset.code === input.value; });
+            focusOption(selected || options[fromEnd ? options.length - 1 : 0]);
+        }
+
+        function focusOption(button) {
+            button.focus({ preventScroll: true });
+            // Scroll the list, keeping the sign-in card and page stationary.
+            var list = menu.getBoundingClientRect();
+            var row = button.getBoundingClientRect();
+            if (row.bottom > list.bottom - 8) { menu.scrollTop += row.bottom - list.bottom + 8; }
+            if (row.top < list.top + 8) { menu.scrollTop -= list.top - row.top + 8; }
+        }
+
+        function showValidation(show) {
+            var invalid = show && !isCountryCallingCode(input.value);
+            input.setAttribute('aria-invalid', String(invalid));
+            status.textContent = invalid
+                ? (persian ? 'پیش‌شمارهٔ معتبر وارد کنید یا کشوری از فهرست انتخاب کنید.' : 'Enter a valid calling code or choose a country from the list.')
+                : '';
+        }
+
+        function syncSelection() {
+            input.toggleAttribute('data-dg-code-selected', document.activeElement === input &&
+                input.selectionStart === 0 && input.selectionEnd === input.value.length);
         }
 
         function syncFlag() {
-            var value = normalizeCountryCode(input.value) || (config.defaultCountryCode || '+98');
-            input.value = value;
+            var start = input.selectionStart;
+            var end = input.selectionEnd;
+            var original = input.value;
+            var value = normalizeCountryCode(original) || '+';
+            if (value.length > 4) { value = '+'; }
+            if (original !== value) {
+                input.value = value;
+                if (start !== null && end !== null) {
+                    input.setSelectionRange(
+                        (normalizeCountryCode(original.slice(0, start)) || '+').length,
+                        (normalizeCountryCode(original.slice(0, end)) || '+').length
+                    );
+                }
+            }
+            input.style.setProperty('--dg-code-chars', String(value.length));
             var option = countryOptionForCode(value);
-            flag.textContent = '';
             flag.style.setProperty('--dg-flag', 'url(' + countryFlagUrl(option) + ')');
-            flag.setAttribute('title', countryLabel(option));
-            flag.setAttribute('aria-label', isPersianLocale() ? 'وارد کردن شماره تلفن' : 'Enter phone number');
-
-            menu.querySelectorAll('.dg-country-option').forEach(function (button) {
-                var active = button.dataset.code === value;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-selected', active ? 'true' : 'false');
+            flag.title = countryLabel(option);
+            options.forEach(function (button) {
+                button.setAttribute('aria-selected', String(button.dataset.code === value));
             });
+            showValidation(document.activeElement !== input);
+            syncSelection();
         }
 
-        dgCountryOptions.forEach(function (option) {
-            var button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'dg-country-option';
-            button.dataset.code = option.code;
-            button.setAttribute('role', 'option');
-            button.innerHTML = countryFlagMarkup(option, 'dg-country-option-flag') +
-                '<span class="dg-country-option-code">' + escapeHtml(option.code) + '</span>' +
-                '<span class="dg-country-option-name">' + escapeHtml(countryLabel(option)) + '</span>';
-            button.addEventListener('click', function () {
-                input.value = option.code;
-                syncFlag();
-                closeMenu();
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                focusPhone();
-            });
-            menu.appendChild(button);
-        });
-
         wrap.insertBefore(flag, input);
-        wrap.appendChild(chevron);
-        wrap.appendChild(menu);
+        wrap.append(chevron, menu);
 
-        chevron.addEventListener('click', function (event) {
-            event.preventDefault();
-            event.stopPropagation();
-            toggleMenu();
+        flag.addEventListener('click', function () {
+            focusPhone();
+            closeMenu();
         });
-
+        chevron.addEventListener('click', function () {
+            if (menu.inert) { openMenu(false); }
+            else { closeMenu(); }
+        });
+        [input, chevron].forEach(function (control) {
+            control.addEventListener('keydown', function (event) {
+                if (!['ArrowDown', 'ArrowUp'].includes(event.key)) { return; }
+                event.preventDefault();
+                openMenu(event.key === 'ArrowUp');
+            });
+        });
+        input.addEventListener('beforeinput', function (event) {
+            if (event.inputType !== 'insertText' || !event.data || event.isComposing) { return; }
+            var next = input.value.slice(0, input.selectionStart) + event.data + input.value.slice(input.selectionEnd);
+            if (!/^[+\d]+$/.test(normalizeDigits(event.data).normalize('NFKC')) || normalizeCountryCode(next).length > 4) {
+                event.preventDefault();
+            }
+        });
         input.addEventListener('input', syncFlag);
         input.addEventListener('focus', function () { input.select(); });
-        menu.addEventListener('keydown', function (event) {
-            if (event.key === 'Escape') {
-                closeMenu();
-                chevron.focus();
-            }
+        input.addEventListener('select', syncSelection);
+        input.addEventListener('selectionchange', syncSelection);
+        input.addEventListener('blur', function () {
+            syncSelection();
+            showValidation(true);
         });
-        document.addEventListener('click', function (event) {
-            if (!wrap.contains(event.target)) {
+        input.addEventListener('keydown', function (event) {
+            if (event.key !== 'Enter' || event.isComposing) { return; }
+            event.preventDefault();
+            if (isCountryCallingCode(input.value)) { focusPhone(); }
+            else { showValidation(true); }
+        });
+        menu.addEventListener('keydown', function (event) {
+            var index = options.indexOf(document.activeElement);
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                chevron.focus({ preventScroll: true });
                 closeMenu();
+                return;
             }
+            if (event.key === 'Tab') {
+                // Return to the trigger before the browser advances along the form.
+                chevron.focus({ preventScroll: true });
+                closeMenu();
+                return;
+            }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { return; }
+            event.preventDefault();
+            var next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 :
+                Math.max(0, Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+            focusOption(options[next]);
+        });
+        wrap.addEventListener('focusout', function (event) {
+            if (!wrap.contains(event.relatedTarget)) { closeMenu(); }
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (!wrap.contains(event.target)) { closeMenu(); }
         });
 
         syncFlag();
