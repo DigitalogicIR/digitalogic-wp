@@ -371,6 +371,12 @@ final class Digitalogic_Plugin_Auth_Routes {
 		if ( 'login' !== ( $GLOBALS['action'] ?? '' ) ) {
 			return array();
 		}
+		$assigned = self::lan_assigned_user();
+		return $assigned ? self::account_hint( $assigned, true ) : array();
+	}
+
+	/** Match a workstation using the client address resolved by the web server. */
+	public static function lan_assigned_user(): ?WP_User {
 		$address = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
 		if ( str_starts_with( $address, '172.16.' ) && filter_var( $address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
 			// Only trust REMOTE_ADDR after the web server's trusted proxy handling.
@@ -379,11 +385,11 @@ final class Digitalogic_Plugin_Auth_Routes {
 			if ( is_string( $login ) && '' !== $login ) {
 				$assigned = get_user_by( 'login', $login );
 				if ( $assigned instanceof WP_User ) {
-					return self::account_hint( $assigned, true );
+					return $assigned;
 				}
 			}
 		}
-		return array();
+		return null;
 	}
 
 	/** Read the signed browser list, including old single-account cookies. */

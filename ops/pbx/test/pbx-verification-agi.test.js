@@ -23,9 +23,10 @@ const ENV = Object.freeze({
 	PBX_PROMPT_TEMPORARY_FAILURE: 'custom/call-verification/digitalogic/current/temporary-failure',
 });
 
-function agiInput(responseLines, context = ENV.PBX_EXPECTED_AGI_CONTEXT) {
+function agiInput(responseLines, context = ENV.PBX_EXPECTED_AGI_CONTEXT, channel = 'PJSIP/trunk-00000001') {
 	return Readable.from([[
 		`agi_context: ${context}`,
+		`agi_channel: ${channel}`,
 		'agi_uniqueid: 1721491200.42',
 		'agi_dnid: 02166754123',
 		'agi_callerid: 09123456789',
@@ -333,6 +334,32 @@ test('preflight sets only the pending flag for an exact ANI match', async () => 
 	assert.equal(postedPayload.caller_number, '+989123456789');
 	assert.match(output.text, /SET VARIABLE PBX_VERIFY_PENDING 1/);
 	assert.equal(output.text.includes('GET DATA'), false);
+});
+
+test('internal preflight binds the challenge to the Asterisk endpoint', async () => {
+	for (const channel of ['PJSIP/101-00000001', 'PJSIP/102-00000001']) {
+		const output = agiOutput();
+		const calls = [];
+		const result = await helper.runAgi({
+			mode: 'extension-preflight',
+			env: ENV,
+			loadSecret: () => Buffer.alloc(32),
+			input: agiInput([
+				`200 result=1 (${ENV.PBX_EXPECTED_DID})`,
+				'200 result=1 (101)',
+				'200 result=1 (101)',
+				'200 result=1',
+			], 'pbx-call-verification-extension', channel),
+			output,
+			fetchImpl: async (_url, request) => {
+				calls.push(JSON.parse(request.body).caller_number);
+				return { status: 200, headers: new Map(), text: async () => '{"pending":true}' };
+			},
+		});
+		const matches = channel.startsWith('PJSIP/101-');
+		assert.equal(result, matches ? helper.EXIT.VERIFIED : helper.EXIT.INVALID_CALL);
+		assert.deepEqual(calls, matches ? ['pbx:101'] : []);
+	}
 });
 
 test('preflight network failure explicitly remains fail-open', async () => {

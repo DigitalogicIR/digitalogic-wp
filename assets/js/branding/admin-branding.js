@@ -3563,6 +3563,18 @@
         var updateEmailFeedback = bindEmailDomainFeedback(emailInput);
         var login = phoneInput.form;
         if (login) {
+            var lanAction = shell.querySelector('[data-call-lan-action]');
+            if (lanAction) {
+                var submit = login.querySelector('.digits-form_login > .digits-form_submit-btn');
+                submit?.after(lanAction);
+                putAuthIcon(lanAction, 'phone');
+                var updateLanAction = function () {
+                    lanAction.hidden = !callVerificationEnabled(shell) ||
+                        digitsIdentityValue(login).toLowerCase() !== lanAction.dataset.login.toLowerCase();
+                };
+                login.addEventListener('input', updateLanAction);
+                updateLanAction();
+            }
             shell.addEventListener('digitalogic:call-error', function (event) {
                 showDigitsInlineMessage(login, event.detail, 'warning');
             });

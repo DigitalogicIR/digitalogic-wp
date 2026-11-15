@@ -2247,6 +2247,29 @@ body.login .dg-digits-login-shell .dg-icon-label-action {
     justify-content: center;
     column-gap: 10px;
 }
+body.login .dg-digits-login-shell .dg-call-lan-action {
+    display: flex;
+    inline-size: 100%;
+    min-block-size: 52px;
+    margin-block: 10px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--dg-border);
+    border-radius: 16px;
+    background: var(--dg-panel-soft);
+    color: var(--dg-accent-strong);
+    font: 700 15px/1.4 var(--dg-font);
+    cursor: pointer;
+}
+body.login .dg-digits-login-shell .dg-call-lan-action .dg-auth-icon {
+    position: static;
+}
+body.login .dg-digits-login-shell .dg-call-lan-action:hover {
+    background: var(--dg-accent-soft);
+}
+body.login .dg-digits-login-shell .dg-call-lan-action[hidden],
+body.login .dg-digits-login-shell form:is(:not(.digits_form_index_section), .dg-username-step-active) .dg-call-lan-action {
+    display: none;
+}
 body.login .dg-digits-login-shell .dg-icon-label-action > .dg-auth-icon {
     position: static;
 }

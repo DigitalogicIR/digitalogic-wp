@@ -102,6 +102,9 @@
 		const error = widget.querySelector('[data-call-error]');
 		const dial = widget.querySelector('[data-call-dial]');
 		const dialNumber = dial?.querySelector('[data-call-dial-number]') || dial;
+		const previewDial = widget.querySelector('[data-call-preview-dial]');
+		const lanAction = widget.closest('.dg-digits-login-shell')?.querySelector('[data-call-lan-action]');
+		const publicDial = { href: previewDial?.getAttribute('href'), display: previewDial?.textContent };
 		const entry = widget.querySelector('[data-call-entry]');
 		const countdown = widget.querySelector('[data-call-countdown]');
 		const codeTitle = widget.querySelector('[data-call-code-title]');
@@ -470,7 +473,7 @@
 				const data = await request(config.challengeUrl, {
 					method: 'POST',
 					headers: headers('', purpose === 'add_contact'),
-					body: JSON.stringify(delivery === 'outgoing' ? { phone: phone.value, purpose, delivery } : { phone: phone.value, purpose }),
+					body: JSON.stringify({ phone: phone.value, purpose, delivery }),
 				});
 				if (stopped || expectedGeneration !== attemptGeneration) {
 					return;
@@ -541,7 +544,6 @@
 			addIcon(cancel, 'back');
 			// The branded auth component supplies the forward arrow and direction.
 			confirm?.addEventListener('click', () => {
-				delivery = 'incoming';
 				start.click();
 			});
 			outbound?.addEventListener('click', () => {
@@ -558,12 +560,21 @@
 					if (widget.dataset.callStep === 'code' || start.disabled) { cancel?.click(); }
 					else { widget.querySelector('[data-call-preview-back]')?.click(); }
 				},
-				start(value) {
+				start(value, method = 'incoming') {
+					const internal = method === 'extension' && lanAction && /^[1-9]\d{2,5}$/.test(lanAction.dataset.extension);
 					if (!widget.isConnected || widget.dataset.callAvailable !== 'true'
-						|| !widget.closest('.dg-digits-login-shell') || !/^\+[1-9]\d{7,14}$/.test(value)) { return false; }
+						|| !widget.closest('.dg-digits-login-shell') || (!internal && !/^\+[1-9]\d{7,14}$/.test(value))) { return false; }
 					if (!start.disabled) {
-						phone.value = value;
-						delivery = 'incoming';
+						phone.value = internal ? '' : value;
+						delivery = internal ? 'extension' : 'incoming';
+						if (previewDial) {
+							previewDial.href = internal ? `tel:${lanAction.dataset.extension}` : publicDial.href;
+							previewDial.textContent = internal ? lanAction.dataset.extension : publicDial.display;
+							const lanNote = widget.querySelector('[data-call-lan-note]');
+							const publicNote = widget.querySelector('[data-call-public-note]');
+							if (lanNote) { lanNote.hidden = !internal; }
+							if (publicNote) { publicNote.hidden = Boolean(internal); }
+						}
 						remember = Boolean(widget.closest('.dg-digits-login-shell').querySelector('form.digloginpage input[name="rememberme"]:checked'));
 						error.hidden = true;
 						if (outbound) { outbound.hidden = !/^\+98[1-9]\d{9}$/.test(value); }
@@ -573,6 +584,7 @@
 					return true;
 				}
 			};
+			lanAction?.addEventListener('click', () => window.DigitalogicCallLogin.start('', 'extension'));
 		}
 
 		cancel?.addEventListener('click', async () => {
