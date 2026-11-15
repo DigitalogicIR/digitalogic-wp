@@ -12,7 +12,9 @@ namespace Digitalogic\Laravel\Services;
 /** Select a separately approved provider template, never a client-supplied app hash. */
 final class MobileOtpSmsFormat {
 
-	const OPTION = 'digitalogic_mobile_android_sms';
+	const OPTION        = 'digitalogic_mobile_android_sms';
+	const WEBOTP_OPTION = 'digitalogic_mobile_webotp_sms';
+	const WEBOTP_ORIGIN = 'https://pwa.digitalogic.ir';
 
 	/**
 	 * Validate only a closed format selector; routing material is server-owned.
@@ -22,7 +24,7 @@ final class MobileOtpSmsFormat {
 	 * @throws \InvalidArgumentException When client routing or an unknown format is supplied.
 	 */
 	public static function requested( array $input ): string {
-		foreach ( array( 'app_hash', 'sms_hash', 'template', 'template_id', 'parameters' ) as $forbidden ) {
+		foreach ( array( 'app_hash', 'sms_hash', 'template', 'template_id', 'templateId', 'parameters', 'origin', 'host', 'domain', 'sms_origin', 'webotp_origin' ) as $forbidden ) {
 			if ( array_key_exists( $forbidden, $input ) ) {
 				throw new \InvalidArgumentException( 'invalid_sms_format' );
 			}
@@ -30,19 +32,35 @@ final class MobileOtpSmsFormat {
 		if ( ! array_key_exists( 'sms_format', $input ) ) {
 			return 'default';
 		}
-		if ( 'android_hash' !== $input['sms_format'] ) {
+		if ( ! in_array( $input['sms_format'], array( 'android_hash', 'web_otp' ), true ) ) {
 			throw new \InvalidArgumentException( 'invalid_sms_format' );
 		}
-		return 'android_hash';
+		return $input['sms_format'];
 	}
 
 	/**
 	 * Validate the explicit operator-approved provider configuration without sending.
 	 *
-	 * @param mixed $value Stored server configuration.
+	 * @param mixed  $value Stored server configuration.
+	 * @param string $format Closed delivery format; omitted preserves the Android contract.
 	 * @return array|null Fixed template metadata, or unavailable.
 	 */
-	public static function configuration( $value ): ?array {
+	public static function configuration( $value, string $format = 'android_hash' ): ?array {
+		if ( 'web_otp' === $format ) {
+			if ( ! is_array( $value ) || array_diff( array_keys( $value ), array( 'enabled', 'template_id', 'origin' ) )
+				|| true !== ( $value['enabled'] ?? false ) || ! is_int( $value['template_id'] ?? null )
+				|| $value['template_id'] < 1 || $value['template_id'] > 2147483647
+				|| self::WEBOTP_ORIGIN !== ( $value['origin'] ?? null ) ) {
+				return null;
+			}
+			return array(
+				'template_id' => $value['template_id'],
+				'origin'      => self::WEBOTP_ORIGIN,
+			);
+		}
+		if ( 'android_hash' !== $format ) {
+			return null;
+		}
 		if ( ! is_array( $value ) || true !== ( $value['enabled'] ?? false )
 			|| ! is_int( $value['template_id'] ?? null ) || $value['template_id'] < 1
 			|| ! is_string( $value['app_hash'] ?? null )
@@ -55,10 +73,31 @@ final class MobileOtpSmsFormat {
 		);
 	}
 
-	/** Require the explicit format schema and existing provider credentials. */
-	public static function available(): bool {
-		return '1' === get_option( 'digitalogic_mobile_otp_format_schema' )
-			&& null !== self::configuration( get_option( self::OPTION, array() ) )
-			&& \Digitalogic_Smsir_Integration::native_otp_configured();
+	/**
+	 * Require explicit schema, approved configuration and existing provider credentials.
+	 *
+	 * @param string $format Closed delivery format; omitted preserves the Android contract.
+	 * @return bool Whether this separately configured format can be sent.
+	 */
+	public static function available( string $format = 'android_hash' ): bool {
+		if ( ! in_array( $format, array( 'android_hash', 'web_otp' ), true ) ) {
+			return false;
+		}
+		$option = 'web_otp' === $format ? self::WEBOTP_OPTION : self::OPTION;
+		$config = self::configuration( get_option( $option, array() ), $format );
+		if ( '1' !== get_option( 'digitalogic_mobile_otp_format_schema' ) || null === $config
+			|| ! \Digitalogic_Smsir_Integration::native_otp_configured() ) {
+			return false;
+		}
+		if ( 'web_otp' === $format ) {
+			$default = get_option( 'digit_smsir2', array() );
+			$android = get_option( self::OPTION, array() );
+			// A distinct template bypasses default-only Shatel rendering and cannot reuse the Android body.
+			if ( (int) ( is_array( $default ) ? ( $default['template'] ?? 0 ) : 0 ) === $config['template_id']
+				|| (int) ( is_array( $android ) ? ( $android['template_id'] ?? 0 ) : 0 ) === $config['template_id'] ) {
+				return false;
+			}
+		}
+		return true;
 	}
 }

@@ -54,6 +54,9 @@ final class Digitalogic_Smsir_Integration
 	 * @param string $format Explicit native format; default preserves the existing template.
 	 */
 	public static function send_native_login_otp( string $phone, string $code, string $format = 'default' ) {
+		if ( 'web_otp' === $format && ! \Digitalogic\Laravel\Services\MobileOtpSmsFormat::available( 'web_otp' ) ) {
+			return new WP_Error( 'webotp_sms_unavailable', 'WebOTP SMS format is unavailable.' );
+		}
 		$settings = self::settings();
 		if ( ! self::native_otp_configured() || ! preg_match( '/^\+989[0-9]{9}$/D', $phone ) || ! preg_match( '/^[0-9]{6}$/D', $code ) ) {
 			return new WP_Error( 'native_otp_unconfigured', 'Native OTP is unavailable.' );
@@ -67,6 +70,10 @@ final class Digitalogic_Smsir_Integration
 			$config    = \Digitalogic\Laravel\Services\MobileOtpSmsFormat::configuration( get_option( \Digitalogic\Laravel\Services\MobileOtpSmsFormat::OPTION, array() ) );
 			$template  = $config['template_id'];
 			$parameter = 'CODE'; // The app hash is a fixed literal in the separately approved provider template.
+		} elseif ( 'web_otp' === $format ) {
+			$config    = \Digitalogic\Laravel\Services\MobileOtpSmsFormat::configuration( get_option( \Digitalogic\Laravel\Services\MobileOtpSmsFormat::WEBOTP_OPTION, array() ), 'web_otp' );
+			$template  = $config['template_id'];
+			$parameter = 'CODE'; // Fixed origin and literal # belong to the approved provider body; CODE remains digits only.
 		} elseif ( 'default' !== $format ) {
 			return new WP_Error( 'invalid_sms_format', 'Invalid SMS format.' );
 		}

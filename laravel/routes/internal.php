@@ -14,6 +14,10 @@ use Digitalogic\Laravel\Http\Controllers\MobileCheckoutController;
 use Digitalogic\Laravel\Http\Controllers\MobileMessageController;
 use Digitalogic\Laravel\Http\Controllers\MobileMergeController;
 use Digitalogic\Laravel\Http\Controllers\MobileDeviceReportController;
+use Digitalogic\Laravel\Http\Controllers\MobileBrowserController;
+
+Route::get( '/mobile/auth/browser/session', array( MobileBrowserController::class, 'session' ) );
+Route::post( '/mobile/auth/browser/google/challenge', array( MobileBrowserController::class, 'googleChallenge' ) );
 
 Route::post( '/mobile/account/device-report', array( MobileDeviceReportController::class, 'submit' ) );
 

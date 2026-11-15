@@ -265,6 +265,9 @@ final class Digitalogic_Mobile_API {
 	 * @return string|null Native adapter result.
 	 */
 	public static function route( string $path ): ?string {
+		if ( preg_match( '~^/app-api/auth/browser/(session|google/challenge)/?$~D', $path, $matches ) ) {
+			return '/_digitalogic/mobile/auth/browser/' . $matches[1];
+		}
 		if ( preg_match( '~^/app-api/account/device-report/?$~D', $path ) ) {
 			return '/_digitalogic/mobile/account/device-report';
 		}
@@ -284,6 +287,12 @@ final class Digitalogic_Mobile_API {
 	 * @return array Native adapter result.
 	 */
 	public static function methods( string $route ): array {
+		if ( str_ends_with( $route, '/auth/browser/session' ) ) {
+			return array( 'GET' );
+		}
+		if ( str_ends_with( $route, '/auth/browser/google/challenge' ) ) {
+			return array( 'POST' );
+		}
 		if ( str_ends_with( $route, '/account/device-report' ) ) {
 			return array( 'POST' );
 		}
@@ -348,6 +357,18 @@ final class Digitalogic_Mobile_API {
 			);
 		}
 		$method = strtoupper( sanitize_key( wp_unslash( $_SERVER['REQUEST_METHOD'] ?? 'GET' ) ) );
+		// Browser app cookies never become WordPress cookies or client-readable bearers.
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- The browser adapter validates exact origins, cookie ciphertext and CSRF without modifying credentials.
+		$browser = \Digitalogic\Laravel\Services\MobileBrowserSession::inspect( $_SERVER, $_COOKIE, is_ssl() );
+		if ( is_wp_error( $browser ) ) {
+			wp_send_json(
+				array(
+					'code'    => $browser->get_error_code(),
+					'message' => $browser->get_error_message(),
+				),
+				(int) $browser->get_error_data()['status']
+			);
+		}
 		if ( 'OPTIONS' === $method ) {
 			header( 'Access-Control-Allow-Methods: ' . implode( ', ', self::methods( $route ) ) . ', OPTIONS' );
 			header( 'Access-Control-Allow-Headers: Content-Type, Authorization, X-Digitalogic-Cart, Upload-Offset, Content-Range, X-WP-Nonce' );
@@ -385,8 +406,12 @@ final class Digitalogic_Mobile_API {
 			$request->headers->set( 'Upload-Offset', sanitize_text_field( wp_unslash( $_SERVER['HTTP_UPLOAD_OFFSET'] ?? '' ) ) );
 			$request->headers->set( 'Content-Range', sanitize_text_field( wp_unslash( $_SERVER['HTTP_CONTENT_RANGE'] ?? '' ) ) );
 			$request->headers->set( 'X-Digitalogic-Cart', sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_DIGITALOGIC_CART'] ?? '' ) ) );
+			if ( is_array( $browser ) ) {
+				\Digitalogic\Laravel\Services\MobileBrowserSession::apply( $request, $browser );
+			}
 			$kernel   = $app->make( \Illuminate\Contracts\Http\Kernel::class );
 			$response = $kernel->handle( $request );
+			$response = \Digitalogic\Laravel\Services\MobileBrowserSession::finish( $request, $response );
 			$response->send();
 			$kernel->terminate( $request, $response );
 		} catch ( Throwable $error ) {

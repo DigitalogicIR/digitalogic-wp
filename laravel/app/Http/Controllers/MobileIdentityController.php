@@ -80,7 +80,10 @@ final class MobileIdentityController {
 		if ( 'android_hash' === $sms_format && ! MobileOtpSmsFormat::available() ) {
 			return $this->error( 'android_sms_unavailable', 'دریافت خودکار کد فعلاً در دسترس نیست.', 503 );
 		}
-		$ip = (string) sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ?? 'unknown' ) );
+		if ( 'web_otp' === $sms_format && ! MobileOtpSmsFormat::available( 'web_otp' ) ) {
+			return $this->error( 'webotp_sms_unavailable', 'دریافت خودکار کد در مرورگر فعلاً در دسترس نیست.', 503 );
+		}
+		$ip = \Digitalogic\Laravel\Services\MobileBrowserSession::network( $request );
 		if ( ! Store::admit( 'otp-global', 60, 60 ) || ! Store::admit( 'otp-ip:' . $ip, 8, 60 ) || ! Store::admit( 'otp-phone:' . $phone_hash, 1, 60 ) || ! Store::admit( 'otp-phone-hour:' . $phone_hash, 5, 3600 ) ) {
 			return $this->json(
 				array(
@@ -564,7 +567,7 @@ final class MobileIdentityController {
 		$token = $request->json( 'id_token', '' );
 		if ( ! is_string( $token ) || strlen( $token ) > 6000 || substr_count( $token, '.' ) !== 2 ) {
 			return $this->error( 'invalid_google_token', 'ورود گوگل تأیید نشد.', 401 ); }
-		if ( ! Store::admit( 'google-global', 120, 60 ) || ! Store::admit( 'google-ip:' . sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ?? 'unknown' ) ), 20, 60 ) ) {
+		if ( ! Store::admit( 'google-global', 120, 60 ) || ! Store::admit( 'google-ip:' . \Digitalogic\Laravel\Services\MobileBrowserSession::network( $request ), 20, 60 ) ) {
 			return $this->error( 'rate_limited', 'کمی صبر کنید و دوباره تلاش کنید.', 429 ); }
 		try {
 			$keys = Google::keys();
@@ -576,7 +579,13 @@ final class MobileIdentityController {
 			return $this->error( 'invalid_google_token', 'ورود گوگل تأیید نشد.', 401 ); }
 		$fresh        = null;
 		$challenge_id = $request->json( 'challenge_id' );
-		if ( null !== $challenge_id ) {
+		if ( \Digitalogic\Laravel\Services\MobileBrowserSession::active( $request ) ) {
+			$context = $request->attributes->get( 'digitalogic_browser' )['context'] ?? null;
+			$fresh   = $context ? \Digitalogic\Laravel\Services\MobileBrowserSession::verifyGoogleChallenge( $context, $challenge_id, $claims ) : new \WP_Error( 'browser_google_invalid_challenge', '', array( 'status' => 403 ) );
+			if ( is_wp_error( $fresh ) ) {
+				return $this->error( $fresh->get_error_code(), 'تأیید تازه گوگل در مرورگر لازم است.', 403 );
+			}
+		} elseif ( null !== $challenge_id ) {
 			$fresh = is_string( $challenge_id ) ? GoogleLoginChallenge::consume( $challenge_id, $claims, $token ) : new \WP_Error( 'google_login_invalid_challenge', '', array( 'status' => 400 ) );
 			if ( is_wp_error( $fresh ) ) {
 				return $this->error( $fresh->get_error_code(), 'تأیید تازه گوگل معتبر نیست؛ دوباره تلاش کنید.', (int) ( $fresh->get_error_data()['status'] ?? 403 ) ); }
@@ -625,7 +634,7 @@ final class MobileIdentityController {
 		$id    = $request->json( 'request_id' );
 		if ( ! is_string( $token ) || strlen( $token ) > 6000 || ! is_string( $id ) ) {
 			return $this->error( 'google_login_invalid_request', 'درخواست معتبر نیست.', 400 ); }
-		$network = (string) sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ?? 'unknown' ) );
+		$network = \Digitalogic\Laravel\Services\MobileBrowserSession::network( $request );
 		if ( ! Store::admit( 'google-login-challenge:verify:' . $network, 20, 60 ) || ! Store::admit( 'google-login-challenge:verify:global', 120, 60 ) ) {
 			return $this->error( 'google_login_rate_limited', 'کمی صبر کنید.', 429 ); }
 		try {

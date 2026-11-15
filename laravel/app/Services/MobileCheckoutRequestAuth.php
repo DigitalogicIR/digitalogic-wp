@@ -66,7 +66,14 @@ final class MobileCheckoutRequestAuth {
 			return $user_id;
 		}
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- The strict Bearer grammar and hashed session lookup validate this credential; transforming it would change its identity.
-		$header  = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+		$header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Exact PWA origin, encrypted cookie and per-generation CSRF are validated before using app authority.
+		$browser = MobileBrowserSession::inspect( $_SERVER, $_COOKIE, is_ssl() );
+		if ( is_wp_error( $browser ) ) {
+			$header = '';
+		} elseif ( is_array( $browser ) ) {
+			$header = $browser['authorization'];
+		}
 		$session = null;
 		if ( is_string( $header ) && '2' === get_option( 'digitalogic_mobile_identity_schema' ) && (bool) get_option( 'digitalogic_mobile_native_auth', false ) ) {
 			// No cookie or last-seen writes during early principal resolution.

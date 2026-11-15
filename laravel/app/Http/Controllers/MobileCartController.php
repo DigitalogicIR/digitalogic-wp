@@ -80,7 +80,7 @@ final class MobileCartController {
 			$cart  = Store::create( (int) $session['user_id'] );
 			$token = Store::token( $cart['id'] );
 		} elseif ( $create ) {
-			if ( ! Identity::admit( 'cart-create-ip:' . sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ?? 'unknown' ) ), 30, 3600 ) || ! Identity::admit( 'cart-create-global', 300, 3600 ) ) {
+			if ( ! Identity::admit( 'cart-create-ip:' . \Digitalogic\Laravel\Services\MobileBrowserSession::network( $request ), 30, 3600 ) || ! Identity::admit( 'cart-create-global', 300, 3600 ) ) {
 				return new \WP_Error( 'rate_limited', 'برای ایجاد سبد تازه کمی صبر کنید.', array( 'status' => 429 ) );
 			}
 			$cart  = Store::create();
