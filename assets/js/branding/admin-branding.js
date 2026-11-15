@@ -576,12 +576,12 @@
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body:not(.digits-tab_active),body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body[hidden]{display:none!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body.digits-tab_active{display:block!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity:not([data-dg-identity="phone"]) .digits-form_countrycode{display:none!important;}',
-            'body.login .dg-digits-login-shell :is(.digits-form_input_row, .digits-form_input){border-color:var(--dg-border)!important;border-radius:16px!important;color:var(--dg-text)!important;}',
-            'body.login .dg-digits-login-shell .digits-form_input_row:not(.digits-form_rememberme,:has(.dg-otp-editor,.dg-password-field)){min-height:58px!important;margin-block:11px!important;padding-inline:14px!important;background:var(--dg-input-bg)!important;}',
+            'body.login .dg-digits-login-shell :is(.digits-form_input_row, .digits-form_input):not(.dg-auth-field){border-color:var(--dg-border)!important;border-radius:16px!important;color:var(--dg-text)!important;}',
+            'body.login .dg-digits-login-shell .digits-form_input_row:not(.digits-form_rememberme,:has(.dg-otp-editor,.dg-password-field)){min-height:58px!important;margin-block:11px!important;padding-inline:14px!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme:not([hidden]){display:flex!important;align-items:center!important;justify-content:flex-start!important;min-height:auto!important;height:auto!important;margin-block:4px 24px!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme :is(.digits-form_input,.dig_opt_mult_con,.dig_opt_mult,label,.dig_input_wrapper,.dig_input_wrapper>div){display:inline-flex!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;width:auto!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;line-height:1.35!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .dig_input_wrapper::before,body.login .dg-digits-login-shell .digits-form_rememberme .dig_input_wrapper::after,body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::before,body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::after,html[dir="rtl"] body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::before,html[dir="rtl"] body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::after{content:none!important;display:none!important;opacity:0!important;visibility:hidden!important;}',
-            'body.login .dg-digits-login-shell .digits-form_input input:not(.digits_login_remember_me,.dg-otp-slot input){min-height:48px!important;margin:0!important;border:0!important;background:transparent!important;color:var(--dg-text)!important;box-shadow:none!important;font-family:var(--dg-font)!important;}',
+            'body.login .dg-digits-login-shell .digits-form_input input:not(.digits_login_remember_me,.dg-auth-input){min-height:48px!important;margin:0!important;border:0!important;background:transparent!important;color:var(--dg-text)!important;box-shadow:none!important;font-family:var(--dg-font)!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me{appearance:none!important;-webkit-appearance:none!important;display:inline-grid!important;place-items:center!important;visibility:visible!important;opacity:1!important;inline-size:22px!important;block-size:22px!important;width:22px!important;height:22px!important;min-width:22px!important;min-height:22px!important;max-width:22px!important;max-height:22px!important;flex:0 0 22px!important;margin:0!important;padding:0!important;line-height:1!important;border:1px solid var(--dg-border)!important;border-radius:8px!important;background:color-mix(in srgb,var(--dg-panel-soft) 72%,transparent)!important;box-shadow:inset 0 1px 0 color-mix(in srgb,#ffffff 10%,transparent),var(--dg-shadow-soft)!important;transform:scale(1)!important;transition:background-color .18s ease,background-image .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s cubic-bezier(.2,.8,.2,1)!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me::before{content:""!important;display:block!important;visibility:visible!important;width:6px!important;height:11px!important;margin:-1px 0 0!important;border:solid #fff!important;border-width:0 2px 2px 0!important;opacity:0;transform:rotate(45deg) scale(.62);transform-origin:center;transition:opacity .16s ease,transform .18s cubic-bezier(.2,.8,.2,1);}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me:active,body.login #rememberme:active{transform:scale(.92)!important;}',
@@ -781,7 +781,8 @@
         input.setAttribute('dir', 'auto');
 
         var wrapper = document.createElement('span');
-        wrapper.className = 'dg-login-identity-control';
+        wrapper.className = 'dg-auth-field dg-login-identity-control';
+        input.classList.add('dg-auth-input');
         input.parentNode.insertBefore(wrapper, input);
         wrapper.appendChild(input);
 
@@ -936,12 +937,12 @@
         var providerField = input.closest('.wp-pwd, .digits_password_inp_row, .password-input-wrapper') || parent;
         providerField.querySelectorAll('.wp-hide-pw, .digits_password_eye').forEach(function (button) { button.remove(); });
         var field = document.createElement('div');
-        field.className = 'dg-password-field';
+        field.className = 'dg-auth-field dg-password-field';
         var toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'dg-password-toggle';
         if (input.id) { toggle.setAttribute('aria-controls', input.id); }
-        input.classList.add('dg-password-input');
+        input.classList.add('dg-auth-input', 'dg-password-input');
         input.dir = 'ltr';
         input.before(field);
         field.append(input, toggle);
@@ -2319,9 +2320,10 @@
 
         for (var index = 0; index < count; index++) {
             var slot = document.createElement('span');
-            slot.className = 'dg-otp-slot';
+            slot.className = 'dg-auth-field dg-otp-slot';
             var cell = document.createElement('input');
             cell.type = 'text';
+            cell.className = 'dg-auth-input dg-otp-input';
             cell.inputMode = 'numeric';
             cell.autocomplete = index === 0 ? 'one-time-code' : 'off';
             cell.placeholder = ' ';
@@ -4357,6 +4359,7 @@
         document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) form.digits_register').forEach(prepareRegistrationOtp);
         mountLoginAlternatives();
         decorateAuthControls();
+        prepareDigitsTextFields();
         mountRememberedAccount();
         normalizeDigitsLoginFallback();
         normalizeRecoveryIdentity();
@@ -4571,6 +4574,15 @@
         }
     }
 
+    function prepareDigitsTextFields() {
+        document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_input_row input:is(:not([type]), [type="text"], [type="tel"], [type="email"], [type="number"], [type="url"], [type="search"]):not(.dg-auth-input, .otp_input, [name="sms_otp"], [name="email_otp"])').forEach(function (input) {
+            var row = input.closest('.digits-form_input_row');
+            if (!row || row.matches('.digits_captcha_row, .digits-form_rememberme')) { return; }
+            row.classList.add('dg-auth-field');
+            input.classList.add('dg-auth-input');
+        });
+    }
+
     function observeAuthChrome() {
         normalizeAuthChrome();
 
@@ -4583,8 +4595,8 @@
             var shouldNormalize = mutations.some(function (mutation) {
                 return Array.prototype.some.call(mutation.addedNodes, function (node) {
                     return node.nodeType === 1 && (
-                        node.matches && node.matches('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register') ||
-                        node.querySelector && node.querySelector('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register')
+                        node.matches && node.matches('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register, .digits-form_input_row') ||
+                        node.querySelector && node.querySelector('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register, .digits-form_input_row')
                     );
                 });
             });
