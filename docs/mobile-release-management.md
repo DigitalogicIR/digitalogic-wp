@@ -2,7 +2,9 @@
 
 The publisher owns immutable signed APK/manifest files. This adapter only advertises a previously published build; Android still requires the user's normal installation confirmation.
 
-Deployment status: **live on2026-11-15** from runtime commit `970df32`. Build17 was issued at11:58:45UTC through the owner command. Independent HTTPS readback returned `self_update:true`, `telemetry:true`, and fixed manifest `https://digitalogic.ir/apps/digitalogic/digitalogic-17-arm64.json`. The optional report schema/cleanup are active; no synthetic production report was submitted. Physical-device receipt is a separate app-owner acceptance step.
+Initial deployment: **live on2026-11-15** from runtime commit `970df32`; reporting policy was subsequently updated in `7d83674`. Build17 was issued at11:58:45UTC through the owner command. The operational report schema/cleanup are active; no synthetic production report was submitted. Physical-device receipt is a separate app-owner acceptance step.
+
+Latest issue: **build18 at18:00:59UTC on2026-11-15**, operation `a9f1ecab-40de-46f0-a1aa-5d697f7a2f18`. Its immutable manifest is `https://digitalogic.ir/apps/digitalogic/digitalogic-18-arm64.json`, app source `1e1ae8788855ddde2256386ee65562b2f7cae168`, APK SHA-256 `54183974c54a31f92448d66cb782c4efd49a2955e800e71f80bd99a58409f3f3`. Independent public readback confirmed bootstrap200 with exact fixed manifest/build/hash, APK range206, catalog200 and anonymous report401. Automatic reporting remains disclosed with `telemetry_opt_in_required:false`; approved OTP template757947 and its hash/enabled state are unchanged.
 
 ## Issue an existing build
 
@@ -17,6 +19,8 @@ The service accepts a build number, never an arbitrary URL, APK upload or comman
 Publisher and issuer hold the same stable `/run/lock/digitalogic-app-release.lock` inode. Deployment installs a narrow `tmpfiles.d` rule to recreate it as root:root0644 after reboot; it is never removed or replaced during an uptime. A database advisory lock and InnoDB transaction protect the issued option and UUID receipt. Neither a stale administrator action nor the current publisher `latest.json` can downgrade the advertised build. Replaying an old operation returns its historical receipt without replacing a newer issue.
 
 The existing `digitalogic_mobile_update_manifest` option becomes the fixed immutable manifest URL. Bootstrap adds the validated `release` object and preserves `self_update`/`update_manifest`. Clearing the existing manifest option still disables update offers. No native bearer endpoint can issue releases.
+
+Release rollback readiness: prior immutable artifacts and UUID receipts remain preserved. The issuer deliberately refuses downgrade; to contain a faulty offer, an authorized operator can clear the existing manifest option, then publish and issue a higher corrected build. This does not silently downgrade or uninstall devices. No rollback was performed during build18 acceptance.
 
 ## Operational device compatibility report
 
