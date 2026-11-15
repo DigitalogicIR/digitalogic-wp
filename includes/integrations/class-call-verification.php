@@ -1762,7 +1762,7 @@ final class Digitalogic_Call_Verification {
 			<input type="hidden" data-call-phone>
 			<button type="button" data-call-start hidden></button>
 			<?php if ( $lan ) : ?>
-				<button type="button" class="dg-call-lan-action dg-icon-label-action" data-call-lan-action data-login="<?php echo esc_attr( $lan['user']->user_login ); ?>" data-extension="<?php echo esc_attr( $lan['extension'] ); ?>" hidden><span><?php echo esc_html( sprintf( $persian ? 'ورود با تماس به داخلی %s' : 'Sign in by calling extension %s', $lan['extension'] ) ); ?></span></button>
+				<button type="button" class="dg-call-lan-action dg-icon-label-action" data-call-lan-action data-login="<?php echo esc_attr( $lan['user']->user_login ); ?>" data-email-digest="<?php echo esc_attr( hash( 'sha256', strtolower( $lan['user']->user_email ) ) ); ?>" data-extension="<?php echo esc_attr( $lan['extension'] ); ?>" hidden><span><?php echo esc_html( sprintf( $persian ? 'ورود با تماس به داخلی %s' : 'Sign in by calling extension %s', $lan['extension'] ) ); ?></span></button>
 			<?php endif; ?>
 			<p class="digitalogic-call-error" data-call-error role="alert" hidden></p>
 			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>

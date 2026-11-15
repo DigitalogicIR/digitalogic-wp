@@ -473,7 +473,7 @@
 				const data = await request(config.challengeUrl, {
 					method: 'POST',
 					headers: headers('', purpose === 'add_contact'),
-					body: JSON.stringify({ phone: phone.value, purpose, delivery }),
+					body: JSON.stringify(delivery !== 'incoming' ? { phone: phone.value, purpose, delivery } : { phone: phone.value, purpose }),
 				});
 				if (stopped || expectedGeneration !== attemptGeneration) {
 					return;
