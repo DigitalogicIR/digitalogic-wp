@@ -1954,6 +1954,18 @@
         if (onFailure) { onFailure(); }
     }
 
+    function restoreDigitsOtpFields(form, state) {
+        state.fields.forEach(function (field) {
+            if (!isDigitsOtpContinuationField(field[0])) { return; }
+            var input = form.elements.namedItem(field[0]);
+            if (input && 'defaultValue' in input) {
+                input.defaultValue = field[1];
+                input.value = field[1];
+                input.disabled = false;
+            }
+        });
+    }
+
     function restoreDigitsOtpContinuation() {
         var state = readDigitsOtpContinuation();
         if (!state || !state.html || !Array.isArray(state.fields)
@@ -1964,15 +1976,20 @@
         if (!form || !form.classList.contains('digits_form_index_section')) { return; }
         if (state.signup) { setBrandedAuthForm(shell, true); }
         authRecovery = state.recovery === true;
-        state.fields.forEach(function (field) {
-            var input = form.elements.namedItem(field[0]);
-            if (input && 'value' in input) { input.value = field[1]; }
-        });
+        restoreDigitsOtpFields(form, state);
         var remember = form.querySelector('input[name="rememberme"]');
         if (remember) { remember.checked = state.remember === true; }
         var html = '<div class="digits-form_tab_container"><div class="digits-form_body_wrapper">' + state.html + '</div></div>';
         if (!appendDigitsStep(form, html, null)) { return; }
+        state.restored = true;
         digitsOtpContinuations.set(form, state);
+        // The native Digits initializer may still update the original identity inputs.
+        var restoreFields = function () {
+            if (digitsOtpContinuations.get(form) === state) { restoreDigitsOtpFields(form, state); }
+        };
+        if (document.readyState !== 'complete') {
+            window.addEventListener('load', restoreFields, { once: true });
+        }
         if (state.autoSubmitted) { digitsOtpAutoSubmitted.add(form); }
         if (state.resend?.seconds > 0) { digitsResendTimers.set(form, state.resend); }
         if (state.verifying) { recoverDigitsOtpCompletion(form); }
@@ -2869,6 +2886,9 @@
             digitsOtpEditors.get(otp).focus();
             return;
         }
+
+        var continuation = digitsOtpContinuations.get(form);
+        if (otp && continuation?.restored) { restoreDigitsOtpFields(form, continuation); }
 
         prepareDigitsCaptchaProtection();
 
