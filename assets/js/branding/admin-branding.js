@@ -3258,10 +3258,6 @@
         { code: '+93', flag: 'af', label: 'Afghanistan', labelFa: 'افغانستان' }
     ];
 
-    function countryLabel(option) {
-        return isPersianLocale() ? (option.labelFa || option.label) : option.label;
-    }
-
     function countryFlagUrl(option) {
         var base = config.flagBaseUrl || '/wp-content/plugins/digitalogic-wp/assets/images/flags/';
         return base.replace(/\/?$/, '/') + encodeURIComponent(option.flag || 'intl') + '.svg';
@@ -3307,7 +3303,11 @@
         input.inputMode = 'tel';
         input.autocomplete = 'tel-country-code';
         input.maxLength = 8;
-        var persian = isPersianLocale();
+        var lang = document.documentElement.lang;
+        var persian = lang ? /^fa(?:[-_]|$)/i.test(lang) : isPersianLocale();
+        function countryLabel(option) {
+            return persian ? (option.labelFa || option.label) : option.label;
+        }
         var label = getLabel('chooseCountryCode', 'Choose country code');
         input.setAttribute('aria-label', persian ? 'پیش‌شماره کشور' : 'Country calling code');
 
