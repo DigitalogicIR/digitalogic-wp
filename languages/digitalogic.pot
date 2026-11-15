@@ -1872,7 +1872,7 @@ msgid "Call"
 msgstr ""
 
 #: includes/integrations/class-call-verification.php
-msgid "Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator."
+msgid "Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator."
 msgstr ""
 
 #: includes/integrations/class-call-verification.php:1406

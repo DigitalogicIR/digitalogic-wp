@@ -53,7 +53,7 @@ test('server-returned dial number and code populate shortcut instructions withou
 	assert.match(source, /dialNumber\.textContent = display/);
 	assert.match(source, /dial\.setAttribute\('href', `tel:\$\{tel\}`\)/);
 	assert.match(source, /code\.textContent = data\.code/);
-	assert.match(source, /body: JSON\.stringify\(\{ phone: phone\.value, purpose \}\)/);
+	assert.match(source, /body: JSON\.stringify\([^\n]+\{ phone: phone\.value, purpose \}\)/);
 	assert.doesNotMatch(source, /ivr_option|ivr_path|data-call-ivr/);
 });
 
@@ -104,4 +104,16 @@ test('cancel is disabled once verified proof consumption becomes irreversible', 
 	assert.ok(consumeCall > disableCancel);
 	assert.ok(retryReset > -1);
 	assert.match(source.slice(disableCancel, consumeCall), /busyRegion\.setAttribute\('aria-busy', 'true'\)/);
+});
+
+test('a lost consume response recovers the server-confirmed return for the same challenge', () => {
+	const start = source.indexOf('catch (consumeError)');
+	const end = source.indexOf('resetForRetry(consumeError.message);', start);
+	const recovery = source.slice(start, end);
+
+	assert.match(recovery, /if \(isBrandedLogin\(\)\)/);
+	assert.match(recovery, /new URLSearchParams\(\{ redirect_to: redirect \}\)/);
+	assert.match(recovery, /request\(url, \{ headers: headers\(expectedCsrfToken\) \}\)/);
+	assert.match(recovery, /await request[\s\S]*?expectedChallengeId !== challengeId[\s\S]*?if \(recovered\?\.redirect_url\)/);
+	assert.match(recovery, /finish\(recovered\.redirect_url\)/);
 });

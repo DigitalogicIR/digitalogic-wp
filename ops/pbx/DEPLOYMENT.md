@@ -1,8 +1,6 @@
 # Deployment and validation
 
-This is a reviewed runbook, not an automatic installer. The verification assets
-may be installed, but Digitalogic's public TCI routes remain direct-to-101 until a
-separate IVR design is approved and tested.
+This runbook covers the caller-ID shortcut on Digitalogic's inbound TCI line.
 
 ## 1. Preflight and backups
 
@@ -41,8 +39,8 @@ Keep the existing per-site base64 HMAC key in its root-owned, non-symlinked
 secret file. If rotation is required, provision the new key in WordPress first,
 then switch PBX and server key IDs atomically. Never place the key in the env file.
 
-Verify both paths and both contexts exactly. `PBX_PENDING_HTTP_TIMEOUT_MS=1500`
-is intentional: a WordPress outage must not delay ordinary callers for four seconds.
+Verify both paths and both contexts exactly. `PBX_PENDING_HTTP_TIMEOUT_MS=3000`
+allows for WordPress startup latency while bounding the delay for ordinary callers.
 
 ## 3. Generate BGM-mixed Persian prompts
 
@@ -64,18 +62,12 @@ Listen to every output and verify the BGM remains below speech, `*` can interrup
 the pending prompt, and both 8 kHz/16 kHz files are mono PCM. The installer creates
 an immutable release and atomically switches `current`.
 
-## 4. Keep the public dialplan direct to extension 101
+## 4. Restore the caller-ID shortcut
 
-Install only the dormant helper contexts from
-`asterisk/digitalogic-pending-shortcut.conf`. Do not add its `preflight` or
-`shortcut` calls to either `[from-tci]` entry path. Recheck the live checksum
-immediately before install.
-
-Both the `s` and `_X.` routes must contain only their existing inbound `NoOp`, then
-`prefix-tci-callerid` → `record-call` →
-`Dial(PJSIP/${OPERATOR_EXT},30,Tt)` → `Hangup(19)`. Keep `OPERATOR_EXT=101`.
-Remove the former `digitalogic-call-verification-menu`, public digit 2, pending
-lookup, and conditional shortcut from those public priorities completely.
+Apply the reviewed fragment to both `[from-tci]` paths. Invoke preflight before
+caller ID normalization or recording. Run the shortcut only for a positive lookup.
+End a verified call and keep the current operator and failover priorities for all
+other outcomes. Recheck the live checksum immediately before installation.
 
 Inside the existing `[prefix-tci-callerid]` subroutine, normalize `00989…` first,
 `0989…` second, and bare `989…` third, replacing each prefix with `09`. Then strip
@@ -104,18 +96,47 @@ asterisk -rx 'agi set debug off'
 
 Use real PSTN ANI and redacted evidence:
 
-- Every call, including one whose ANI has a pending website challenge, bypasses
-  the verification HTTP endpoint and AGI and rings extension 101 immediately.
-- Asterisk shows the paired TCI and `PJSIP/101` channels, with no verification
-  audio, early `Answer()`, prompt, or DTMF collection.
+- Call with an active website challenge. Verify the private keypad prompt, the
+  six-digit confirmation, the WordPress session, and the original return page.
+- Call without a challenge and verify the existing operator route.
 - `989123456789`, `0989123456789`, and `00989123456789` all normalize to
   `09123456789` before the internal callback access prefix is added; an existing
   `09…` ANI is unchanged.
 - `02166754123` becomes extension caller ID `966754123`; one-touch redial sends
   the same-city subscriber number `66754123` without the `021` prefix.
 - Both s and _X inbound paths behave identically.
-- The dormant helper contexts remain loaded but unreachable from public and
-  internal dialplan paths.
+- Keep the private verification context unreachable from internal extensions.
 
-Inbound verification can be revisited only as part of the approved Digitalogic
-IVR pass. Outbound voice remains a separate opt-in, authenticated trust boundary.
+Outbound voice remains a separate opt-in, authenticated trust boundary.
+
+## Optional outbound verification
+
+The normal inbound flow remains the default. For a site that wants to let the
+user request a callback, provision a private shared queue outside the web root.
+Give the WordPress and Asterisk service users a dedicated shared group. The
+queue should have mode `2770` and must not be shared with upload or recording
+directories. WordPress writes an expiring job after the user requests a call.
+The job contains the challenge ID and normalized recipient. The six digits are
+entered on the call keypad and travel only over the signed PBX callback.
+
+Install `lib/pbx-verification-outbound.js` beside `pbx-verification-agi.js`, and
+install the private `asterisk/digitalogic-outbound-verification.conf` context.
+Run the worker as Asterisk from a single non-overlapping service timer with an
+interval of five seconds or less. The service needs read/write access to the
+private queue and access to create staging directories and publish call files on
+the same filesystem as Asterisk's outgoing spool. Configure these service
+variables through a server-local environment file:
+
+- `PBX_VERIFY_OUTBOUND_QUEUE` points to the queue directory.
+- `PBX_VERIFY_OUTBOUND_TRUNK` identifies the approved PJSIP endpoint.
+- `PBX_VERIFY_OUTBOUND_PREFIX` is an optional numeric trunk prefix before national dialing.
+- `PBX_VERIFY_OUTBOUND_CALLER_ID` is the approved numeric outbound caller ID.
+- `PBX_VERIFY_ASTERISK_SPOOL` defaults to `/var/spool/asterisk`.
+
+Verify the approved route with a designated test recipient before setting
+`DIGITALOGIC_PBX_OUTBOUND_ENABLED` to boolean true and
+`DIGITALOGIC_PBX_OUTBOUND_QUEUE` to the same private path in WordPress.
+The worker accepts Iranian numbers, places at most one call per job, discards
+stale work and binds the DTMF callback to the queued challenge. Set the WordPress
+flag to false and stop the worker to disable the feature. An already placed
+callback can still ring, but its verification request is rejected when disabled.
