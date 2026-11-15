@@ -233,9 +233,13 @@ async function checkEmailGate(page, labels) {
     await expectState('unavailable', false);
     await status.getByRole('button').click();
     await expectState('valid', true);
-    assert.equal(await primary.innerText(), labels.enterPassword);
+    assert.equal(await primary.innerText(), labels.continue);
     assert.equal(await email.getAttribute('aria-invalid'), 'false');
     assert.equal(colors.size, 4);
+    await primary.click();
+    await form.locator('.dg-username-password-input').waitFor();
+    assert.ok(await form.getByText(labels.skipPasswordCaption, { exact: true }).isVisible());
+    await form.locator('.dg-username-login-back').click();
     await email.fill('preview');
     assert.equal(await primary.isEnabled(), true);
     await phone.fill('');
@@ -725,6 +729,7 @@ async function checkLoginSwitchers(browser) {
                 passkeyLogin: direction === 'rtl' ? 'ورود با کلید عبور' : 'Sign in with a passkey',
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
+                continue: direction === 'rtl' ? 'ادامه' : 'Continue',
                 enterPassword: direction === 'rtl' ? 'وارد کردن رمز عبور' : 'Enter password',
                 getCallCode: direction === 'rtl' ? 'ادامه با تماس تلفنی' : 'Continue by phone call',
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',

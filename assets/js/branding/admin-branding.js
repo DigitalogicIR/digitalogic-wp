@@ -1533,7 +1533,7 @@
         if (!button) { return; }
         var action = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         var label = getLabel('continue', 'Continue');
-        if (action?.type === 'password') {
+        if (action?.type === 'password' && form.closest('.dg-digits-login-shell')?.dataset.dgIdentity === 'username') {
             label = getLabel('enterPassword', 'Enter password');
         } else if (action?.type === 'email') {
             label = getLabel('sendEmailCode', 'Send email code');
