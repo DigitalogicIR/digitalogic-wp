@@ -453,6 +453,12 @@ final class Digitalogic_Call_Verification {
 			return new WP_Error( 'digitalogic_call_phone', __( 'Enter a valid phone number with its area code.', 'digitalogic' ), array( 'status' => 400 ) );
 		}
 
+		$delivery = $request->get_param( 'delivery' ) ?? 'incoming';
+		$queue    = 'outgoing' === $delivery && 'login' === $purpose ? self::outbound_queue_directory() : '';
+		if ( 'incoming' !== $delivery && ( ! $queue || ! Digitalogic_PBX_Phone::normalize( $phone ) ) ) {
+			return new WP_Error( 'digitalogic_call_delivery', __( 'The phone callback option is unavailable for this number.', 'digitalogic' ), array( 'status' => 400 ) );
+		}
+
 		$binding = $this->browser_binding();
 		if ( is_wp_error( $binding ) ) {
 			return $binding;
@@ -470,6 +476,13 @@ final class Digitalogic_Call_Verification {
 		$rate_error  = $this->enforce_creation_limits( $phone_hash, $binding_mac, $ip_hash );
 		if ( is_wp_error( $rate_error ) ) {
 			return $rate_error;
+		}
+
+		if ( $queue ) {
+			$rate_error = $this->rate_hit( 'outbound-60s', self::lookup_hash( 'outbound', 'site' ), 10, 60 );
+			if ( is_wp_error( $rate_error ) ) {
+				return $rate_error;
+			}
 		}
 
 		global $wpdb;
@@ -519,6 +532,18 @@ final class Digitalogic_Call_Verification {
 			return new WP_Error( 'digitalogic_call_storage', __( 'Verification is temporarily unavailable.', 'digitalogic' ), array( 'status' => 503 ) );
 		}
 
+		if ( $queue && ! self::queue_outbound_call( $queue, $public_id, $phone, $now + self::CHALLENGE_TTL ) ) {
+			$wpdb->update(
+				self::table( 'phone_challenges' ),
+				array( 'status' => 'cancelled' ),
+				array(
+					'public_id' => $public_id,
+					'status'    => 'pending',
+				)
+			);
+			return new WP_Error( 'digitalogic_call_queue', __( 'The callback could not be started. You can call us to verify instead.', 'digitalogic' ), array( 'status' => 503 ) );
+		}
+
 		return new WP_REST_Response(
 			array(
 				'success'      => true,
@@ -533,6 +558,55 @@ final class Digitalogic_Call_Verification {
 			),
 			201
 		);
+	}
+
+	/**
+	 * Return the configured private queue when outgoing calls are explicitly enabled.
+	 */
+	private static function outbound_queue_directory(): string {
+		if ( ! defined( 'DIGITALOGIC_PBX_OUTBOUND_ENABLED' ) || true !== DIGITALOGIC_PBX_OUTBOUND_ENABLED
+			|| ! defined( 'DIGITALOGIC_PBX_OUTBOUND_QUEUE' ) || ! is_string( DIGITALOGIC_PBX_OUTBOUND_QUEUE ) ) {
+			return '';
+		}
+		$directory = realpath( DIGITALOGIC_PBX_OUTBOUND_QUEUE );
+		$web_root  = realpath( ABSPATH );
+		if ( ! $directory || ! $web_root || $directory === $web_root
+			|| str_starts_with( $directory, $web_root . DIRECTORY_SEPARATOR )
+			|| ! is_dir( $directory ) ) {
+			return '';
+		}
+		return is_writable( $directory ) ? $directory : ''; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+	}
+
+	/**
+	 * Publish one private, expiring job atomically. The verification code stays out of the queue.
+	 *
+	 * @param string $directory Private queue directory.
+	 * @param string $challenge Challenge UUID.
+	 * @param string $phone     The normalized recipient.
+	 * @param int    $expires   Challenge expiry in Unix seconds.
+	 */
+	private static function queue_outbound_call( string $directory, string $challenge, string $phone, int $expires ): bool {
+		$job  = wp_json_encode(
+			array(
+				'challenge' => $challenge,
+				'phone'     => $phone,
+				'expires'   => $expires,
+			)
+		);
+		$temp = $job ? tempnam( $directory, '.outbound-' ) : false;
+		if ( ! $temp ) {
+			return false;
+		}
+		// Same-directory rename prevents the worker from picking up a partially written job.
+		// phpcs:disable WordPress.WP.AlternativeFunctions
+		if ( dirname( $temp ) === $directory && chmod( $temp, 0640 ) && file_put_contents( $temp, $job ) === strlen( $job )
+			&& rename( $temp, $directory . DIRECTORY_SEPARATOR . $challenge . '.json' ) ) {
+			return true;
+		}
+		unlink( $temp );
+		// phpcs:enable WordPress.WP.AlternativeFunctions
+		return false;
 	}
 
 	/**
@@ -1029,6 +1103,9 @@ final class Digitalogic_Call_Verification {
 		$rows     = array_merge( $recovery_rows, $pending_rows );
 		$verified = false;
 		foreach ( (array) $rows as $row ) {
+			if ( isset( $validated['challenge_id'] ) && ! hash_equals( (string) $row->public_id, $validated['challenge_id'] ) ) {
+				continue;
+			}
 			$candidate_phone = self::decrypt( (string) $row->phone_encrypted );
 			if ( '' === $candidate_phone || ! hash_equals( $candidate_phone, $caller )
 				|| ! hash_equals( (string) $row->code_mac, self::code_mac( (string) $row->public_id, $code ) ) ) {
@@ -1376,6 +1453,14 @@ final class Digitalogic_Call_Verification {
 	 */
 	public static function validate_pbx_payload( $payload, int $signed_timestamp ) {
 		$required_keys = array( 'schema', 'site_id', 'event_id', 'call_id', 'called_number', 'caller_number', 'code', 'occurred_at' );
+		$challenge_id  = '';
+		if ( is_array( $payload ) && array_key_exists( 'challenge_id', $payload ) ) {
+			if ( ! is_string( $payload['challenge_id'] ) || ! wp_is_uuid( $payload['challenge_id'], 4 ) || ! self::outbound_queue_directory() ) {
+				return new WP_Error( 'digitalogic_pbx_payload', __( 'PBX payload is invalid.', 'digitalogic' ) );
+			}
+			$challenge_id    = $payload['challenge_id'];
+			$required_keys[] = 'challenge_id';
+		}
 		if ( ! is_array( $payload ) || count( $required_keys ) !== count( $payload )
 			|| ! empty( array_diff( $required_keys, array_keys( $payload ) ) )
 			|| ! empty( array_diff( array_keys( $payload ), $required_keys ) ) ) {
@@ -1405,7 +1490,7 @@ final class Digitalogic_Call_Verification {
 			'call_id'  => $call_id,
 			'caller'   => $caller,
 			'code'     => $code,
-		);
+		) + ( '' !== $challenge_id ? array( 'challenge_id' => $challenge_id ) : array() );
 	}
 
 	/**
@@ -1550,6 +1635,7 @@ final class Digitalogic_Call_Verification {
 			(string) filemtime( DIGITALOGIC_PLUGIN_DIR . 'assets/js/call-verification.js' ),
 			true
 		);
+		$persian = str_starts_with( determine_locale(), 'fa' );
 		wp_localize_script(
 			'digitalogic-call-verification',
 			'DigitalogicCallVerification',
@@ -1560,14 +1646,16 @@ final class Digitalogic_Call_Verification {
 				'areaCodes'    => Digitalogic_PBX_Phone::area_codes(),
 				'dialNumber'   => self::DIAL_TEL,
 				'messages'     => array(
-					'start'        => __( 'Verify by calling', 'digitalogic' ),
-					'waiting'      => __( 'Waiting for your call…', 'digitalogic' ),
-					'verified'     => __( 'Phone number verified. Finishing…', 'digitalogic' ),
-					'expired'      => __( 'This code expired. Please request another code.', 'digitalogic' ),
-					'error'        => __( 'Verification could not be completed. Please try again.', 'digitalogic' ),
-					'remaining'    => __( '%s seconds remaining', 'digitalogic' ),
-					'confirmDrop'  => __( 'Removing this contact also disables voice notifications. Continue?', 'digitalogic' ),
-					'invalidPhone' => __( 'Enter a valid Iranian mobile or landline number with its area code.', 'digitalogic' ),
+					'start'           => __( 'Verify by calling', 'digitalogic' ),
+					'waiting'         => __( 'Waiting for your call…', 'digitalogic' ),
+					'redirecting'     => $persian ? 'شماره تأیید شد. در حال انتقال…' : 'Phone verified. Redirecting…',
+					'outboundWaiting' => $persian ? 'در انتظار تماس با شمارهٔ شما…' : 'Waiting for the PBX to call your phone…',
+					'verified'        => __( 'Phone number verified. Finishing…', 'digitalogic' ),
+					'expired'         => __( 'This code expired. Please request another code.', 'digitalogic' ),
+					'error'           => __( 'Verification could not be completed. Please try again.', 'digitalogic' ),
+					'remaining'       => __( '%s seconds remaining', 'digitalogic' ),
+					'confirmDrop'     => __( 'Removing this contact also disables voice notifications. Continue?', 'digitalogic' ),
+					'invalidPhone'    => __( 'Enter a valid Iranian mobile or landline number with its area code.', 'digitalogic' ),
 				),
 			)
 		);
@@ -1607,21 +1695,35 @@ final class Digitalogic_Call_Verification {
 		<section class="digitalogic-call-verification dg-call-unified" data-digitalogic-call-widget data-call-unified data-purpose="login" data-call-available="<?php echo esc_attr( defined( 'DIGITALOGIC_PUBLIC_CALL_VERIFICATION' ) && DIGITALOGIC_PUBLIC_CALL_VERIFICATION ? 'true' : 'false' ); ?>">
 			<input type="hidden" data-call-phone>
 			<button type="button" data-call-start hidden></button>
-			<p data-call-error hidden></p>
+			<p class="digitalogic-call-error" data-call-error role="alert" hidden></p>
 			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>
-				<div class="digitalogic-call-instructions" data-call-instructions hidden>
-					<h2 class="digits-form_heading" id="digitalogic-call-code-title" tabindex="-1" data-call-code-title><?php echo esc_html( $persian ? 'کد تأیید' : 'Verification code' ); ?></h2>
-					<ol class="dg-call-steps">
+				<div class="digitalogic-call-instructions" data-call-preview hidden>
+				<h2 class="digits-form_heading" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
+				<ol class="dg-call-steps">
 						<li>
 							<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
-							<bdi class="dg-call-number" data-call-dial dir="ltr"><?php echo esc_html( self::DIAL_DISPLAY ); ?></bdi>
+							<bdi class="dg-call-number" data-call-preview-dial dir="ltr"><?php echo esc_html( self::DIAL_DISPLAY ); ?></bdi>
 							<p><?php echo esc_html( $persian ? 'از همان شماره‌ای که وارد کردید تماس بگیرید.' : 'Call from the same number you entered.' ); ?></p>
 						</li>
 						<li>
 							<strong><?php echo esc_html( $persian ? 'کد تأیید را با صفحه‌کلید تلفن وارد کنید' : 'Enter the verification code on your phone keypad' ); ?></strong>
-							<p><?php echo esc_html( $persian ? 'پس از شنیدن «دوست عزیزم»، شش رقم زیر را وارد کنید.' : 'After you hear «دوست عزیزم», enter the six digits below.' ); ?></p>
+							<p><?php echo esc_html( $persian ? 'پس از شنیدن «کاربر گرامی»، کد شش‌رقمی مرحلهٔ بعد را وارد کنید.' : 'After you hear «کاربر گرامی», enter the six-digit code from the next step.' ); ?></p>
 						</li>
 					</ol>
+				<button type="button" class="dg-call-next" data-call-confirm><?php echo esc_html( $persian ? 'ادامه و دریافت کد' : 'Continue and get code' ); ?></button>
+				<?php if ( self::outbound_queue_directory() ) : ?>
+					<button type="button" class="dg-auth-back" data-call-outbound hidden><?php echo esc_html( $persian ? 'با من تماس بگیرید' : 'Call my phone' ); ?></button>
+				<?php endif; ?>
+				<button type="button" class="dg-auth-back" data-call-preview-back><?php echo esc_html( $persian ? 'بازگشت' : 'Back' ); ?></button>
+			</div>
+			<div class="digitalogic-call-instructions" data-call-instructions hidden>
+					<h2 class="digits-form_heading" id="digitalogic-call-code-title" tabindex="-1" data-call-code-title><?php echo esc_html( $persian ? 'کد تأیید' : 'Verification code' ); ?></h2>
+					<p class="dg-call-code-prompt" data-call-code-prompt>
+					<?php echo esc_html( $persian ? 'تماس با' : 'Call' ); ?>
+					<bdi class="dg-call-number" data-call-dial dir="ltr"><?php echo esc_html( self::DIAL_DISPLAY ); ?></bdi>
+					<?php echo esc_html( $persian ? 'و ورود این شش رقم پس از شنیدن «کاربر گرامی».' : 'and enter these six digits after the greeting.' ); ?>
+				</p>
+				<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
 					<div class="dg-call-wait" data-call-remember-anchor><p data-call-status role="status"><?php echo esc_html( $persian ? 'در انتظار تماس شما…' : 'Waiting for your call…' ); ?></p><span data-call-countdown role="timer" dir="ltr"></span></div>
 					<button type="button" class="dg-auth-back" data-call-cancel><span><?php echo esc_html( $persian ? 'ویرایش شماره تلفن' : 'Edit phone number' ); ?></span></button>
 					<output data-call-code dir="ltr"></output>
@@ -1665,7 +1767,7 @@ final class Digitalogic_Call_Verification {
 				<button type="button" class="button button-primary" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 				<div class="digitalogic-call-instructions" data-call-instructions hidden>
 					<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::DIAL_TEL ); ?>"><?php echo esc_html( self::DIAL_DISPLAY ); ?></a></p>
-					<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
+					<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 					<output class="digitalogic-call-code" data-call-code dir="ltr" aria-live="polite"></output>
 					<p data-call-status role="status" aria-live="polite" aria-atomic="true"><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>
 					<button type="button" class="button-link" data-call-cancel><?php esc_html_e( 'Cancel', 'digitalogic' ); ?></button>
@@ -1706,7 +1808,7 @@ final class Digitalogic_Call_Verification {
 					<button type="button" class="button" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 					<div class="digitalogic-call-instructions" data-call-instructions hidden aria-live="polite">
 						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" href="tel:+982166754123">021-66754123</a>.</p>
-						<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
+						<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 						<output class="digitalogic-call-code" data-call-code dir="ltr"></output>
 						<p data-call-status><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>
 						<button type="button" class="button-link" data-call-cancel><?php esc_html_e( 'Cancel', 'digitalogic' ); ?></button>

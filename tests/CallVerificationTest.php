@@ -977,7 +977,7 @@ final class CallVerificationTest extends TestCase {
 		$this->assertStringContainsString( 'aria-describedby="digitalogic-sidebar-call-phone-help"', $source );
 		$this->assertStringContainsString( 'Place the call from the same phone number you entered so caller ID can confirm ownership.', $source );
 		$this->assertStringContainsString( 'data-call-dial', $source );
-		$this->assertStringContainsString( 'When the caller-ID shortcut says «دوست عزیزم»', $source );
+		$this->assertStringContainsString( 'When the caller-ID shortcut says «کاربر گرامی»', $source );
 		$this->assertStringNotContainsString( 'data-call-ivr', $source );
 		$this->assertStringNotContainsString( 'self::IVR_OPTION', $source );
 		$this->assertStringNotContainsString( 'DIGITALOGIC_PBX_VERIFY_SECRET', $localized_source );

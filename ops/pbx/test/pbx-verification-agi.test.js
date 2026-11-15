@@ -494,3 +494,32 @@ test('shortcut gives a rejected six-digit typo one bounded retry', async () => {
 	assert.equal(output.text.includes('111111'), false);
 	assert.equal(output.text.includes('381624'), false);
 });
+
+test('outbound keypad verification signs the queued challenge and configured recipient', async () => {
+	const challengeId = '123e4567-e89b-42d3-a456-426614174000';
+	const output = agiOutput();
+	let proof;
+	const result = await helper.runAgi({
+		mode: 'outbound',
+		env: ENV,
+		loadSecret: () => Buffer.alloc(32, 0x5a),
+		input: agiInput([
+			`200 result=1 (${ENV.PBX_EXPECTED_DID})`,
+			'200 result=1 (+989120000000)',
+			`200 result=1 (${challengeId})`,
+			'200 result=381624',
+			'200 result=0 endpos=8192',
+			'200 result=1',
+		], 'pbx-call-verification-outbound'),
+		output,
+		fetchImpl: async (_url, request) => {
+			proof = JSON.parse(request.body);
+			assert.match(request.headers['X-PBX-Signature'], /^[0-9a-f]{64}$/);
+			return new Response('{"verified":true}');
+		},
+	});
+	assert.equal(result, helper.EXIT.VERIFIED);
+	assert.equal(proof.challenge_id, challengeId);
+	assert.equal(proof.caller_number, '+989120000000');
+	assert.match(output.text, /SET VARIABLE PBX_VERIFY_RESULT verified/);
+});

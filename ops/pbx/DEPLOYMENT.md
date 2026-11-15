@@ -108,3 +108,35 @@ Use real PSTN ANI and redacted evidence:
 - Keep the private verification context unreachable from internal extensions.
 
 Outbound voice remains a separate opt-in, authenticated trust boundary.
+
+## Optional outbound verification
+
+The normal inbound flow remains the default. For a site that wants to let the
+user request a callback, provision a private shared queue outside the web root.
+Give the WordPress and Asterisk service users a dedicated shared group. The
+queue should have mode `2770` and must not be shared with upload or recording
+directories. WordPress writes an expiring job after the user requests a call.
+The job contains the challenge ID and normalized recipient. The six digits are
+entered on the call keypad and travel only over the signed PBX callback.
+
+Install `lib/pbx-verification-outbound.js` beside `pbx-verification-agi.js`, and
+install the private `asterisk/digitalogic-outbound-verification.conf` context.
+Run the worker as Asterisk from a single non-overlapping service timer with an
+interval of five seconds or less. The service needs read/write access to the
+private queue and access to create staging directories and publish call files on
+the same filesystem as Asterisk's outgoing spool. Configure these service
+variables through a server-local environment file:
+
+- `PBX_VERIFY_OUTBOUND_QUEUE` points to the queue directory.
+- `PBX_VERIFY_OUTBOUND_TRUNK` identifies the approved PJSIP endpoint.
+- `PBX_VERIFY_OUTBOUND_PREFIX` is an optional numeric trunk prefix before national dialing.
+- `PBX_VERIFY_OUTBOUND_CALLER_ID` is the approved numeric outbound caller ID.
+- `PBX_VERIFY_ASTERISK_SPOOL` defaults to `/var/spool/asterisk`.
+
+Verify the approved route with a designated test recipient before setting
+`DIGITALOGIC_PBX_OUTBOUND_ENABLED` to boolean true and
+`DIGITALOGIC_PBX_OUTBOUND_QUEUE` to the same private path in WordPress.
+The worker accepts Iranian numbers, places at most one call per job, discards
+stale work and binds the DTMF callback to the queued challenge. Set the WordPress
+flag to false and stop the worker to disable the feature. An already placed
+callback can still ring, but its verification request is rejected when disabled.

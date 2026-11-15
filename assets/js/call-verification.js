@@ -63,6 +63,7 @@
 	}
 
 	const icons = {
+		check: 'M5 12l4 4L19 6',
 		phone: 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.26a2 2 0 0 1 2.11-.45c.91.33 1.85.56 2.81.69A2 2 0 0 1 22 16.92z',
 		keypad: 'M4 4h16v16H4zM8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01',
 		arrow: 'M5 12h14m-7-7 7 7-7 7',
@@ -102,6 +103,9 @@
 		const entry = widget.querySelector('[data-call-entry]');
 		const countdown = widget.querySelector('[data-call-countdown]');
 		const codeTitle = widget.querySelector('[data-call-code-title]');
+		const preview = widget.querySelector('[data-call-preview]');
+		const confirm = widget.querySelector('[data-call-confirm]');
+		const outbound = widget.querySelector('[data-call-outbound]');
 		const back = widget.querySelector('[data-call-back]');
 		const unified = widget.hasAttribute?.('data-call-unified') || false;
 		if (!panel || !phone || !start || !instructions || !code || !status || !error) {
@@ -133,14 +137,36 @@
 		let useRealtime = false;
 		const pollInterval = Math.max(400, Math.min(750, Number(config.pollMs) || 500));
 		let consuming = false;
+		let delivery = 'incoming';
+		let remember = false;
+
+		function finish(destination) {
+			const navigate = () => destination ? window.location.assign(destination) : window.location.reload();
+			if (isBrandedLogin() && window.DigitalogicAuthSuccess) {
+				window.DigitalogicAuthSuccess(navigate);
+				return;
+			}
+			const success = document.createElement('p');
+			success.className = 'digitalogic-call-success';
+			success.setAttribute('role', 'status');
+			success.textContent = messages.redirecting || 'Phone verified. Redirecting…';
+			addIcon(success, 'check');
+			panel.replaceChildren(success);
+			window.requestAnimationFrame(() => {
+				window.requestAnimationFrame(() => window.setTimeout(navigate, 650));
+			});
+		}
 
 		function showStep(step) {
 			instructions.hidden = step !== 'code';
 			if (unified) {
-				panel.hidden = step !== 'code';
-				widget.closest('.dg-digits-login-shell')?.classList.toggle('dg-call-code-active', step === 'code');
+				if (preview) { preview.hidden = step !== 'preview'; }
+				panel.hidden = step === 'entry';
+				widget.closest('.dg-digits-login-shell')?.classList.toggle('dg-call-code-active', step !== 'entry');
 				if (step === 'code') {
 					codeTitle.focus();
+				} else if (step === 'preview') {
+					preview.querySelector('[data-call-preview-title]').focus();
 				} else {
 					widget.closest('.dg-digits-login-shell')?.querySelector('form.digloginpage [name="digits_phone"]')?.focus();
 				}
@@ -161,7 +187,7 @@
 		function showError(value) {
 			error.textContent = value || messages.error || 'Verification failed.';
 			error.hidden = false;
-			if (unified) {
+			if (unified && (!preview || preview.hidden)) {
 				widget.dispatchEvent(new CustomEvent('digitalogic:call-error', { bubbles: true, detail: error.textContent }));
 			}
 		}
@@ -215,11 +241,13 @@
 			expiresAt = 0;
 			code.textContent = '';
 			start.disabled = false;
+			if (confirm) { confirm.disabled = false; }
+			if (outbound) { outbound.disabled = false; }
 			if (cancel) {
 				cancel.disabled = false;
 			}
 			busyRegion.removeAttribute('aria-busy');
-			showStep('entry');
+			showStep(preview ? 'preview' : 'entry');
 			showError(message);
 		}
 
@@ -228,7 +256,7 @@
 			if (isBrandedLogin()) {
 				const redirect = new URLSearchParams(window.location.search).get('redirect_to');
 				if (redirect) { body.redirect_to = redirect; }
-				if (unified && widget.querySelector('input[name="rememberme"]:checked')) { body.rememberme = true; }
+				if (unified && remember) { body.rememberme = true; }
 			}
 			const data = await request(`${config.challengeUrl}/${encodeURIComponent(expectedChallengeId)}/consume`, {
 				method: 'POST',
@@ -243,11 +271,7 @@
 				return;
 			}
 			status.textContent = messages.verified || 'Verified.';
-			if (data.redirect_url) {
-				window.location.assign(data.redirect_url);
-			} else {
-				window.location.reload();
-			}
+			finish(data.redirect_url);
 		}
 
 		async function poll(expectedGeneration) {
@@ -313,7 +337,7 @@
 								return;
 							}
 							if (recovered?.redirect_url) {
-								window.location.assign(recovered.redirect_url);
+								finish(recovered.redirect_url);
 								return;
 							}
 						}
@@ -431,6 +455,8 @@
 			instructions.hidden = true;
 			code.textContent = '';
 			start.disabled = true;
+			if (confirm) { confirm.disabled = true; }
+			if (outbound) { outbound.disabled = true; }
 			if (cancel) {
 				cancel.disabled = false;
 			}
@@ -439,7 +465,7 @@
 				const data = await request(config.challengeUrl, {
 					method: 'POST',
 					headers: headers('', purpose === 'add_contact'),
-					body: JSON.stringify({ phone: phone.value, purpose }),
+					body: JSON.stringify(delivery === 'outgoing' ? { phone: phone.value, purpose, delivery } : { phone: phone.value, purpose }),
 				});
 				if (stopped || expectedGeneration !== attemptGeneration) {
 					return;
@@ -476,6 +502,13 @@
 						? 'در انتظار تماس شما…'
 						: (messages.waiting || 'Waiting for your call…');
 				}
+				if (delivery === 'outgoing') {
+					status.textContent = messages.outboundWaiting || 'Waiting for the PBX to call your phone…';
+				}
+				const prompt = widget.querySelector('[data-call-code-prompt]');
+				if (prompt) { prompt.hidden = delivery === 'outgoing'; }
+				const outboundPrompt = widget.querySelector('[data-call-outbound-prompt]');
+				if (outboundPrompt) { outboundPrompt.hidden = delivery !== 'outgoing'; }
 				updateCountdown(expectedGeneration);
 				showStep('code');
 				busyRegion.removeAttribute('aria-busy');
@@ -488,6 +521,8 @@
 					return;
 				}
 				start.disabled = false;
+				if (confirm) { confirm.disabled = false; }
+				if (outbound) { outbound.disabled = false; }
 				if (back) {
 					back.disabled = false;
 				}
@@ -499,13 +534,32 @@
 		if (unified) {
 			addIcon(codeTitle, 'keypad');
 			addIcon(cancel, 'back');
+			addIcon(confirm, 'arrow');
+			confirm?.addEventListener('click', () => {
+				delivery = 'incoming';
+				start.click();
+			});
+			outbound?.addEventListener('click', () => {
+				delivery = 'outgoing';
+				start.click();
+			});
+			widget.querySelector('[data-call-preview-back]')?.addEventListener('click', () => {
+				if (start.disabled) { return; }
+				error.hidden = true;
+				showStep('entry');
+			});
 			window.DigitalogicCallLogin = {
 				start(value) {
 					if (!widget.isConnected || widget.dataset.callAvailable !== 'true'
 						|| !widget.closest('.dg-digits-login-shell') || !/^\+[1-9]\d{7,14}$/.test(value)) { return false; }
 					if (!start.disabled) {
 						phone.value = value;
-						start.click();
+						delivery = 'incoming';
+						remember = Boolean(widget.closest('.dg-digits-login-shell').querySelector('form.digloginpage input[name="rememberme"]:checked'));
+						error.hidden = true;
+						if (outbound) { outbound.hidden = !/^\+98[1-9]\d{9}$/.test(value); }
+						if (preview) { showStep('preview'); }
+						else { start.click(); }
 					}
 					return true;
 				}
@@ -522,6 +576,9 @@
 			expiresAt = 0;
 			code.textContent = '';
 			start.disabled = false;
+			if (confirm) { confirm.disabled = false; }
+			if (outbound) { outbound.disabled = false; }
+			error.hidden = true;
 			busyRegion.removeAttribute('aria-busy');
 			showStep('entry');
 			if (cancelledChallengeId) {

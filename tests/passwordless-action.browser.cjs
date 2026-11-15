@@ -197,12 +197,12 @@ async function checkEmailGate(page, labels) {
         assert.equal(await primary.innerText(), labels.getCallCode);
         await primary.click();
         assert.equal(await page.locator('body').getAttribute('data-call-number'), expected);
-        await page.locator('[data-call-instructions] input[name="rememberme"]').waitFor();
+        assert.equal(await page.locator('[data-call-instructions] input[name="rememberme"]').count(), 0);
         await page.evaluate(() => {
             document.querySelector('[data-call-instructions]').hidden = true;
             document.querySelector('.dg-digits-login-shell').classList.remove('dg-call-code-active');
         });
-        assert.equal(await page.getByRole('checkbox', { name: 'Remember me' }).count(), 0);
+        assert.equal(await page.getByRole('checkbox', { name: 'Remember me' }).count(), 1);
     }
     await page.locator('input[name="dg_phone_channel"][value="sms"]').check();
     assert.equal(await primary.innerText(), labels.sendSmsCode);
@@ -252,7 +252,7 @@ async function checkSmsAction(page, labels) {
             if (attempts === 2) return route.fulfill({ json: { success: false, data: { message: 'Code expired. Request a new code.' } } });
             return route.fulfill({ json: { success: true, data: { redirect: '/complete' } } });
         }
-        assert.doesNotMatch(route.request().postData(), /name="rememberme"/);
+        assert.match(route.request().postData(), /name="rememberme"\r\n\r\n1/);
         return route.fulfill({ json: {
             success: true,
             data: { resend_timer: 2, html: `<div class="digits-form_tab_container"><div class="digits-form_tab_body digits-tab_active">
@@ -274,9 +274,10 @@ async function checkSmsAction(page, labels) {
         // Digits can add the tooltip after the tab and its code field are inserted.
         setTimeout(() => {
             tab.querySelector('.digits-form_input_info').insertAdjacentHTML('beforeend',
-                '<span class="digits_otp_info"><span class="digits_otp_info_ic"></span></span>');
+                '<span class="digits_otp_info"><span class="digits_otp_info_ic"></span><span class="digits_otp_info_desc">Code delivery information and phone number</span></span>');
         }, 0);
     }));
+    await page.getByRole('checkbox', { name: 'Remember me' }).check();
     await page.locator('input[name="digits_phone"]').fill('09120000000');
     await page.getByRole('button', { name: labels.sendSmsCode, exact: true }).click();
     const first = page.locator('.dg-otp-slot input').first();
@@ -300,7 +301,15 @@ async function checkSmsAction(page, labels) {
     await page.waitForFunction(() => parseFloat(document.querySelector('.dg-otp-resend').style.getPropertyValue('--dg-resend-progress')) > 0);
     await resend.and(page.locator('[aria-disabled="false"]')).waitFor();
     assert.equal(await resend.evaluate(el => el.style.getPropertyValue('--dg-resend-progress')), '100%');
-    await page.getByRole('checkbox', { name: 'Remember me' }).check();
+    assert.equal(await page.getByRole('checkbox', { name: 'Remember me' }).count(), 0);
+    const info = caption.locator('.dg-otp-info-trigger');
+    await info.hover();
+    const tip = caption.locator('.digits_otp_info_desc');
+    await tip.waitFor();
+    const bounds = await tip.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= page.viewportSize().width);
+    await info.click();
+    assert.equal(await info.evaluate(element => document.activeElement === element), true);
     await first.focus();
     await first.evaluate(el => {
         const data = new DataTransfer();
@@ -308,19 +317,24 @@ async function checkSmsAction(page, labels) {
         el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
     });
     const verify = page.getByRole('button', { name: labels.verifyCode, exact: true });
-    assert.equal(await verify.evaluate(el => document.activeElement === el), true);
-    await verify.click();
+    assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
     const alert = page.locator('.dg-otp-feedback');
     await alert.waitFor();
     assert.match(await alert.innerText(), /HTTP 503/);
     assert.equal(await page.locator('.dg-otp-editor[aria-invalid]').count(), 0);
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
+    assert.equal(attempts, 1);
+    await first.focus();
+    await page.keyboard.insertText('۱۲۳۴۵۶');
+    assert.equal(attempts, 1, 'Refilling a complete code must wait for explicit submit');
     await verify.click();
     await page.locator('.dg-otp-editor[aria-invalid="true"]').waitFor();
     assert.equal(await alert.innerText(), 'Code expired. Request a new code.');
     assert.equal(await first.evaluate(el => document.activeElement === el), true);
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
     await verify.click();
+    await page.locator('dialog.dg-auth-success[open] .dg-auth-success-icon svg').waitFor();
+    assert.match(page.url(), /login/);
     await page.waitForURL('**/complete');
 }
 
@@ -448,8 +462,12 @@ async function checkOtpEditor(page, channel) {
     await page.keyboard.press('Backspace');
     assert.equal(await cells.first().inputValue(), '');
     assert.equal(await firstSlot.locator('.dg-otp-roll').count(), 0);
+    await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => route.fulfill({
+        status: 503, body: 'Service unavailable'
+    }));
     await page.keyboard.insertText('۱۲۳۴۵۶');
     assert.equal(await page.locator(`input[name="${channel}_otp"]`).inputValue(), '123456');
+    await page.locator('.dg-otp-feedback').waitFor();
     assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
 }
 
@@ -512,7 +530,7 @@ async function checkLoginSwitchers(browser) {
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
                 enterPassword: direction === 'rtl' ? 'وارد کردن رمز عبور' : 'Enter password',
-                getCallCode: direction === 'rtl' ? 'دریافت کد تماس' : 'Get call code',
+                getCallCode: direction === 'rtl' ? 'ادامه با تماس تلفنی' : 'Continue by phone call',
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',
                 verifyCode: direction === 'rtl' ? 'تأیید کد' : 'Verify code'
             };
@@ -522,7 +540,7 @@ async function checkLoginSwitchers(browser) {
                 await checkAlternatives(page, !native);
                 if (!native) {
                     const remember = page.getByRole('checkbox', { name: 'Remember me' });
-                    assert.equal(await remember.count(), 0);
+                    assert.equal(await remember.count(), 1);
                     await checkIdentityPrompt(page, labels.identityPlaceholder);
                     const identity = page.locator('input[name="digits_phone"]');
                     await identity.fill('۰۹۱۲');
@@ -533,14 +551,14 @@ async function checkLoginSwitchers(browser) {
                     await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction);
                     await page.locator('input[name="digits_phone"]').fill('fixture-user');
                     await page.getByRole('button', { name: labels.enterPassword, exact: true }).click();
-                    await page.locator('.dg-username-password-step').getByRole('checkbox', { name: 'Remember me' }).check();
+                    assert.equal(await remember.count(), 0);
                     await checkAlternatives(page, false);
                     const profile = page.locator('.dg-username-login-summary');
                     const avatar = profile.locator('.dg-username-login-avatar');
                     assert.equal(await avatar.locator('img').count(), 0);
                     assert.equal(await avatar.locator('svg').isVisible(), true);
                     await page.locator('.dg-username-login-back').click();
-                    assert.equal(await remember.count(), 0);
+                    assert.equal(await remember.count(), 1);
                     await checkAlternatives(page, true);
                     await page.locator('input[name="digits_phone"]').fill('known-user');
                     await page.getByRole('button', { name: labels.enterPassword, exact: true }).click();
@@ -574,7 +592,7 @@ async function checkLoginSwitchers(browser) {
                     assert.equal(await page.locator('body').getAttribute('data-sms-tab-selected'), 'true');
                     assert.equal(await page.locator('input[type="password"]').inputValue(), '');
                 } else {
-                    assert.equal(await page.getByRole('checkbox', { name: 'Remember me' }).count(), 0);
+                    assert.equal(await page.getByRole('checkbox', { name: 'Remember me' }).count(), 1);
                     assert.equal(await page.locator('form').getAttribute('data-dg-sms-identity'), 'true');
                     assert.equal(await page.locator('input[name="digits_phone"]').evaluate(element => document.activeElement === element), true);
                     await checkIdentityPrompt(page, labels.contactPlaceholder);
