@@ -44,6 +44,7 @@ Thumbs.db
 phpunit.xml
 /.phpunit.result.cache
 /.phpunit.cache/
+__pycache__/
 
 # Temporary files
 *.tmp
