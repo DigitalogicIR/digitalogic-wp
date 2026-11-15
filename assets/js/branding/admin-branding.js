@@ -347,22 +347,23 @@
     }
 
     function injectLoginToggle() {
-        if (!config.showLoginThemeSwitcher || !document.body?.classList.contains('login') || document.querySelector('[data-dg-theme-toggle-button]')) {
-            return;
-        }
-
+        if (!document.body?.classList.contains('login') || document.querySelector('.dg-login-preferences')) { return; }
         var login = document.getElementById('login');
-        if (!login) { return; }
+        var language = document.querySelector('.language-switcher');
+        if (!login || (!language && !config.showLoginThemeSwitcher)) { return; }
         var controls = document.createElement('div');
         controls.className = 'dg-login-preferences';
-        login.after(controls);
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'dg-theme-toggle-button';
-        button.setAttribute('data-dg-theme-toggle-button', 'true');
-        button.addEventListener('click', toggleTheme);
-        controls.append(button);
-        var language = document.querySelector('.language-switcher');
+        var shell = login.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        if (shell) { shell.append(controls); }
+        else { login.after(controls); }
+        if (config.showLoginThemeSwitcher) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'dg-theme-toggle-button';
+            button.setAttribute('data-dg-theme-toggle-button', 'true');
+            button.addEventListener('click', toggleTheme);
+            controls.append(button);
+        }
         if (language) { controls.append(language); }
         syncToggleLabels(currentTheme());
     }
@@ -388,12 +389,12 @@
         form.setAttribute('novalidate', 'novalidate');
 
         function submitLanguageForm() {
-            if (typeof form.requestSubmit === 'function') {
-                form.requestSubmit();
-                return;
-            }
-
-            nativeSubmit.click();
+            var url = new URL(window.location.href);
+            url.searchParams.set('wp_lang', select.value);
+            form.querySelectorAll('input[type="hidden"][name]').forEach(function (field) {
+                if (!url.searchParams.has(field.name)) { url.searchParams.set(field.name, field.value); }
+            });
+            window.location.replace(url.href);
         }
 
         var picker = document.createElement('div');
@@ -412,6 +413,7 @@
         menu.className = 'dg-language-menu';
         menu.setAttribute('role', 'listbox');
         menu.setAttribute('aria-hidden', 'true');
+        menu.inert = true;
 
         function syncChevron(open) {
             var chevron = trigger.querySelector('.dg-language-chevron');
@@ -426,6 +428,7 @@
         function closeMenu(restoreFocus) {
             picker.classList.remove('is-open');
             menu.setAttribute('aria-hidden', 'true');
+            menu.inert = true;
             trigger.setAttribute('aria-expanded', 'false');
             syncChevron(false);
             if (restoreFocus) {
@@ -450,6 +453,7 @@
         function openMenu(focusIndex) {
             picker.classList.add('is-open');
             menu.setAttribute('aria-hidden', 'false');
+            menu.inert = false;
             trigger.setAttribute('aria-expanded', 'true');
             syncChevron(true);
             if (typeof focusIndex === 'number') {
@@ -1465,15 +1469,15 @@
         });
     }
 
-    function showDigitsSmsIdentity(form) {
+    function showDigitsSmsIdentity(form, submitEmail) {
         var identity = digitsIdentityValue(form);
         var email = !!emailDomain(identity);
         var back = form.querySelector('.dg-username-password-step:not([hidden]) .dg-username-login-back, .digits_form_back:not(.digits_hide_back)');
         if (back) { back.click(); }
         form.dataset.dgSmsIdentity = 'true';
         if (email) {
-            selectDigitsMode('email', false);
-            submitDigitsSecureForm(form);
+            selectDigitsMode('email', submitEmail === false);
+            if (submitEmail !== false) { submitDigitsSecureForm(form); }
             return;
         }
         var currentPhone = form.querySelector('[name="digits_phone"]');
@@ -1972,8 +1976,16 @@
 
     function restoreDigitsOtpContinuation() {
         var state = readDigitsOtpContinuation();
+        function continuationRoute(value) {
+            if (typeof value !== 'string') { return ''; }
+            try {
+                var address = new URL(value, window.location.origin);
+                address.searchParams.delete('wp_lang');
+                return address.origin + address.pathname + address.search;
+            } catch (_error) { return ''; }
+        }
         if (!state || !state.html || !Array.isArray(state.fields)
-            || state.path !== window.location.pathname + window.location.search) { return; }
+            || continuationRoute(state.path) !== continuationRoute(window.location.href)) { return; }
         var selector = state.signup ? 'form.digits_register' : 'form.digloginpage';
         var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
         var form = shell?.querySelector(selector);
@@ -3732,12 +3744,12 @@
             recoveryHeading.textContent = title;
             login.querySelector('.digits-form_heading')?.appendChild(recoveryHeading);
             if (pageHeading) { pageHeading.textContent = title; }
-            showDigitsSmsIdentity(login);
+            showDigitsSmsIdentity(login, false);
             shell.dataset.dgRecovery = 'true';
             var url = new window.URL(window.location.href);
             url.searchParams.delete('action');
             url.searchParams.set('recover', '1');
-            window.history.replaceState(null, '', url);
+            window.history.replaceState(window.history.state, '', url);
         }
         function returnToSignIn() {
             setBrandedAuthForm(shell, false);
@@ -3752,7 +3764,7 @@
             var url = new window.URL(window.location.href);
             url.searchParams.delete('recover');
             url.searchParams.delete('action');
-            window.history.replaceState(null, '', url);
+            window.history.replaceState(window.history.state, '', url);
         }
         var help = document.createElement('p');
         help.className = 'dg-sms-identity-help';
@@ -3771,6 +3783,84 @@
             setBrandedAuthForm(shell, false);
         }
         if (authRecovery) { beginRecovery(); }
+        return function () { bindBrandedStepLocation(shell, login, beginRecovery, returnToSignIn); };
+    }
+
+    function bindBrandedStepLocation(shell, login, beginRecovery, returnToSignIn) {
+        var routes = ['login', 'password', 'contact', 'recover', 'signup', 'code', 'call', 'call-code', 'success'];
+        var previous;
+
+        function currentStep() {
+            if (document.querySelector('.dg-auth-success[open]')) { return 'success'; }
+            var call = shell.querySelector('[data-call-unified]')?.dataset.callStep;
+            if (call === 'preview' || call === 'code') { return call === 'code' ? 'call-code' : 'call'; }
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (form && visibleDigitsOtpInput(form)) { return 'code'; }
+            if (form?.matches('.digits_register')) { return 'signup'; }
+            if (visibleDigitsPassword(login)) { return 'password'; }
+            if (shell.dataset.dgRecovery === 'true') { return 'recover'; }
+            if (login.dataset.dgSmsIdentity === 'true') { return 'contact'; }
+            return 'login';
+        }
+
+        function writeStep() {
+            var step = currentStep();
+            if (step === previous) { return; }
+            previous = step;
+            var url = new URL(window.location.href);
+            if (url.hash === '#' + step) { return; }
+            url.hash = step;
+            window.history.replaceState(window.history.state, '', url);
+        }
+
+        function leaveSecureStep() {
+            if (shell.classList.contains('dg-call-code-active')) { window.DigitalogicCallLogin?.back(); }
+            shell.querySelector('.dg-username-password-step:not([hidden]) .dg-username-login-back')?.click();
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (form && !form.classList.contains('digits_form_index_section')) {
+                form.querySelector('.digits_form_back:not(.digits_hide_back)')?.click();
+            }
+        }
+
+        function openStep() {
+            var requested = window.location.hash.slice(1);
+            var current = currentStep();
+            // Dynamic steps can only be resumed once their prerequisites exist.
+            if (requested !== current && routes.includes(requested) && current !== 'success') {
+                if (requested === 'login') {
+                    leaveSecureStep();
+                    returnToSignIn();
+                } else if (requested === 'recover' || requested === 'contact' || requested === 'signup') {
+                    leaveSecureStep();
+                    if (requested === 'recover') {
+                        if (shell.dataset.dgRecovery !== 'true') { beginRecovery(); }
+                        else { showDigitsSmsIdentity(login, false); }
+                    } else {
+                        returnToSignIn();
+                        showDigitsSmsIdentity(login, false);
+                    }
+                } else if (requested === 'password' && current === 'login') {
+                    var action = digitsIdentityAction(login);
+                    if (action.type === 'password' && action.enabled) {
+                        showDigitsUsernamePasswordStep(login, digitsIdentityValue(login));
+                    }
+                } else if ((requested === 'call' || requested === 'call-code') && current !== 'call-code') {
+                    if (current !== 'call') {
+                        var number = digitsIdentityAction(login).number;
+                        if (number?.valid && callVerificationEnabled(shell)) { window.DigitalogicCallLogin?.start(number.e164); }
+                    }
+                }
+            }
+            previous = undefined;
+            writeStep();
+        }
+
+        openStep();
+        window.addEventListener('hashchange', openStep);
+        var observer = new MutationObserver(writeStep);
+        observer.observe(shell, {subtree: true, childList: true, attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'data-call-step', 'data-dg-sms-identity', 'data-dg-recovery']});
+        observer.observe(document.body, {childList: true});
     }
 
     function enforceDigitsRegisterMobile() {
@@ -4501,7 +4591,8 @@
             '.dg-passkey-options summary': 'more',
             '.dg-passkey-options .digitalogic-call-toggle, [data-call-start]': 'phone',
             '.dg-otp-resend': 'sms',
-            '.digits-form_button_ic': 'arrow'
+            '[data-call-preview-back]': 'back',
+            '.digits-form_button_ic, .dg-auth-primary': 'arrow'
         };
         Object.keys(selectors).forEach(function (selector) {
             document.querySelectorAll(selector).forEach(function (node) { putAuthIcon(node, selectors[selector]); });
@@ -4799,9 +4890,10 @@
         (window.requestIdleCallback || window.setTimeout)(prefetchAuthPages);
         bindLoginValidation();
         bindDigitsAutoIdentity();
-        bindBrandedAuthNavigation();
+        var routeBrandedAuth = bindBrandedAuthNavigation();
         restoreDigitsOtpContinuation();
         observeAuthChrome();
+        routeBrandedAuth?.();
         animateBrandedAuthSteps();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();

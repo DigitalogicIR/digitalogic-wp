@@ -561,7 +561,7 @@ JS;
 
         $config['labels'] = self::client_labels();
 		if ( $is_login ) {
-			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', false );
+			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
 			$config['otpCursor']          = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
 			$config['emailDomainNonce']   = wp_create_nonce( 'digitalogic_email_domain' );
 			$config['loginSlidesUrl']     = rest_url( 'digitalogic/v1/login-slides' );

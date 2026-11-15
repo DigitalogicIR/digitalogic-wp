@@ -242,6 +242,35 @@ async function checkEmailGate(page, labels) {
     assert.equal(await primary.isDisabled(), true);
 }
 
+async function checkStepLocation(page) {
+    await page.waitForURL('**/#login');
+    const phone = page.locator('[name="digits_phone"]');
+    await phone.fill('known-user');
+    const navigate = async (hash) => {
+        await page.evaluate(value => { window.location.hash = value; }, hash);
+    };
+    await navigate('password');
+    await page.locator('.dg-username-password-input').waitFor();
+    await page.locator('.dg-username-login-back').click();
+    await page.waitForURL('**/#login');
+    assert.equal(await phone.inputValue(), 'known-user');
+
+    await navigate('recover');
+    await page.locator('.dg-recovery-heading').waitFor();
+    await page.waitForURL('**/login/?recover=1#recover');
+    await navigate('login');
+    await page.waitForURL('**/#login');
+    assert.equal(await page.locator('.dg-recovery-heading').count(), 0);
+    assert.equal(new URL(page.url()).searchParams.has('recover'), false);
+
+    await navigate('contact');
+    await page.locator('form[data-dg-sms-identity="true"]').waitFor();
+    await page.waitForURL('**/#contact');
+    await navigate('code');
+    await page.waitForURL('**/#contact');
+    assert.equal(await page.locator('.dg-otp-editor').count(), 0, 'A link cannot create a verification challenge');
+}
+
 async function checkCountryPicker(page) {
     const phone = page.locator('[name="digits_phone"]');
     const code = page.locator('[name="login_digt_countrycode"]');
@@ -734,6 +763,7 @@ async function checkLoginSwitchers(browser) {
                     await page.locator('.dg-skip-password:visible').click();
                 }
                 await checkOtpEditor(page, native ? 'sms' : 'email');
+                await page.waitForURL('**/#code');
                 assert.equal(await page.locator('.digits-form_login > .digits-form_submit-btn').innerText(), labels.verifyCode);
                 await checkAlternatives(page, false);
                 await page.close();
@@ -757,6 +787,10 @@ async function checkLoginSwitchers(browser) {
             await checkCountryPicker(smsAction);
             await checkSmsAction(smsAction, labels);
             await smsAction.close();
+            const location = await browser.newPage({ viewport: { width, height: 800 } });
+            await render(location, direction, labels, false);
+            await checkStepLocation(location);
+            await location.close();
             const continuity = await browser.newPage({ viewport: { width, height: 800 } });
             await checkOtpContinuity(continuity, labels, direction);
             await continuity.close();

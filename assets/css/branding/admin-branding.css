@@ -730,7 +730,7 @@ body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_c
 body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper {
     display: flex !important;
     align-items: center !important;
-    gap: 10px !important;
+    gap: 7px !important;
     width: 100% !important;
     direction: ltr;
 }
@@ -769,6 +769,7 @@ body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phon
     border-radius: 7px !important;
     line-height: 1.15 !important;
     font-family: var(--dg-auth-digits, var(--dg-font)) !important;
+    font-weight: 650 !important;
     font-variant-numeric: tabular-nums;
     text-align: left !important;
 }
@@ -934,10 +935,22 @@ body.login .dg-country-option[aria-selected="true"] {
     color: var(--dg-heading);
 }
 
-body.login #login .dg-country-menu .dg-country-option:focus-visible {
-    outline: 1px solid var(--dg-accent-strong);
-    outline-offset: -1px;
-    background: var(--dg-accent-soft);
+body.login #login .dg-country-menu button.dg-country-option:focus {
+    outline: none !important;
+    box-shadow: none !important;
+    transition: none !important;
+}
+
+body.login #login .dg-country-menu button.dg-country-option:focus-visible {
+    background: color-mix(in srgb, var(--dg-accent) 18%, var(--dg-panel-strong));
+    box-shadow: inset 3px 0 var(--dg-accent-strong) !important;
+}
+
+@media (forced-colors: active) {
+    body.login #login .dg-country-menu button.dg-country-option:focus-visible {
+        outline: 2px solid Highlight !important;
+        outline-offset: -2px;
+    }
 }
 
 body.login .dg-country-option::after {
@@ -993,11 +1006,11 @@ body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_countryco
     display: none;
 }
 
-body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) :is(.digits-form_button, .digits-form_submit, .digits-form_submit-btn):not(.digits-form_passwordless_login) {
+body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) :is(.digits-form_button, .digits-form_submit, .digits-form_submit-btn, .dg-auth-primary):not(.digits-form_passwordless_login) {
     display: inline-flex !important;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 10px;
     min-height: 56px !important;
     border: 0 !important;
     background: linear-gradient(135deg, var(--dg-accent) 0%, var(--dg-accent-strong) 100%) !important;
@@ -1005,14 +1018,34 @@ body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) :is(.digits-fo
     font-family: var(--dg-font) !important;
     font-size: 16px !important;
     font-weight: 800 !important;
+    border-radius: 18px;
     box-shadow: 0 18px 36px color-mix(in srgb, var(--dg-accent-strong) 34%, transparent) !important;
     overflow: hidden;
     isolation: isolate;
+    transition: filter .16s ease, box-shadow .16s ease, opacity .16s ease;
 }
 
-body.login .dg-digits-login-shell :is(.digits-form_button, .digits-form_submit, .digits-form_submit-btn),
-body.login .dg-digits-register-shell :is(.digits-form_button, .digits-form_submit, .digits-form_submit-btn) {
-    border-radius: 18px;
+body.login .dg-auth-primary {
+    inline-size: 100%;
+    padding: 10px 16px;
+    cursor: pointer;
+}
+
+body.login .dg-auth-primary:hover:not(:disabled) { filter: saturate(1.12) brightness(1.04); }
+body.login .dg-auth-primary:active:not(:disabled) { filter: brightness(.94); }
+body.login .dg-auth-primary:disabled { opacity: .56; cursor: wait; }
+body.login .dg-auth-primary > .dg-auth-icon {
+    position: static;
+    order: 2;
+    flex: 0 0 20px;
+    color: inherit;
+    transform: scaleX(var(--dg-forward-arrow, 1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) :is(.digits-form_button, .digits-form_submit, .digits-form_submit-btn, .dg-auth-primary) {
+        transition: none;
+    }
 }
 
 body.rtl.login :is(.dg-digits-login-shell, .dg-digits-register-shell) :is(.digits-form_button, .digits-form_submit, .digits-form_submit-btn),
@@ -2027,6 +2060,48 @@ body.login #digits_google_login .digits-social-icon {
     background: center / contain no-repeat url("../../images/branding/google-g.svg") !important;
 }
 
+@media (min-width: 800px) and (hover: hover) and (pointer: fine) {
+    body.login #login .dg-digits-login-shell #digits_google_login {
+        position: relative;
+        overflow: hidden;
+        isolation: isolate;
+        border: 1px solid #b7cce2 !important;
+        background: linear-gradient(165deg, #fff 12%, #f6fbff 58%, #e3edf8 100%) !important;
+        box-shadow: inset 0 1px #fff, inset 0 -3px 0 #c4d8eb, 0 10px 22px rgb(26 77 134 / 19%);
+        transition: box-shadow .24s ease, filter .24s ease;
+    }
+
+    body.login #login .dg-digits-login-shell #digits_google_login::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: -1;
+        background: linear-gradient(110deg, transparent 19%, rgb(255 255 255 / 80%) 46%, transparent 75%) left / 235% 100% no-repeat;
+        opacity: 0;
+        transition: background-position .45s cubic-bezier(.2,.7,.3,1), opacity .24s ease;
+    }
+
+    body.login #login .dg-digits-login-shell #digits_google_login:is(:hover,:focus-visible) {
+        box-shadow: inset 0 1px #fff, inset 0 -3px 0 #aecde9, 0 13px 26px rgb(25 95 159 / 26%);
+    }
+
+    body.login #login .dg-digits-login-shell #digits_google_login:is(:hover,:focus-visible)::after {
+        background-position: right;
+        opacity: 1;
+    }
+
+    body.login #login .dg-digits-login-shell #digits_google_login:is(:active,.dg-touch-down) {
+        box-shadow: inset 0 2px 5px rgb(37 81 133 / 19%), inset 0 -1px #c4d8eb, 0 3px 7px rgb(26 77 134 / 17%);
+        filter: brightness(.98);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        body.login #login .dg-digits-login-shell #digits_google_login,
+        body.login #login .dg-digits-login-shell #digits_google_login::after { transition: none; }
+    }
+}
+
 body.login #login,
 body.login #login :is(button, a, label, input, summary, [role="button"]) {
     -webkit-tap-highlight-color: transparent;
@@ -2114,7 +2189,7 @@ body.login .dg-digits-login-shell[data-dg-identity="phone"] .digits-mobile_wrapp
 }
 body.login .dg-digits-login-shell[data-dg-identity="phone"] .digits-mobile_wrapper
     > .digits-form_countrycode:not([hidden]) ~ .dg-auth-input-icon > input[name="digits_phone"] {
-    padding-left: 12px !important;
+    padding-left: 8px !important;
 }
 body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_input:has(> .dg-auth-icon) > :is(i, .digits-field_icon) {
     display: none !important;
@@ -2485,12 +2560,23 @@ body.login .dg-call-steps p {
     font-size: 14px;
 }
 body.login .dg-call-number {
-    display: block;
+    display: inline-block;
     margin-block: 3px;
-    color: var(--dg-heading);
-    font: 800 20px/1.4 var(--dg-auth-digits, var(--dg-font));
+    color: var(--dg-accent-strong);
+    font: 700 22px/1.4 var(--dg-font, system-ui);
     font-variant-numeric: tabular-nums;
-    text-align: start;
+    letter-spacing: 0;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+    text-underline-offset: .16em;
+    white-space: nowrap;
+}
+body.login .dg-call-number:hover {
+    text-decoration-color: currentColor;
+}
+body.login [data-call-preview-dial] {
+    display: block;
+    inline-size: fit-content;
 }
 body.login .dg-call-unified .digitalogic-call-icon {
     inline-size: 20px;
@@ -2794,8 +2880,46 @@ body.login .dg-login-preferences {
 }
 
 body.login .dg-login-preferences .language-switcher {
+    display: flex;
+    align-items: center;
+    inline-size: auto;
     min-inline-size: 0;
     margin: 0;
+    padding: 0;
+}
+
+body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) > .dg-login-preferences {
+    grid-column: 1 / -1;
+    inline-size: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 12px 18px;
+    border-block-start: 1px solid var(--dg-border);
+}
+
+body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-button) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 42px;
+    margin: 0 !important;
+    padding-inline: 12px;
+    border: 1px solid var(--dg-border);
+    border-radius: 12px;
+    background: var(--dg-panel-soft);
+    color: var(--dg-text);
+    font: 650 14px/1.3 var(--dg-font, system-ui);
+    cursor: pointer;
+}
+
+body.login .dg-login-preferences .dg-theme-toggle-button { width: auto; box-shadow: none; }
+body.login .dg-login-preferences:has(.dg-language-picker.is-open) { z-index: 80; }
+body.login .dg-login-preferences .dg-language-picker { min-width: 120px; }
+body.login .dg-login-preferences .dg-language-menu { min-inline-size: 160px; }
+body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-button):hover {
+    border-color: var(--dg-border-strong);
+    background: var(--dg-accent-soft);
 }
 
 .dg-theme-toggle-button {
@@ -3575,15 +3699,17 @@ body.login .dg-digits-login-shell .altEmail_container[hidden] {
     pointer-events: none;
     transform: translateY(8px) scale(0.98);
     transform-origin: bottom center;
-    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
-    visibility: hidden;
+    transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
 .dg-language-picker.is-open .dg-language-menu {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0) scale(1);
-    visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dg-language-menu { transition: none; }
 }
 
 body.login.wp-core-ui .button .dashicons,
@@ -3918,28 +4044,7 @@ body.login .dg-auth-success p {
 
 
 body.login .dg-call-next {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    inline-size: 100%;
-    min-block-size: 52px;
     margin-block: 20px 10px;
-    padding: 10px 16px;
-    border: 0;
-    border-radius: 16px;
-    color: #fff;
-    background: linear-gradient(120deg, var(--dg-accent), var(--dg-accent-strong));
-    font: 700 16px/1.4 var(--dg-font, system-ui, sans-serif);
-    cursor: pointer;
-}
-body.login .dg-call-next:disabled {
-    opacity: .55;
-    cursor: wait;
-}
-body.login .dg-call-next .dg-auth-icon {
-    position: static;
-    color: inherit;
 }
 body.login .dg-call-code-prompt {
     color: var(--dg-text-soft);
