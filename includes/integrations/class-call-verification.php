@@ -444,6 +444,18 @@ final class Digitalogic_Call_Verification {
 
 		$raw_phone = $request->get_param( 'phone' );
 		$phone     = Digitalogic_PBX_Phone::normalize( $raw_phone );
+		$delivery  = $request->get_param( 'delivery' ) ?? 'incoming';
+		$dial      = self::public_dial();
+		$internal  = 'extension' === $delivery;
+		if ( $internal ) {
+			$assigned = 'login' === $purpose && $user_id < 1 ? self::lan_assignment() : null;
+			if ( ! $assigned ) {
+				return new WP_Error( 'digitalogic_call_extension', __( 'Internal extension verification is unavailable for this workstation.', 'digitalogic' ), array( 'status' => 403 ) );
+			}
+			$user_id = $assigned['user']->ID;
+			$dial = self::extension_dial( $assigned['extension'] );
+			$phone = 'pbx:' . $assigned['extension'];
+		}
 		if ( '' === $phone && 'login' === $purpose && is_string( $raw_phone ) ) {
 			$phone = Digitalogic_PBX_Phone::normalize_international( $raw_phone );
 		}
@@ -451,9 +463,8 @@ final class Digitalogic_Call_Verification {
 			return new WP_Error( 'digitalogic_call_phone', __( 'Enter a valid phone number with its area code.', 'digitalogic' ), array( 'status' => 400 ) );
 		}
 
-		$delivery = $request->get_param( 'delivery' ) ?? 'incoming';
 		$queue    = 'outgoing' === $delivery && 'login' === $purpose ? self::outbound_queue_directory() : '';
-		if ( 'incoming' !== $delivery && ( ! $queue || ! Digitalogic_PBX_Phone::normalize( $phone ) ) ) {
+		if ( ! $internal && 'incoming' !== $delivery && ( ! $queue || ! Digitalogic_PBX_Phone::normalize( $phone ) ) ) {
 			return new WP_Error( 'digitalogic_call_delivery', __( 'The phone callback option is unavailable for this number.', 'digitalogic' ), array( 'status' => 400 ) );
 		}
 
@@ -549,7 +560,7 @@ final class Digitalogic_Call_Verification {
 				'code'         => $code,
 				'csrf_token'   => $csrf,
 				'expires_in'   => self::CHALLENGE_TTL,
-				'dial'         => self::public_dial(),
+				'dial'         => $dial,
 			),
 			201
 		);
@@ -781,7 +792,14 @@ final class Digitalogic_Call_Verification {
 		$user       = null;
 		$contact_id = 0;
 		if ( 'login' === $row->purpose ) {
-			$user = $this->resolve_login_user( $phone, (string) $row->phone_hash );
+			if ( str_starts_with( $phone, 'pbx:' ) ) {
+				$assigned = self::lan_assignment();
+				$user = $assigned && $assigned['user']->ID === (int) $row->user_id && 'pbx:' . $assigned['extension'] === $phone
+					? $assigned['user']
+					: new WP_Error( 'digitalogic_call_extension', __( 'The extension assignment is no longer available.', 'digitalogic' ), array( 'status' => 403 ) );
+			} else {
+				$user = $this->resolve_login_user( $phone, (string) $row->phone_hash );
+			}
 			if ( is_wp_error( $user ) ) {
 				$wpdb->query( 'ROLLBACK' );
 				return $user;
@@ -1465,7 +1483,7 @@ final class Digitalogic_Call_Verification {
 		$call_id            = is_string( $payload['call_id'] ) ? $payload['call_id'] : '';
 		$code               = self::ascii_digits( is_string( $payload['code'] ) ? $payload['code'] : '' );
 		$called             = is_string( $payload['called_number'] ) ? self::normalize_called_did( $payload['called_number'] ) : '';
-		$caller             = is_string( $payload['caller_number'] ) ? Digitalogic_PBX_Phone::normalize_trusted_ani( $payload['caller_number'] ) : '';
+		$caller             = self::normalize_pbx_caller( $payload['caller_number'] );
 		$occurred_at        = is_string( $payload['occurred_at'] ) ? $payload['occurred_at'] : '';
 		$occurred_timestamp = 1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', $occurred_at ) ? strtotime( $occurred_at ) : false;
 		$valid              = 1 === preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $event_id )
@@ -1506,7 +1524,7 @@ final class Digitalogic_Call_Verification {
 		$event_id           = is_string( $payload['event_id'] ) ? $payload['event_id'] : '';
 		$call_id            = is_string( $payload['call_id'] ) ? $payload['call_id'] : '';
 		$called             = is_string( $payload['called_number'] ) ? self::normalize_called_did( $payload['called_number'] ) : '';
-		$caller             = is_string( $payload['caller_number'] ) ? Digitalogic_PBX_Phone::normalize_trusted_ani( $payload['caller_number'] ) : '';
+		$caller             = self::normalize_pbx_caller( $payload['caller_number'] );
 		$occurred_at        = is_string( $payload['occurred_at'] ) ? $payload['occurred_at'] : '';
 		$occurred_timestamp = 1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', $occurred_at ) ? strtotime( $occurred_at ) : false;
 		$valid              = 1 === preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $event_id )
@@ -1628,6 +1646,42 @@ final class Digitalogic_Call_Verification {
 		);
 	}
 
+	/** Read provisioned SIP identities from server configuration. */
+	private static function lan_extensions(): array {
+		if ( ! defined( 'DIGITALOGIC_LAN_PBX_EXTENSIONS' ) || ! is_array( DIGITALOGIC_LAN_PBX_EXTENSIONS ) ) {
+			return array();
+		}
+		return array_map( 'strval', array_filter( DIGITALOGIC_LAN_PBX_EXTENSIONS, static fn( $value ) => is_int( $value ) || is_string( $value ) ) );
+	}
+
+	private static function lan_assignment(): ?array {
+		if ( ! class_exists( 'Digitalogic_Plugin_Auth_Routes' ) ) {
+			return null;
+		}
+		$user = Digitalogic_Plugin_Auth_Routes::lan_assigned_user();
+		$extensions = self::lan_extensions();
+		$extension = $user ? ( $extensions[ $user->user_login ] ?? '' ) : '';
+		if ( ! preg_match( '/\A[1-9][0-9]{2,5}\z/', $extension )
+			|| 1 !== count( array_keys( $extensions, $extension, true ) ) ) {
+			return null;
+		}
+		return array( 'user' => $user, 'extension' => $extension );
+	}
+
+	private static function normalize_pbx_caller( $value ): string {
+		if ( ! is_string( $value ) ) {
+			return '';
+		}
+		if ( preg_match( '/\Apbx:([1-9][0-9]{2,5})\z/', $value, $matches ) ) {
+			return 1 === count( array_keys( self::lan_extensions(), $matches[1], true ) ) ? $value : '';
+		}
+		return Digitalogic_PBX_Phone::normalize_trusted_ani( $value );
+	}
+
+	private static function extension_dial( string $extension ): array {
+		return array( 'tel' => $extension, 'display' => $extension );
+	}
+
 	/**
 	 * Load front-end assets and localized configuration.
 	 */
@@ -1702,10 +1756,14 @@ final class Digitalogic_Call_Verification {
 	private function render_branded_login_widget(): void {
 		$persian = str_starts_with( strtolower( determine_locale() ), 'fa' );
 		$dial    = self::public_dial();
+		$lan     = self::lan_assignment();
 		?>
 		<section class="digitalogic-call-verification dg-call-unified" data-digitalogic-call-widget data-call-unified data-purpose="login" data-call-available="<?php echo esc_attr( defined( 'DIGITALOGIC_PUBLIC_CALL_VERIFICATION' ) && DIGITALOGIC_PUBLIC_CALL_VERIFICATION ? 'true' : 'false' ); ?>">
 			<input type="hidden" data-call-phone>
 			<button type="button" data-call-start hidden></button>
+			<?php if ( $lan ) : ?>
+				<button type="button" class="dg-call-lan-action dg-icon-label-action" data-call-lan-action data-login="<?php echo esc_attr( $lan['user']->user_login ); ?>" data-email-digest="<?php echo esc_attr( hash( 'sha256', strtolower( $lan['user']->user_email ) ) ); ?>" data-extension="<?php echo esc_attr( $lan['extension'] ); ?>" hidden><span><?php echo esc_html( sprintf( $persian ? 'ورود با تماس به داخلی %s' : 'Sign in by calling extension %s', $lan['extension'] ) ); ?></span></button>
+			<?php endif; ?>
 			<p class="digitalogic-call-error" data-call-error role="alert" hidden></p>
 			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>
 				<div class="digitalogic-call-instructions" data-call-preview hidden>
@@ -1714,7 +1772,8 @@ final class Digitalogic_Call_Verification {
 						<li>
 							<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
 							<a class="dg-call-number" data-call-preview-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><?php echo esc_html( $dial['display'] ); ?></a>
-							<p><?php echo esc_html( $persian ? 'از همان شماره‌ای که وارد کردید تماس بگیرید.' : 'Call from the same number you entered.' ); ?></p>
+							<p data-call-public-note><?php echo esc_html( $persian ? 'از همان شماره‌ای که وارد کردید تماس بگیرید.' : 'Call from the same number you entered.' ); ?></p>
+							<p data-call-lan-note hidden><?php echo esc_html( $persian ? 'با تلفن یا نرم‌افزار تماس شرکت، از داخلی تخصیص‌یافته به حساب خود تماس بگیرید.' : 'Use your assigned extension on the company phone or softphone.' ); ?></p>
 						</li>
 						<li>
 							<strong><?php echo esc_html( $persian ? 'کد تأیید را با صفحه‌کلید تلفن وارد کنید' : 'Enter the verification code on your phone keypad' ); ?></strong>

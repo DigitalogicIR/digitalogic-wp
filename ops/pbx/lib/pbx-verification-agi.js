@@ -72,6 +72,15 @@ function normalizeCallerNumber(value, options) {
 	return /^\+(?!98)[1-9]\d{7,14}$/.test(explicit) ? explicit : null;
 }
 
+function isExtension(value) {
+	return typeof value === 'string' && /^[1-9]\d{2,5}$/.test(value);
+}
+
+function validCallerPrincipal(value) {
+	return (typeof value === 'string' && value.startsWith('pbx:') && isExtension(value.slice(4))) ||
+		Boolean(normalizeCallerNumber(value));
+}
+
 function validateSixDigitCode(value) {
 	return typeof value === 'string' && /^[1-9]\d{5}$/.test(value);
 }
@@ -294,7 +303,7 @@ function buildPayload(config, call) {
 	if (!validateEventId(call.eventId) || !validateCallId(call.callId)
 		|| !validateSixDigitCode(call.code)
 		|| normalizeIranNumber(call.calledNumber) !== config.expectedDid
-		|| !normalizeCallerNumber(call.callerNumber)) {
+		|| !validCallerPrincipal(call.callerNumber)) {
 		throw new Error('Invalid callback payload input');
 	}
 	return {
@@ -312,7 +321,7 @@ function buildPayload(config, call) {
 function buildPendingPayload(config, call) {
 	if (!validateEventId(call.eventId) || !validateCallId(call.callId)
 		|| normalizeIranNumber(call.calledNumber) !== config.expectedDid
-		|| !normalizeCallerNumber(call.callerNumber)) {
+		|| !validCallerPrincipal(call.callerNumber)) {
 		throw new Error('Invalid pending payload input');
 	}
 	return {
@@ -647,14 +656,16 @@ async function safeSetPending(agi, pending) {
 
 function parseMode(value) {
 	const mode = value === undefined || value === '' ? 'verify' : value;
-	return ['verify', 'preflight', 'shortcut', 'outbound'].includes(mode) ? mode : null;
+	return ['verify', 'preflight', 'shortcut', 'outbound', 'extension-preflight', 'extension-shortcut'].includes(mode) ? mode : null;
 }
 
 async function runAgi(dependencies = {}) {
-	const mode = parseMode(dependencies.mode);
-	if (mode === null) {
+	const requestedMode = parseMode(dependencies.mode);
+	if (requestedMode === null) {
 		return EXIT.CONFIGURATION;
 	}
+	const internal = requestedMode.startsWith('extension-');
+	const mode = internal ? requestedMode.slice('extension-'.length) : requestedMode;
 	let config;
 	let secret;
 	try {
@@ -667,8 +678,9 @@ async function runAgi(dependencies = {}) {
 	let agi;
 	try {
 		agi = await AgiSession.open(dependencies.input || process.stdin, dependencies.output || process.stdout);
-		const expectedContext = mode === 'outbound' ? 'pbx-call-verification-outbound' :
-			mode === 'verify' ? config.expectedContext : config.expectedPendingContext;
+		const expectedContext = internal ? 'pbx-call-verification-extension' :
+			mode === 'outbound' ? 'pbx-call-verification-outbound' :
+				mode === 'verify' ? config.expectedContext : config.expectedPendingContext;
 		if (agi.environment.agi_context !== expectedContext) {
 			await safeSetResult(agi, 'invalid_call');
 			return EXIT.INVALID_CALL;
@@ -681,11 +693,17 @@ async function runAgi(dependencies = {}) {
 			allowZeroCountryPrefix: config.allowZeroCountryPrefixDid,
 			localAreaCode: config.didLocalAreaCode,
 		});
-		const callerNumber = normalizeCallerNumber(rawAni, {
+		let callerNumber = normalizeCallerNumber(rawAni, {
 			allowBareNsn: config.allowBareAni,
 			allowZeroCountryPrefix: config.allowZeroCountryPrefixAni,
 			localAreaCode: config.aniLocalAreaCode,
 		});
+		if (internal) {
+			const extension = await agi.getVariable('PBX_VERIFY_INTERNAL_EXTEN');
+			const source = /^PJSIP\/([1-9]\d{2,5})-[0-9a-f]+$/i.exec(agi.environment.agi_channel || '');
+			// Asterisk's channel name identifies the authenticated endpoint. Caller ID is presentation data.
+			callerNumber = isExtension(extension) && source?.[1] === extension ? `pbx:${extension}` : null;
+		}
 		const callId = agi.environment.agi_uniqueid || '';
 		if (calledNumber !== config.expectedDid || !callerNumber || !validateCallId(callId)) {
 			await safeSetResult(agi, 'invalid_call');

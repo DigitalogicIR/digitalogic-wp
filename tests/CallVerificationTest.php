@@ -9,6 +9,18 @@ require_once dirname(__DIR__) . '/includes/integrations/class-voice-notification
 require_once __DIR__ . '/fixtures/ZeroSpamLogin.php';
 
 final class CallVerificationTest extends TestCase {
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+    #[\PHPUnit\Framework\Attributes\PreserveGlobalState(false)]
+    public function test_internal_callback_principals_require_a_unique_extension_assignment(): void {
+        define('DIGITALOGIC_LAN_PBX_EXTENSIONS', ['first' => '101', 'second' => '102', 'third' => 102]);
+        $normalize = new ReflectionMethod(Digitalogic_Call_Verification::class, 'normalize_pbx_caller');
+        $this->assertSame('pbx:101', $normalize->invoke(null, 'pbx:101'));
+        $this->assertSame('', $normalize->invoke(null, 'pbx:102'));
+        $this->assertSame('', $normalize->invoke(null, 'pbx:103'));
+        $this->assertSame('', $normalize->invoke(null, '101'));
+        $this->assertSame('+989123456789', $normalize->invoke(null, '09123456789'));
+    }
+
     public function test_public_dial_uses_the_configured_landline_for_the_link_and_display(): void {
         $dial = new ReflectionMethod(Digitalogic_Call_Verification::class, 'public_dial');
         $configured = static fn() => '+982155550100';

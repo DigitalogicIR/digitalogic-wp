@@ -3563,6 +3563,29 @@
         var updateEmailFeedback = bindEmailDomainFeedback(emailInput);
         var login = phoneInput.form;
         if (login) {
+            var lanAction = shell.querySelector('[data-call-lan-action]');
+            if (lanAction) {
+                var submit = login.querySelector('.digits-form_login > .digits-form_submit-btn');
+                submit?.after(lanAction);
+                putAuthIcon(lanAction, 'phone');
+                var updateLanAction = async function () {
+                    var identity = digitsIdentityValue(login).toLowerCase();
+                    var available = callVerificationEnabled(shell);
+                    lanAction.hidden = !available || identity !== lanAction.dataset.login.toLowerCase();
+                    if (!available || !emailDomain(identity) || !window.crypto?.subtle) { return; }
+                    try {
+                        var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
+                        var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+                        if (identity === digitsIdentityValue(login).toLowerCase()) {
+                            lanAction.hidden = hex !== lanAction.dataset.emailDigest;
+                        }
+                    } catch (_error) {
+                        // The assigned username remains available on browsers without digest support.
+                    }
+                };
+                login.addEventListener('input', updateLanAction);
+                updateLanAction();
+            }
             shell.addEventListener('digitalogic:call-error', function (event) {
                 showDigitsInlineMessage(login, event.detail, 'warning');
             });
