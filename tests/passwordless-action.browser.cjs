@@ -233,9 +233,15 @@ async function checkEmailGate(page, labels) {
     await expectState('unavailable', false);
     await status.getByRole('button').click();
     await expectState('valid', true);
-    assert.equal(await primary.innerText(), labels.enterPassword);
+    assert.equal(await primary.innerText(), labels.continue);
     assert.equal(await email.getAttribute('aria-invalid'), 'false');
     assert.equal(colors.size, 4);
+    await primary.click();
+    await form.locator('.dg-username-password-input').waitFor();
+    const passwordStep = form.locator('.dg-username-password-step');
+    assert.ok(await passwordStep.getByText(labels.skipPasswordCaption, { exact: true }).isVisible());
+    assert.ok(await passwordStep.getByRole('button', { name: labels.skipPassword, exact: true }).isVisible());
+    await form.locator('.dg-username-login-back').click();
     await email.fill('preview');
     assert.equal(await primary.isEnabled(), true);
     await phone.fill('');
@@ -491,19 +497,19 @@ async function checkVerificationLabels(page, labels) {
     const email = page.locator('input[name="digits_email"]');
     const primary = page.locator('.digits-form_login > .digits-form_submit-btn');
     for (const [field, value, expected, isPhone] of [
-        [phone, '', 'Continue'],
-        [phone, 'sample-user', 'Continue'],
-        [phone, '۰۹۱۲', 'Continue', true],
+        [phone, '', labels.continue],
+        [phone, 'sample-user', labels.continue],
+        [phone, '۰۹۱۲', labels.continue, true],
         [phone, '۰۹۱۲۰۰۰۰۰۰۰', labels.sendSmsCode, true],
         [phone, '۰۲۱۱۲۳۴۵۶۷۸', labels.getCallCode, true],
         [phone, '+442079460018', labels.getCallCode, true],
         [phone, '+12025550123', labels.continueBySms, true],
-        [phone, '+448001111', 'Continue', true],
+        [phone, '+448001111', labels.continue, true],
         [phone, '+989120000000', labels.sendSmsCode, true],
-        [phone, 'demo@', 'Continue'],
+        [phone, 'demo@', labels.continue],
         [email, 'demo@example.com', labels.sendEmailCode],
-        [email, 'demo', 'Continue'],
-        [phone, '', 'Continue']
+        [email, 'demo', labels.continue],
+        [phone, '', labels.continue]
     ]) {
         await field.fill(value);
         assert.equal(await primary.innerText(), expected, value || '(empty identity)');
@@ -513,7 +519,7 @@ async function checkVerificationLabels(page, labels) {
     assert.equal(await primary.innerText(), labels.sendSmsCode);
     await page.locator('.dg-country-trigger').click();
     await page.locator('.dg-country-option[data-code="+1"]').click();
-    assert.equal(await primary.innerText(), 'Continue', 'The previous SMS label must clear on country changes');
+    assert.equal(await primary.innerText(), labels.continue, 'The previous SMS label must clear on country changes');
 }
 
 async function checkIdentityPrompt(page, expected) {
@@ -725,6 +731,7 @@ async function checkLoginSwitchers(browser) {
                 passkeyLogin: direction === 'rtl' ? 'ورود با کلید عبور' : 'Sign in with a passkey',
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
+                continue: direction === 'rtl' ? 'ادامه' : 'Continue',
                 enterPassword: direction === 'rtl' ? 'وارد کردن رمز عبور' : 'Enter password',
                 getCallCode: direction === 'rtl' ? 'ادامه با تماس تلفنی' : 'Continue by phone call',
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',
