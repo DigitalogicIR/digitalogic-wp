@@ -2,6 +2,8 @@
 
 The publisher owns immutable signed APK/manifest files. This adapter only advertises a previously published build; Android still requires the user's normal installation confirmation.
 
+Deployment status: **live on2026-11-15** from runtime commit `970df32`. Build17 was issued at11:58:45UTC through the owner command. Independent HTTPS readback returned `self_update:true`, `telemetry:true`, and fixed manifest `https://digitalogic.ir/apps/digitalogic/digitalogic-17-arm64.json`. The optional report schema/cleanup are active; no synthetic production report was submitted. Physical-device receipt is a separate app-owner acceptance step.
+
 ## Issue an existing build
 
 The existing WordPress mobile settings page offers a `manage_options` and nonce-protected issue action. The machine owner may also run:
@@ -36,3 +38,5 @@ Install `MobileDeviceReport::install()` explicitly, verify schema and scheduled 
 - Independent release/report review:15 tests/158 assertions, no blocking finding.
 - Separate WordPress/Woo/Laravel fixture:38 actual-path checks passed, using the real signed build16/17 artifacts and fixed Android verifier tools. Covered issuance, same-UUID replay, downgrade rejection, shared-lock contention, anonymous denial, real-kernel report authentication/consent/limits, daily deduplication, revoked session rejection and expiry deletion.
 - The fixture created no orders, sent no SMS/mail and retained network/cache isolation. Production acceptance is recorded separately after narrow deployment.
+- Transport trace: zero successful IP connections, zero foreign Unix sockets, one private fixture database connection. All six frozen runtime hashes matched before/after acceptance.
+- Live readback: anonymous POST report401, GET/DELETE405; report schema1, hourly cleanup scheduled, approved Android SMS capability retained. Both fixed Android verifier commands also succeeded as the production web-service user. The tmpfiles creation preserved the existing shared-lock inode.
