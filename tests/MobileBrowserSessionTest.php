@@ -118,7 +118,7 @@ final class MobileBrowserSessionTest extends TestCase {
 		self::assertNull(BrowserSession::inspect($native,[BrowserSession::COOKIE=>BrowserSession::encode(BrowserSession::anonymous())],true));
 		$context=BrowserSession::anonymous();
 		foreach(['HTTP_AUTHORIZATION','REDIRECT_HTTP_AUTHORIZATION']as$header)$this->error('browser_credentials_conflict',$this->inspect($context,[$header=>'Bearer '.str_repeat('f',64)]));
-		$this->error('browser_origin_invalid',BrowserSession::inspect($this->server('GET','/app-api/bootstrap',['HTTP_X_DIGITALOGIC_PWA'=>'']),[],true));
+		$this->error('browser_origin_invalid',BrowserSession::inspect($this->server('GET','/app-api/account/profile',['HTTP_X_DIGITALOGIC_PWA'=>'']),[],true));
 		$request=Request::create('/app-api/auth/otp/verify','POST',[],[],[],['CONTENT_TYPE'=>'application/json'],wp_json_encode(['digitalogic_browser'=>['authorization'=>'forged']]));
 		self::assertFalse(BrowserSession::active($request));
 		$response=new Illuminate\Http\JsonResponse(['access_token'=>'native-fixture-token']);self::assertSame($response,BrowserSession::finish($request,$response));self::assertSame('native-fixture-token',json_decode($response->getContent(),true)['access_token']);
@@ -139,6 +139,34 @@ final class MobileBrowserSessionTest extends TestCase {
 		$public=BrowserSession::inspect($this->server('GET','/app-api/products/42'),[],true);self::assertIsArray($public);self::assertNull($public['context']);self::assertSame('',$public['authorization']);
 		$this->error('browser_csrf_invalid',BrowserSession::inspect($this->server('GET','/app-api/bootstrap'),[BrowserSession::COOKIE=>'tampered'],true));
 		foreach([false,'false','true',[],0]as$value) {$GLOBALS['digitalogic_test_options']['digitalogic_mobile_browser_auth']=$value;self::assertFalse(BrowserSession::enabled());}
+	}
+	public function test_unmarked_public_get_and_head_ignore_pwa_cookie_authority():void {
+		$context=array_replace(BrowserSession::anonymous(),['access_token'=>str_repeat('e',64),'session_id'=>str_repeat('f',32)]);
+		$ciphertext=BrowserSession::encode($context);
+		foreach(['/app-api/bootstrap','/app-api/categories','/app-api/products','/app-api/products/42','/app-api/products/42/?preview=0','/app-api/links/resolve','/app-api/forms']as$path) {
+			foreach(['GET','HEAD']as$method) {
+				$server=$this->server($method,$path);unset($server['HTTP_X_DIGITALOGIC_PWA']);
+				foreach([$ciphertext,'tampered-cookie']as$cookie)self::assertNull(BrowserSession::inspect($server,[BrowserSession::COOKIE=>$cookie],true));
+			}
+		}
+		self::assertNull(BrowserSession::inspect($this->server('GET','/app-api/bootstrap',['HTTP_X_DIGITALOGIC_PWA'=>'']),[BrowserSession::COOKIE=>$ciphertext],true));
+		$GLOBALS['digitalogic_test_options']['digitalogic_mobile_browser_auth']=false;
+		self::assertNull(BrowserSession::inspect($this->server('HEAD','/app-api/products/42',['HTTP_X_DIGITALOGIC_PWA'=>'']),[BrowserSession::COOKIE=>$ciphertext],true));
+		self::assertSame([],$this->db->queries);
+	}
+	public function test_public_exemption_never_covers_protected_routes_writes_or_marked_calls():void {
+		foreach(['/app-api/account/profile','/app-api/cart','/app-api/checkout','/app-api/auth/browser/session','/app-api/bootstrap-extra','/app-api/products/42/private']as$path) {
+			foreach(['GET','HEAD']as$method) {
+				$server=$this->server($method,$path);unset($server['HTTP_X_DIGITALOGIC_PWA']);
+				$this->error('browser_origin_invalid',BrowserSession::inspect($server,[],true));
+			}
+		}
+		foreach(['POST','PUT','PATCH','DELETE','OPTIONS']as$method)$this->error('browser_origin_invalid',BrowserSession::inspect($this->server($method,'/app-api/bootstrap',['HTTP_X_DIGITALOGIC_PWA'=>'']),[],true));
+		$context=BrowserSession::anonymous();
+		foreach(['GET','HEAD']as$method) {
+			$this->error('browser_csrf_invalid',$this->inspect($context,['HTTP_X_DIGITALOGIC_CSRF'=>'stale'],$method,'/app-api/bootstrap'));
+			$this->error('browser_origin_invalid',$this->inspect($context,['HTTP_X_DIGITALOGIC_PWA'=>'0'],$method,'/app-api/bootstrap'));
+		}
 	}
 	public function test_discovery_creates_only_secure_host_cookie_and_public_csrf():void {
 		$inspection=BrowserSession::inspect($this->server('GET','/app-api/auth/browser/session',['HTTP_ORIGIN'=>'','HTTP_REFERER'=>BrowserSession::ORIGIN.'/']),[],true);

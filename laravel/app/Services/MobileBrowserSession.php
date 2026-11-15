@@ -106,6 +106,13 @@ final class MobileBrowserSession {
 	public static function inspect( array $server, array $cookies, bool $secure ) {
 		$header = $server['HTTP_X_DIGITALOGIC_PWA'] ?? '';
 		$origin = $server['HTTP_ORIGIN'] ?? '';
+		$path   = wp_parse_url( (string) ( $server['REQUEST_URI'] ?? '' ), PHP_URL_PATH );
+		$method = $server['REQUEST_METHOD'] ?? '';
+		$public = in_array( $method, array( 'GET', 'HEAD' ), true ) && is_string( $path ) && preg_match( '~\A/app-api/(?:bootstrap|categories|products(?:/[1-9][0-9]{0,9})?|links/resolve|forms)/?\z~D', $path );
+		// Public catalog callers need no session bootstrap; never decode or forward their cookie.
+		if ( '' === $header && $public ) {
+			return null;
+		}
 		if ( '' === $header && self::ORIGIN !== $origin ) {
 			return null;
 		}
@@ -119,13 +126,10 @@ final class MobileBrowserSession {
 		if ( null === $network ) {
 			return self::error( 'browser_proxy_invalid', 403 );
 		}
-		$path = wp_parse_url( (string) ( $server['REQUEST_URI'] ?? '' ), PHP_URL_PATH );
 		if ( ! is_string( $path ) || ! str_starts_with( $path, '/app-api/' ) ) {
 			return self::error( 'browser_route_invalid', 403 );
 		}
-		$method    = $server['REQUEST_METHOD'] ?? '';
 		$discovery = 'GET' === $method && '/app-api/auth/browser/session' === rtrim( $path, '/' );
-		$public    = 'GET' === $method && preg_match( '~\A/app-api/(?:bootstrap|categories|products(?:/[1-9][0-9]{0,9})?|links/resolve|forms)/?\z~D', $path );
 		if ( ! self::enabled() && ! $public ) {
 			return self::error( 'browser_auth_unavailable', 503 );
 		}

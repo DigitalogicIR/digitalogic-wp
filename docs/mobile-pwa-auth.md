@@ -17,7 +17,7 @@ Unsafe methods require the exact PWA Origin. Safe reads can use the exact HTTPS 
 
 Before rendering Google Identity Services, POST `/app-api/auth/browser/google/challenge` with `{request_id: UUID}` and the browser CSRF generation. The response is `{challenge_id, nonce, expires_at}`. Pass `nonce` to GIS, then send its signed `id_token` and `challenge_id` to the existing `/auth/google` endpoint. The challenge lasts five minutes and is bound to this cookie generation. The same request UUID replays the same unexpired challenge; expired challenges return410 and require a fresh user gesture.
 
-The verifier still enforces Google signature, issuer, audience, expiry, verified email, subject ownership, duplicate discovery, binding activation fences and token replay policy. Browser nonce proof does not weaken privileged-account handling or implicitly send an SMS. Unknown identities retain the existing explicit Googleâ†’phone continuation; no new user is created from an email/name match alone.
+The verifier still enforces Google signature, issuer, audience, expiry, verified email, subject ownership, duplicate discovery, binding activation fences and token replay policy. Browser nonce proof does not weaken privileged-account handling or implicitly send an SMS. Unknown identities retain the existing explicit GoogleÃ¢â€ â€™phone continuation; no new user is created from an email/name match alone.
 
 Use the configured public web client ID from bootstrap. Google Console must separately authorize `https://pwa.digitalogic.ir` as a JavaScript origin. No OAuth client secret belongs in the PWA. Browser protected reauthentication/merge remains a separate frontend acceptance gate.
 
@@ -39,15 +39,25 @@ Deployment is a narrow manifest of ten runtime files plus the browser gate. WebO
 
 ## Acceptance status
 
-- Source: independent browser/WebOTP/native regressions pass50 tests/586 assertions.
+- Source: independent browser/WebOTP/native regressions pass 52 tests / 682 assertions.
 - Isolated canonical WordPress/Laravel: signed fixture Google token and seeded manual-code verification exercise the actual HTTP kernel; cookie/CSRF/account boundaries and native compatibility pass. No real identity proof, account creation, SMS, order or external network call.
 - Fresh-process WooCommerce/Zero Spam acceptance verifies actual browser-cookie authority before normal provider initialization and unchanged guest enforcement. Detailed frozen-hash evidence is retained with the deployment checkpoint.
 - Production PWA Google consent, delivered WebOTP and an actual browser checkout remain downstream gates; source tests are not claims of those outcomes.
 
-### Deployment checkpoint — 2026-11-16
+### Deployment checkpoint â€” 2026-11-16
 
-Runtime source `d335e44` (integrated main at `fe42d554`) is deployed as a ten-file artifact. The exact deployed archive is `f0981a2fea48db1f19c31faaeb2118546534960af94f7dd94f1d50e3281a4b91`; all hashes were independently read back. The live cart file receives only its rate-scope expression change, preserving its older formatting/SQL baseline. Backup: `/var/backups/digitalogic-pwa-browser.kw29amlx`.
+Runtime source `d335e44` (integrated main at `fe42d554`) is deployed as a ten-file artifact. The exact deployed archive is `61dd2f2de89a9f1fc816a1ea8468e5294884a6fd71648e615104890933d0f3ab`; all hashes were independently read back. The live cart file receives only its rate-scope expression change, preserving its older formatting/SQL baseline. Backup: `/var/backups/digitalogic-pwa-browser.kw29amlx`.
 
-The frozen artifact passed 91 isolated canonical-kernel/fresh-bootstrap assertions with zero successful IP/foreign-socket connections, SMS, users or orders created. Public PWA acceptance passed 18 no-send checks: anonymous discovery, cookie flags, stable generation, Google nonce replay, stale/foreign rejection, no-store headers, and unchanged native unauthorized responses. Only an anonymous in-memory browser cookie and an expiring five-minute nonce were created; its receipt expires after ten minutes. No customer app session was created by the public checks.
+The frozen artifact passed 91 isolated canonical-kernel/fresh-bootstrap assertions with zero successful IP/foreign-socket connections, SMS, users or orders created. Public PWA acceptance passed 20 no-send checks: anonymous discovery, cookie flags, stable generation, Google nonce replay, stale/foreign rejection, no-store headers, and unchanged native unauthorized responses. Only an anonymous in-memory browser cookie and an expiring five-minute nonce were created; its receipt expires after ten minutes. No customer app session was created by the public checks.
 
 `browser_auth` and `browser_google` are live; `web_otp` remains false. Default/Android SMS and released build 18 option hashes are unchanged. Google Console origin was independently configured by the PWA owner; an actual user GIS exchange remains a browser acceptance step. The separate PWA-origin WebOTP template is still an operational blocker, while manual code entry is available.
+
+### Shopper WebSocket restoration
+
+The live origin worker accepted `digitalogic.shopper` but a later server-file replacement had lost its negotiation and scoped projection. Direct worker and Apache probes reproduced the mismatch, so the PWA owner temporarily blocked that path. The already-reviewed shopper implementation was restored while preserving the current pricing-command and call-verification handlers.
+
+Browser shopper sockets now accept only exact HTTPS apex/PWA Origins, remain public, ignore ambient cookies, and reject any Authorization header, duplicate Origin, query credentials or mixed subprotocols. Native connections without an Origin retain their verified bearer/session authority. Shopper connections negotiate their protocol, receive cursor metadata, accept ping only, and receive reduced allowlisted public or exact-owner invalidations. Native revocation/expiry is rechecked. Applicable legacy browser/call and pricing contracts remain separate.
+
+The exact two-file artifact passed 30 isolated Linux canonical socket-pair assertions with no successful external/foreign-socket connection, SMS or order. Eleven focused source tests passed 91 assertions; the broader Windows lifecycle suite has ten platform-dependent Unix-socket skips, distinct from the Linux acceptance. The daemon's existing release watcher gracefully reloaded once between processing iterations; no forced restart interrupted a provider command. Origin and PWA Apache/Arvan independently negotiated `digitalogic.shopper` with HTTP101. The canonical SSE route and same-origin PWA fallback returned200/no-store. Backup: `/var/backups/digitalogic-pwa-shopper.29p09jp3`.
+
+The public-read refinement separately permits exact unmarked catalog GET/HEAD requests without decoding or forwarding the app cookie. Protected calls still require the marker and CSRF. Its backup is `/var/backups/digitalogic-pwa-public-read.a4f2zv0f`; all final runtime hashes are in the deployment checkpoint.

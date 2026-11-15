@@ -20,7 +20,16 @@ class Digitalogic_WebSocket_Auth {
 		$headers   = is_array( $headers ) ? array_change_key_case( $headers, CASE_LOWER ) : array();
 		$protocols = array_map( 'trim', explode( ',', (string) ( $headers['sec-websocket-protocol'] ?? '' ) ) );
 		if ( in_array( 'digitalogic.shopper', $protocols, true ) ) {
-			if ( array_intersect( array( 'authorization', 'sec-websocket-protocol', 'last-event-id' ), (array) ( $headers['__digitalogic_duplicate_headers'] ?? array() ) ) ) {
+			// Browser sockets are public-only; app bearer sessions remain a native header transport.
+			$origin = $headers['origin'] ?? '';
+			if ( array( 'digitalogic.shopper' ) !== $protocols
+				|| ( array_key_exists( 'origin', $headers ) && ( ! is_string( $origin ) || ! in_array( $origin, array( 'https://digitalogic.ir', 'https://pwa.digitalogic.ir' ), true ) || array_key_exists( 'authorization', $headers ) ) ) ) {
+				return array(
+					'authenticated' => false,
+					'principal'     => '',
+				);
+			}
+			if ( array_intersect( array( 'authorization', 'sec-websocket-protocol', 'last-event-id', 'origin' ), (array) ( $headers['__digitalogic_duplicate_headers'] ?? array() ) ) ) {
 				return array(
 					'authenticated' => false,
 					'principal'     => '',
