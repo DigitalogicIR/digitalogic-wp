@@ -1,15 +1,15 @@
 {
-  "observed_at_utc": "2026-11-14T12:43:37.714708+00:00",
-  "status": "prepared_only_no_production_changes",
+  "observed_at_utc": "2026-11-15",
+  "status": "deployed_schema_and_activated_no_setup_sms",
   "source_commit": "6ec7e622b3e8b58b5006a8b0c0c9a08b6d2c543a",
   "canonical_main_reviewed": "7ad2763",
   "provider_template": {
     "id": 757947,
-    "status": "pending_provider_review",
+    "status": "approved_owner_verified",
     "evidence_source": "release owner verified saved provider details",
-    "body": "کد ورود دیجیتالاجیک: #CODE#\nq3HQy4X3L3v",
+    "body": "کد ورود دیجیتالاجیک: #CODE#\nq3HQy4X3L3v\ndigitalogic.ir",
     "parameter": "CODE",
-    "enabled": false
+    "enabled": true
   },
   "production_preflight": {
     "identity_schema": "2",
@@ -55,5 +55,15 @@
     "ci_conclusion": "success",
     "real_sms_sent": 0
   },
-  "activation_allowed": false
+  "activation_allowed": true,
+  "production_readback": {
+    "format_schema": "1",
+    "format_column_present": true,
+    "android_enabled": true,
+    "public_capability": true,
+    "legacy_template_id": 289689,
+    "legacy_parameter_mapping": "OTP:%OTP%",
+    "legacy_settings_unchanged": true,
+    "backup": "/var/backups/digitalogic-android-sms.gazr_0re"
+  }
 }

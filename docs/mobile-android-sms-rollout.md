@@ -1,6 +1,8 @@
 # Android OTP rollout checkpoint
 
-**Prepared only — no production deployment, schema change, option activation or SMS.** SMS.ir template **757947** is saved with the exact body and sole CODE parameter documented in [the contract](mobile-android-sms.md), but the release owner reports its status as **در حال بررسی**. Saving a template is not provider approval.
+**Completed runtime/schema/activation on2026-11-15; no live SMS sent by setup.** The dashboard owner independently verified template757947 status **تایید**, the sole CODE parameter and final body including `digitalogic.ir` after the app hash. Signed build16 handles that exact approved trailer. Public bootstrap independently advertises `android_sms_retriever:true`; default Digits settings remain unchanged. Actual handset delivery/autofill is still pending device acceptance.
+
+The frozen five-file archive below was deployed after its drift and isolated schema checks. Backup: `/var/backups/digitalogic-android-sms.gazr_0re`. Exact deployed hashes match the recorded candidates. The additive format column/schema flag are present, and the approved server option is enabled. Existing default template289689 and `OTP:%OTP%` mapping remain unchanged. The phases below are the reusable procedure, now completed; they are not instructions to repeat the deployment or send an OTP.
 
 The [machine-readable checkpoint](mobile-android-sms-rollout.json) records the reviewed commit, five candidate file hashes, exact expected live hashes, local archive checksum and disabled configuration readback. Re-read every live hash immediately before any later rollout; abort on drift and coordinate with its owner.
 
@@ -24,7 +26,7 @@ If verification fails, restore the four originals and remove only the exact new 
 
 ## Phase B — approval-gated schema and activation
 
-Do not perform this phase while template757947 remains pending.
+Do not perform this phase for any replacement template while provider approval remains pending.
 
 1. The provider/dashboard owner independently confirms approval, exact final body, sole CODE substitution and fixed permanent-app hash `q3HQy4X3L3v`; the Flutter owner confirms capability gating, immutable retry and explicit-submit behavior.
 2. Inspect current OTP table DDL and test the additive migration in the existing isolated database first. The intended change is only `sms_format varchar(20) NOT NULL DEFAULT 'default'`; existing challenges remain `default`. Use a reviewed narrow migration, not an unexamined broad installer. Set `digitalogic_mobile_otp_format_schema=1` only after exact column readback. Keep format configuration absent/disabled until this passes.

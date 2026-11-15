@@ -28,6 +28,11 @@ final class Digitalogic_Mobile_API {
 	 * @return void Native adapter result.
 	 */
 	public static function register(): void {
+		add_action( 'admin_post_digitalogic_mobile_release_issue', array( \Digitalogic\Laravel\Services\MobileRelease::class, 'adminIssue' ) );
+		add_action( \Digitalogic\Laravel\Services\MobileDeviceReport::CLEANUP_HOOK, array( \Digitalogic\Laravel\Services\MobileDeviceReport::class, 'cleanup' ) );
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			WP_CLI::add_command( 'digitalogic-mobile-release', array( \Digitalogic\Laravel\Services\MobileRelease::class, 'cli' ) );
+		}
 		add_filter( 'determine_current_user', array( self::class, 'retired_alias_user' ), 99 );
 		add_filter( 'wp_authenticate_user', array( self::class, 'retired_alias_authentication' ), 99 );
 		add_filter( 'send_auth_cookies', array( self::class, 'retired_alias_cookie' ), PHP_INT_MAX, 6 );
@@ -260,6 +265,9 @@ final class Digitalogic_Mobile_API {
 	 * @return string|null Native adapter result.
 	 */
 	public static function route( string $path ): ?string {
+		if ( preg_match( '~^/app-api/account/device-report/?$~D', $path ) ) {
+			return '/_digitalogic/mobile/account/device-report';
+		}
 		if ( preg_match( '~^/app-api/(account/merge(?:/plan|/operations/[0-9a-fA-F-]{36})?)/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/' . $matches[1];
 		}
@@ -276,6 +284,9 @@ final class Digitalogic_Mobile_API {
 	 * @return array Native adapter result.
 	 */
 	public static function methods( string $route ): array {
+		if ( str_ends_with( $route, '/account/device-report' ) ) {
+			return array( 'POST' );
+		}
 		if ( str_ends_with( $route, '/account/merge' ) ) {
 			return array( 'POST' );
 		}
@@ -525,6 +536,19 @@ final class Digitalogic_Mobile_API {
 			echo '</fieldset>';
 		}
 		submit_button( 'ذخیره ویترین' );
-		echo '</form></div>';
+		echo '</form>';
+		if ( current_user_can( 'manage_options' ) ) {
+			$release = \Digitalogic\Laravel\Services\MobileRelease::advertised();
+			echo '<h2>اعلام نسخه اپ</h2><p>فقط نسخه امضاشده‌ای که قبلاً منتشر شده است انتخاب می‌شود. نصب روی دستگاه همچنان به تأیید کاربر نیاز دارد.</p>';
+			if ( $release ) {
+				echo '<p>نسخه اعلام‌شده: <strong>' . esc_html( (string) $release['version_code'] ) . '</strong></p>';
+			}
+			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="digitalogic_mobile_release_issue"><input type="hidden" name="operation_id" value="' . esc_attr( wp_generate_uuid4() ) . '">';
+			wp_nonce_field( 'digitalogic_mobile_release_issue' );
+			echo '<label>شماره ساخت <input required type="number" min="1" max="2147483647" name="version_code" dir="ltr"></label>';
+			submit_button( 'اعلام نسخه منتشرشده' );
+			echo '</form>';
+		}
+		echo '</div>';
 	}
 }

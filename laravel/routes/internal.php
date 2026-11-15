@@ -13,6 +13,9 @@ use Digitalogic\Laravel\Http\Controllers\MobileCartController;
 use Digitalogic\Laravel\Http\Controllers\MobileCheckoutController;
 use Digitalogic\Laravel\Http\Controllers\MobileMessageController;
 use Digitalogic\Laravel\Http\Controllers\MobileMergeController;
+use Digitalogic\Laravel\Http\Controllers\MobileDeviceReportController;
+
+Route::post( '/mobile/account/device-report', array( MobileDeviceReportController::class, 'submit' ) );
 
 Route::get( '/mobile/account/merge/plan', array( MobileMergeController::class, 'plan' ) );
 Route::post( '/mobile/account/merge', array( MobileMergeController::class, 'handle' ) );

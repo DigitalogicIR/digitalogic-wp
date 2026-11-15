@@ -1,6 +1,6 @@
 # Android SMS Retriever delivery
 
-Status: **source prepared, not deployed or enabled**. No real SMS was sent during setup. The existing Digits/WebOTP template, browser flow, provider credential, OTP verification and rate limits remain unchanged.
+Status: **deployed and enabled on2026-11-15** after provider approval and signed build16 readiness. No real SMS was sent during setup; actual handset receipt/autofill remains a separate acceptance step. The existing Digits/WebOTP template, browser flow, provider credential, OTP verification and rate limits remain unchanged.
 
 ## Client contract
 
@@ -17,11 +17,12 @@ Unknown/null format or supplied app-hash/template routing fields return HTTP400 
 
 ## Provider template and server configuration
 
-Create a **separate** SMS.ir verification template with the existing provider account. Its sole substitution parameter is exactly `CODE`. Confirm the dashboard's placeholder syntax before submission; if it uses `#CODE#`, the proposed text is:
+The separately approved SMS.ir template757947 uses exactly `CODE`. The dashboard owner verified the final approved body, including the provider's website trailer:
 
 ```text
 کد ورود دیجیتالاجیک: #CODE#
 q3HQy4X3L3v
+digitalogic.ir
 ```
 
 The hash is a fixed template literal, derived independently from package `ir.digitalogic.app` and the permanent production signing certificate. Do not add a `HASH` variable or accept a runtime client value. The six-digit rendered message fits both the UTF-8 and UTF-16BE 140-byte bound. Check the final approved/provider-rendered content for extra prefixes, suffixes and line changes before activation.

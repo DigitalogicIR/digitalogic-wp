@@ -32,8 +32,10 @@ final class MobileCatalogController {
 			'bootstrap',
 			array(),
 			function (): array {
-				$update_manifest = (string) get_option( 'digitalogic_mobile_update_manifest', '' );
-				$featured        = $this->productsData(
+				$release             = \Digitalogic\Laravel\Services\MobileRelease::advertised();
+				$configured_manifest = (string) get_option( 'digitalogic_mobile_update_manifest', '' );
+				$update_manifest     = '' === $configured_manifest ? '' : ( $release['manifest_url'] ?? $configured_manifest );
+				$featured            = $this->productsData(
 					self::normalizeQuery(
 						array(
 							'per_page'     => 10,
@@ -43,6 +45,7 @@ final class MobileCatalogController {
 					)
 				);
 				return array(
+					'release'      => $release,
 					'address_map'  => \Digitalogic\Laravel\Services\MobileAddresses::map_config(),
 					'business'     => \Digitalogic\Laravel\Services\MobileStorefrontInfo::business(),
 					'site'         => array(
@@ -81,6 +84,7 @@ final class MobileCatalogController {
 						'phone_verify'        => home_url( '/app-api/account/phone/verify' ),
 						'google_reauth'       => home_url( '/app-api/account/reauth/google' ),
 						'native_profile'      => home_url( '/app-api/account/profile' ),
+						'device_report'       => home_url( '/app-api/account/device-report' ),
 						'native_orders'       => home_url( '/app-api/account/orders' ),
 						'native_favorites'    => home_url( '/app-api/account/favorites' ),
 						'native_sessions'     => home_url( '/app-api/auth/sessions' ),
@@ -107,6 +111,7 @@ final class MobileCatalogController {
 						'google_auth'               => MobileIdentityController::googleEnabled(),
 						'otp_autofill'              => false,
 						'android_sms_retriever'     => MobileIdentityController::otpEnabled() && \Digitalogic\Laravel\Services\MobileOtpSmsFormat::available(),
+						'telemetry'                 => \Digitalogic\Laravel\Services\MobileDeviceReport::enabled(),
 						'cloud_favorites'           => \Digitalogic\Laravel\Services\MobileWishlist::enabled(),
 						'native_forms'              => MobileRequestController::enabled(),
 						'push_notifications'        => false,
@@ -631,7 +636,7 @@ final class MobileCatalogController {
 	private function cached( Request $request, string $route, array $query, callable $build ): Response {
 		$generation = class_exists( 'Digitalogic_Report_Engine' ) ? \Digitalogic_Report_Engine::instance()->current_projection_generation() : '';
 		$generation = is_wp_error( $generation ) ? '' : $generation;
-		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), 'availability-11' ) ) );
+		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), 'availability-11' ) ) );
 		$private    = get_current_user_id() > 0;
 		$data       = $private ? false : wp_cache_get( $key, 'digitalogic-mobile' );
 		$hit        = is_array( $data );
