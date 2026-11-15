@@ -291,7 +291,7 @@ test('skip password selects the native SMS tab without sending the typed passwor
     assert.equal(action.hidden, true);
 });
 
-test('WebOTP fills a code received before the SMS response without skipping Remember me', async () => {
+test('WebOTP waits for the SMS response and submits once', async () => {
     let receive;
     let submitted = 0;
     let request;
@@ -306,7 +306,7 @@ test('WebOTP fills a code received before the SMS response without skipping Reme
     harness.document.body.classList.remove = () => {};
     harness.window.jQuery = {ajax(settings) { request = settings; }};
     const otp = {value: '', offsetWidth: 200};
-    const primary = {offsetWidth: 200, click: () => { submitted++; }};
+    const primary = {offsetWidth: 200, focus() {}, click: () => { submitted++; }};
     const form = {
         matches: () => true,
         closest: () => ({}),
@@ -314,6 +314,7 @@ test('WebOTP fills a code received before the SMS response without skipping Reme
         querySelector: (selector) => selector.includes('rememberme') ? {} : null,
         querySelectorAll: (selector) => selector.includes('sms_otp') ? [otp] : [primary]
     };
+    otp.form = form;
     harness.document.activeElement = {closest: () => form};
     harness.hooks.patchDigitsAjaxFailureGuard();
     harness.window.jQuery.ajax({data: [{name: 'action', value: 'digits_forms_ajax'}, {name: 'sub_action', value: 'sms_otp'}]});
@@ -332,7 +333,7 @@ test('WebOTP fills a code received before the SMS response without skipping Reme
     assert.equal(payload.data.auto_fill, false);
     assert.equal(payload.data.check_remote_status, false);
     assert.equal(otp.value, '123456');
-    assert.equal(submitted, 0);
+    assert.equal(submitted, 1);
     assert.equal(signal.aborted, true);
 });
 

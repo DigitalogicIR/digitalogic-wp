@@ -84,5 +84,5 @@ test('every dedicated verification prompt uses the filtered and limited BGM mix'
 	assert.match(generator, /amix=inputs=2:duration=shortest/);
 	assert.match(generator, /alimiter=limit=0\.80/);
 	assert.match(installer, /for name in pending-code enter-code verified invalid temporary-failure/);
-	assert.match(read('prompts/fa-IR/pending-code.txt'), /دوست عزیزم/);
+	assert.match(read('prompts/fa-IR/pending-code.txt'), /کاربر گرامی/);
 });

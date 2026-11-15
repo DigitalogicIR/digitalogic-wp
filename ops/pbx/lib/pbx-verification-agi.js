@@ -647,7 +647,7 @@ async function safeSetPending(agi, pending) {
 
 function parseMode(value) {
 	const mode = value === undefined || value === '' ? 'verify' : value;
-	return ['verify', 'preflight', 'shortcut'].includes(mode) ? mode : null;
+	return ['verify', 'preflight', 'shortcut', 'outbound'].includes(mode) ? mode : null;
 }
 
 async function runAgi(dependencies = {}) {
@@ -667,7 +667,8 @@ async function runAgi(dependencies = {}) {
 	let agi;
 	try {
 		agi = await AgiSession.open(dependencies.input || process.stdin, dependencies.output || process.stdout);
-		const expectedContext = mode === 'verify' ? config.expectedContext : config.expectedPendingContext;
+		const expectedContext = mode === 'outbound' ? 'pbx-call-verification-outbound' :
+			mode === 'verify' ? config.expectedContext : config.expectedPendingContext;
 		if (agi.environment.agi_context !== expectedContext) {
 			await safeSetResult(agi, 'invalid_call');
 			return EXIT.INVALID_CALL;
@@ -691,6 +692,11 @@ async function runAgi(dependencies = {}) {
 			return EXIT.INVALID_CALL;
 		}
 
+		const challengeId = mode === 'outbound' ? await agi.getVariable('PBX_VERIFY_CHALLENGE') : '';
+		if (mode === 'outbound' && !validateEventId(challengeId)) {
+			await safeSetResult(agi, 'invalid_call');
+			return EXIT.INVALID_CALL;
+		}
 		const fetchImpl = dependencies.fetchImpl || globalThis.fetch;
 		if (mode === 'preflight') {
 			const payload = buildPendingPayload(config, {
@@ -718,6 +724,9 @@ async function runAgi(dependencies = {}) {
 				code,
 				occurredAt: new Date().toISOString(),
 			});
+			if (challengeId) {
+				payload.challenge_id = challengeId;
+			}
 			return postVerification(config, secret, payload, fetchImpl);
 		};
 

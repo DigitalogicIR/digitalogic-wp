@@ -1833,8 +1833,8 @@ msgid "Your call code"
 msgstr "کد تماس شما"
 
 #: includes/integrations/class-call-verification.php
-msgid "Call from the same number you entered. When you hear «دوست عزیزم», enter the code using your phone keypad."
-msgstr "از همان شماره‌ای که وارد کردید تماس بگیرید. پس از شنیدن «دوست عزیزم»، کد را با صفحه‌کلید تلفن وارد کنید."
+msgid "Call from the same number you entered. When you hear «کاربر گرامی», enter the code using your phone keypad."
+msgstr "از همان شماره‌ای که وارد کردید تماس بگیرید. پس از شنیدن «کاربر گرامی»، کد را با صفحه‌کلید تلفن وارد کنید."
 
 #: includes/integrations/class-call-verification.php
 msgid "Call Digitalogic"
@@ -2220,8 +2220,8 @@ msgid "%s seconds remaining"
 msgstr "%s ثانیه تا پایان اعتبار کد"
 
 #: includes/integrations/class-call-verification.php
-msgid "Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator."
-msgstr "از همان شماره‌ای که وارد کرده‌اید تماس بگیرید. وقتی میان‌بر تشخیص شماره پیام «دوست عزیزم» را پخش کرد، این کد شش‌رقمی را وارد کنید. اگر درخواست فعالی پیدا نشود، تماس مستقیماً به اپراتور ادامه پیدا می‌کند."
+msgid "Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator."
+msgstr "از همان شماره‌ای که وارد کرده‌اید تماس بگیرید. وقتی میان‌بر تشخیص شماره پیام «کاربر گرامی» را پخش کرد، این کد شش‌رقمی را وارد کنید. اگر درخواست فعالی پیدا نشود، تماس مستقیماً به اپراتور ادامه پیدا می‌کند."
 
 #: includes/class-report-engine.php
 msgid "Calculated price is explicitly null"

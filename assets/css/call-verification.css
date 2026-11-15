@@ -269,3 +269,21 @@ body.login .digitalogic-call-panel--branded [data-call-countdown] {
 		grid-template-columns: 1fr;
 	}
 }
+
+
+.digitalogic-call-success {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    color: #087747;
+    font-weight: 700;
+}
+
+.digitalogic-call-success .digitalogic-call-icon {
+    inline-size: 24px;
+    block-size: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+}

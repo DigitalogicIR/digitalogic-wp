@@ -53,7 +53,7 @@ test('server-returned dial number and code populate shortcut instructions withou
 	assert.match(source, /dialNumber\.textContent = display/);
 	assert.match(source, /dial\.setAttribute\('href', `tel:\$\{tel\}`\)/);
 	assert.match(source, /code\.textContent = data\.code/);
-	assert.match(source, /body: JSON\.stringify\(\{ phone: phone\.value, purpose \}\)/);
+	assert.match(source, /body: JSON\.stringify\([^\n]+\{ phone: phone\.value, purpose \}\)/);
 	assert.doesNotMatch(source, /ivr_option|ivr_path|data-call-ivr/);
 });
 
@@ -115,5 +115,5 @@ test('a lost consume response recovers the server-confirmed return for the same 
 	assert.match(recovery, /new URLSearchParams\(\{ redirect_to: redirect \}\)/);
 	assert.match(recovery, /request\(url, \{ headers: headers\(expectedCsrfToken\) \}\)/);
 	assert.match(recovery, /await request[\s\S]*?expectedChallengeId !== challengeId[\s\S]*?if \(recovered\?\.redirect_url\)/);
-	assert.match(recovery, /window\.location\.assign\(recovered\.redirect_url\)/);
+	assert.match(recovery, /finish\(recovered\.redirect_url\)/);
 });
