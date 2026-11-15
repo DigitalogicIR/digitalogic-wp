@@ -3979,376 +3979,206 @@
         });
     }
 
-    async function buildLoginHeroCarousel() {
+    function buildLoginStories() {
         var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
-        if (!config.loginSlidesUrl || !document.body.classList.contains('login')) {
-            return;
-        }
+        if (!shell || !config.loginSlidesUrl || !document.body.classList.contains('login')) { return; }
 
-        var slides;
-        try {
-            var presentation = await authSocketRequest('digitalogic_auth_presentation', {});
-            if (presentation && Array.isArray(presentation.slides)) {
-                slides = presentation.slides;
-            } else {
-                var response = await window.fetch(config.loginSlidesUrl, { credentials: 'same-origin' });
-                slides = response.ok ? await response.json() : null;
-            }
-        } catch (error) {
-            return;
-        }
-        if (!shell || !Array.isArray(slides)) {
-            return;
-        }
-        var images = slides.flatMap(function (slide) {
+        var wide = window.matchMedia('(min-width: 720px)');
+        var loading = false;
+        function storyUrl(value) {
+            if (typeof value !== 'string' || !value) { return ''; }
             try {
-                var url = new window.URL(slide.image);
-                return /^https?:$/.test(url.protocol) ? [url.href] : [];
-            } catch (error) {
-                return [];
-            }
-        });
-        if (!images.length) {
-            return;
+                var url = new URL(value, window.location.href);
+                return url.origin === window.location.origin && /^https?:$/.test(url.protocol) ? url.href : '';
+            } catch (_error) { return ''; }
         }
 
-        var hero = document.createElement('div');
-        hero.className = 'dg-login-hero-carousel';
-        hero.dataset.dgSlide = '0';
-        var track = document.createElement('span');
-        track.className = 'dg-hero-track';
-        track.setAttribute('aria-hidden', 'true');
-        hero.appendChild(track);
-        var dots = document.createElement('span');
-        dots.className = 'dg-hero-dots';
-        images.forEach(function (url, index) {
-            var slide = document.createElement('span');
-            slide.className = 'dg-hero-slide';
-            slide.style.backgroundImage = 'url("' + url.replace(/"/g, '%22') + '")';
-            track.appendChild(slide);
-            if (images.length > 1) {
-                var dot = document.createElement('button');
-                dot.type = 'button';
-                dot.dataset.dgSlide = String(index);
-                dot.setAttribute('aria-label', getLabel('heroSlide', 'Show image %d').replace('%d', String(index + 1)));
-                dots.appendChild(dot);
-            }
-        });
-
-        shell.classList.add('dg-has-hero-carousel');
-        shell.insertBefore(hero, shell.firstElementChild);
-        if (images.length > 1) {
-            hero.appendChild(dots);
-            bindHeroCarousel(hero);
-        } else {
-            hero.classList.add('dg-hero-static');
-            hero.style.setProperty('--dg-track-index', '0');
-        }
-    }
-
-    function bindHeroCarousel(hero) {
-        if (!hero || hero.dataset.dgCarouselReady === 'true') {
-            return;
-        }
-
-        hero.dataset.dgCarouselReady = 'true';
-
-        var track = hero.querySelector('.dg-hero-track');
-        if (!track) {
-            track = document.createElement('span');
-            track.className = 'dg-hero-track';
-            Array.prototype.slice.call(hero.querySelectorAll(':scope > .dg-hero-slide')).forEach(function (slide) {
-                track.appendChild(slide);
+        function readCards(rows) {
+            if (!Array.isArray(rows)) { return []; }
+            return rows.slice(0, 8).flatMap(function (row) {
+                if (!row || typeof row !== 'object') { return []; }
+                var image = storyUrl(row.image);
+                var link = storyUrl(row.link);
+                if (!image || typeof row.title !== 'string' || !row.title.trim()) { return []; }
+                return [{
+                    image: image,
+                    link: link,
+                    title: row.title,
+                    tab: typeof row.tab === 'string' && row.tab.trim() ? row.tab : row.title,
+                    description: typeof row.description === 'string' ? row.description : '',
+                    action: typeof row.action === 'string' ? row.action : '',
+                    notes: Array.isArray(row.notes) ? row.notes.filter(function (note) {
+                        return typeof note === 'string' && note.trim();
+                    }).slice(0, 2) : []
+                }];
             });
-            hero.insertBefore(track, hero.firstElementChild);
         }
 
-        var dots = Array.prototype.slice.call(hero.querySelectorAll('[data-dg-slide]'));
-        var originalSlides = Array.prototype.slice.call(track.querySelectorAll('.dg-hero-slide:not([data-dg-clone])'));
-        var slideCount = Math.max(1, originalSlides.length);
-        var activeTrackIndex = normalizeSlide(currentSlide()) + (slideCount > 1 ? 1 : 0);
-        var pendingSnapIndex = null;
-        var startX = 0;
-        var currentX = 0;
-        var dragDelta = 0;
-        var lastMoveX = 0;
-        var lastMoveTime = 0;
-        var dragVelocity = 0;
-        var activePointerId = null;
-        var activeDragType = null;
-        var autoplayTimer = null;
-
-        if (slideCount > 1 && !track.querySelector('[data-dg-clone="true"]')) {
-            var firstClone = originalSlides[0].cloneNode(true);
-            var lastClone = originalSlides[slideCount - 1].cloneNode(true);
-
-            firstClone.dataset.dgClone = 'true';
-            lastClone.dataset.dgClone = 'true';
-            firstClone.setAttribute('aria-hidden', 'true');
-            lastClone.setAttribute('aria-hidden', 'true');
-            track.insertBefore(lastClone, originalSlides[0]);
-            track.appendChild(firstClone);
-        }
-
-        function currentSlide() {
-            return Number(hero.dataset.dgSlide || '0') || 0;
-        }
-
-        function normalizeSlide(index) {
-            return ((index % slideCount) + slideCount) % slideCount;
-        }
-
-        function syncTrack(dragPx) {
-            hero.style.setProperty('--dg-slide', String(currentSlide()));
-            hero.style.setProperty('--dg-track-index', String(activeTrackIndex));
-            hero.style.setProperty('--dg-drag', (dragPx || 0) + 'px');
-            hero.style.setProperty('--dg-drag-progress', String(Math.min(1, Math.abs(dragPx || 0) / Math.max(1, hero.getBoundingClientRect().width || 1))));
-        }
-
-        function stopAutoplay() {
-            window.clearInterval(autoplayTimer);
-            autoplayTimer = null;
-        }
-
-        function startAutoplay() {
-            stopAutoplay();
-
-            if (slideCount < 2) {
-                return;
-            }
-
-            autoplayTimer = window.setInterval(function () {
-                if (activeDragType || document.hidden) {
-                    return;
+        async function loadCards() {
+            if (!wide.matches || loading || shell.querySelector('.dg-login-stories')) { return; }
+            loading = true;
+            var fa = /^fa(?:[-_]|$)/i.test(document.documentElement.lang);
+            var locale = fa ? 'fa_IR' : 'en_US';
+            try {
+                var response = await authSocketRequest('digitalogic_auth_presentation', { locale: locale });
+                var cards = readCards(response?.slides);
+                if (!cards.length) {
+                    var url = new URL(config.loginSlidesUrl, window.location.href);
+                    url.searchParams.set('locale', locale);
+                    var fallback = await window.fetch(url, { credentials: 'same-origin' });
+                    cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
-
-                setSlide(currentSlide() + 1, false);
-            }, 9200);
-        }
-
-        function updateDots(next) {
-            dots.forEach(function (dot) {
-                var active = dot.dataset.dgSlide === String(next);
-                dot.classList.toggle('is-active', active);
-                dot.setAttribute('aria-pressed', active ? 'true' : 'false');
-            });
-        }
-
-        function snapTrack(index) {
-            activeTrackIndex = index;
-            hero.classList.add('is-jump-reset');
-            syncTrack(0);
-            track.offsetHeight;
-            window.requestAnimationFrame(function () {
-                hero.classList.remove('is-jump-reset');
-            });
-        }
-
-        function setSlide(index, manual) {
-            var next = normalizeSlide(index);
-            var targetTrackIndex = next + (slideCount > 1 ? 1 : 0);
-
-            if (slideCount > 1 && index >= slideCount && currentSlide() === slideCount - 1) {
-                targetTrackIndex = slideCount + 1;
-                pendingSnapIndex = 1;
-            } else if (slideCount > 1 && index < 0 && currentSlide() === 0) {
-                targetTrackIndex = 0;
-                pendingSnapIndex = slideCount;
-            } else {
-                pendingSnapIndex = null;
-            }
-
-            hero.dataset.dgSlide = String(next);
-            activeTrackIndex = targetTrackIndex;
-
-            if (manual) {
-                hero.classList.add('is-manual');
-                startAutoplay();
-            }
-
-            updateDots(next);
-            syncTrack(0);
-        }
-
-        track.addEventListener('transitionend', function (event) {
-            if (event.target !== track || event.propertyName !== 'transform' || pendingSnapIndex === null) {
-                return;
-            }
-
-            snapTrack(pendingSnapIndex);
-            pendingSnapIndex = null;
-        });
-
-        dots.forEach(function (dot) {
-            dot.addEventListener('click', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
-                setSlide(Number(dot.dataset.dgSlide || '0'), true);
-            });
-        });
-
-        function beginDrag(clientX, type, event) {
-            if (event && event.target && event.target.closest && event.target.closest('.dg-hero-dots [data-dg-slide]')) {
-                return false;
-            }
-
-            if (activeDragType) {
-                return false;
-            }
-
-            stopAutoplay();
-            activeDragType = type;
-            startX = clientX;
-            currentX = clientX;
-            dragDelta = 0;
-            lastMoveX = clientX;
-            lastMoveTime = Date.now();
-            dragVelocity = 0;
-            pendingSnapIndex = null;
-            hero.classList.add('is-dragging');
-            syncTrack(0);
-
-            if (event && typeof event.preventDefault === 'function') {
-                event.preventDefault();
-            }
-
-            return true;
-        }
-
-        function updateDrag(clientX, type, event) {
-            if (activeDragType !== type) {
-                return;
-            }
-
-            currentX = clientX;
-            dragDelta = currentX - startX;
-            var now = Date.now();
-            var elapsed = Math.max(1, now - lastMoveTime);
-            dragVelocity = (clientX - lastMoveX) / elapsed;
-            lastMoveX = clientX;
-            lastMoveTime = now;
-            syncTrack(dragDelta);
-
-            if (event && typeof event.preventDefault === 'function') {
-                event.preventDefault();
+                if (cards.length && shell.isConnected) { mountLoginStories(shell, cards, wide, fa); }
+            } catch (_error) {
+                // The sign-in form and compact brand artwork remain available.
+            } finally {
+                loading = false;
             }
         }
 
-        function finishDrag(clientX, type) {
-            if (activeDragType !== type) {
-                return;
-            }
-
-            var delta = clientX - startX;
-            var width = hero.getBoundingClientRect().width || 1;
-            var threshold = Math.min(118, Math.max(48, width * 0.2));
-            var velocityHint = Math.abs(dragVelocity) > 0.58 && Math.abs(delta) > 18;
-            var shouldMove = Math.abs(delta) >= threshold || velocityHint;
-            var direction = delta < 0 ? 1 : -1;
-
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            dragDelta = 0;
-            dragVelocity = 0;
-
-            if (!shouldMove) {
-                syncTrack(0);
-                startAutoplay();
-                return;
-            }
-
-            setSlide(currentSlide() + direction, true);
-        }
-
-        hero.addEventListener('pointerdown', function (event) {
-            if (!beginDrag(event.clientX, 'pointer', event)) {
-                return;
-            }
-
-            activePointerId = event.pointerId;
-
-            if (hero.setPointerCapture) {
-                hero.setPointerCapture(activePointerId);
-            }
-        });
-
-        hero.addEventListener('pointerup', function (event) {
-            if (activePointerId !== event.pointerId) {
-                return;
-            }
-
-            finishDrag(event.clientX, 'pointer');
-        });
-
-        hero.addEventListener('pointermove', function (event) {
-            if (activePointerId !== event.pointerId) {
-                return;
-            }
-
-            updateDrag(event.clientX, 'pointer', event);
-        });
-
-        hero.addEventListener('pointercancel', function () {
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            syncTrack(0);
-            startAutoplay();
-        });
-
-        hero.addEventListener('mousedown', function (event) {
-            if (event.button !== 0) {
-                return;
-            }
-
-            beginDrag(event.clientX, 'mouse', event);
-        });
-
-        window.addEventListener('mouseup', function (event) {
-            finishDrag(event.clientX, 'mouse');
-        });
-
-        window.addEventListener('mousemove', function (event) {
-            updateDrag(event.clientX, 'mouse', event);
-        });
-
-        hero.addEventListener('touchstart', function (event) {
-            if (!event.touches || event.touches.length !== 1) {
-                return;
-            }
-
-            beginDrag(event.touches[0].clientX, 'touch', event);
-        }, { passive: false });
-
-        hero.addEventListener('touchmove', function (event) {
-            if (!event.touches || event.touches.length !== 1) {
-                return;
-            }
-
-            updateDrag(event.touches[0].clientX, 'touch', event);
-        }, { passive: false });
-
-        hero.addEventListener('touchend', function (event) {
-            if (!event.changedTouches || !event.changedTouches.length) {
-                return;
-            }
-
-            finishDrag(event.changedTouches[0].clientX, 'touch');
-        });
-
-        hero.addEventListener('touchcancel', function () {
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            syncTrack(0);
-            startAutoplay();
-        });
-
-        setSlide(currentSlide(), false);
-        snapTrack(activeTrackIndex);
-        startAutoplay();
+        wide.addEventListener('change', loadCards);
+        void loadCards();
     }
+
+    function mountLoginStories(shell, cards, wide, fa) {
+        function element(tag, className, content) {
+            var node = document.createElement(tag);
+            node.className = className;
+            if (content) { node.textContent = content; }
+            return node;
+        }
+
+        var region = element('aside', 'dg-login-stories');
+        region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
+        var header = element('div', 'dg-story-header');
+        var brand = element('span', 'dg-story-brand', fa ? 'دیجیتالاجیک' : 'Digitalogic');
+        header.append(brand, element('span', 'dg-story-kicker', fa ? 'محصولات و خدمات' : 'Products & services'));
+        var stage = element('div', 'dg-story-stage');
+        var controls = element('div', 'dg-story-controls');
+        var tabs = element('div', 'dg-story-tabs');
+        var announcement = element('span', 'dg-visually-hidden');
+        announcement.setAttribute('aria-live', 'polite');
+        var articles = [];
+        var buttons = [];
+
+        cards.forEach(function (card, index) {
+            var article = element('article', 'dg-story-card');
+            var figure = element('div', 'dg-story-figure');
+            var photo = element('img', 'dg-story-image');
+            photo.src = card.image;
+            photo.alt = '';
+            photo.decoding = 'async';
+            figure.append(photo);
+            card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
+            var copy = element('div', 'dg-story-copy');
+            copy.append(element('h2', 'dg-story-title', card.title));
+            if (card.description) { copy.append(element('p', 'dg-story-description', card.description)); }
+            if (card.link && card.action) {
+                var action = element('a', 'dg-story-link');
+                action.href = card.link;
+                action.append(element('span', '', card.action));
+                putAuthIcon(action, 'arrow');
+                copy.append(action);
+            }
+            article.append(figure, copy);
+            articles.push(article);
+            stage.append(article);
+
+            var button = element('button', 'dg-story-tab', card.tab);
+            button.type = 'button';
+            button.addEventListener('click', function () { select(index, true); });
+            buttons.push(button);
+            tabs.append(button);
+        });
+
+        var active = 0;
+        var timer;
+        var hovering = false;
+        var playing = true;
+        var onScreen = true;
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+        var rotation = element('button', 'dg-story-rotation');
+        rotation.type = 'button';
+
+        function schedule() {
+            window.clearTimeout(timer);
+            if (cards.length > 1 && playing && !reduced.matches && wide.matches && onScreen &&
+                !document.hidden && !hovering && !region.contains(document.activeElement)) {
+                timer = window.setTimeout(function () { select(active + 1, false); }, 9000);
+            }
+        }
+
+        function select(index, manual) {
+            active = (index + cards.length) % cards.length;
+            articles.forEach(function (article, position) {
+                var visible = position === active;
+                article.inert = !visible;
+                article.setAttribute('aria-hidden', String(!visible));
+                article.classList.toggle('is-active', visible);
+                buttons[position].setAttribute('aria-pressed', String(visible));
+            });
+            if (manual) { announcement.textContent = cards[active].title; }
+            schedule();
+        }
+
+        function syncRotation() {
+            var label = playing ? (fa ? 'توقف پخش خودکار' : 'Pause automatic rotation') :
+                (fa ? 'شروع پخش خودکار' : 'Start automatic rotation');
+            rotation.setAttribute('aria-label', label);
+            rotation.title = label;
+            rotation.dataset.playing = String(playing);
+            rotation.hidden = reduced.matches;
+            schedule();
+        }
+
+        region.append(header, stage);
+        if (cards.length > 1) {
+            controls.append(tabs, rotation);
+            region.append(controls, announcement);
+            rotation.addEventListener('click', function () { playing = !playing; syncRotation(); });
+            tabs.addEventListener('keydown', function (event) {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { return; }
+                event.preventDefault();
+                var right = fa ? -1 : 1;
+                var focused = buttons.indexOf(document.activeElement);
+                var index = event.key === 'Home' ? 0 : event.key === 'End' ? cards.length - 1 :
+                    focused + (event.key === 'ArrowRight' ? right : -right);
+                select(index, true);
+                buttons[active].focus();
+            });
+            var startX;
+            stage.addEventListener('pointerdown', function (event) {
+                if (event.pointerType === 'touch' && !event.target.closest('a')) { startX = event.clientX; }
+            });
+            stage.addEventListener('pointercancel', function () { startX = undefined; });
+            stage.addEventListener('pointerup', function (event) {
+                var delta = event.clientX - startX;
+                startX = undefined;
+                if (Math.abs(delta) >= 52) { select(active + Math.sign(delta) * (fa ? 1 : -1), true); }
+            });
+            region.addEventListener('pointerenter', function (event) {
+                if (event.pointerType === 'mouse') { hovering = true; schedule(); }
+            });
+            region.addEventListener('pointerleave', function () { hovering = false; schedule(); });
+            region.addEventListener('focusin', schedule);
+            region.addEventListener('focusout', function () { window.setTimeout(schedule, 0); });
+            document.addEventListener('visibilitychange', schedule);
+            wide.addEventListener('change', schedule);
+            reduced.addEventListener('change', syncRotation);
+            if ('IntersectionObserver' in window) {
+                new IntersectionObserver(function (entries) {
+                    onScreen = entries[0].isIntersecting;
+                    schedule();
+                }, { threshold: 0.2 }).observe(region);
+            }
+            syncRotation();
+        }
+
+        select(0, false);
+        shell.prepend(region);
+        shell.classList.add('dg-has-login-stories');
+    }
+
 
     function authPageAction() {
         if (!document.body || !document.body.classList) {
@@ -4907,7 +4737,7 @@
         injectLoginToggle();
         buildLanguageSwitcher();
         injectLateLoginOverrides();
-        buildLoginHeroCarousel();
+        buildLoginStories();
         bindAuthPressFeedback();
         window.addEventListener('pagehide', function () { if (authSocket) { authSocket.close(); } });
         (window.requestIdleCallback || window.setTimeout)(prefetchAuthPages);
