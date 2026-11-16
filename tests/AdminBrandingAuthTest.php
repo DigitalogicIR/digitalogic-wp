@@ -150,6 +150,14 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertSame('https://digitalogic.test/' . rest_get_url_prefix() . '/digitalogic/v1/login-slides', $config['loginSlidesUrl']);
         $this->assertSame(array(), $config['rememberedAccount']);
         $this->assertTrue($config['showLoginThemeSwitcher']);
+        $this->assertTrue($config['loginStoryNavThumbs']);
+
+        $GLOBALS['digitalogic_test_options']['digitalogic_login_story_nav_thumbnails'] = '0';
+        try {
+            $this->assertFalse($method->invoke(null, true, false)['loginStoryNavThumbs']);
+        } finally {
+            unset($GLOBALS['digitalogic_test_options']['digitalogic_login_story_nav_thumbnails']);
+        }
     }
 
     public function test_login_reuses_only_an_existing_session_on_ordinary_entry(): void {
