@@ -337,10 +337,6 @@ test('WebOTP waits for the SMS response and submits once', async () => {
     assert.equal(signal.aborted, true);
 });
 
-test('carousel slide track uses the same left-to-right geometry in RTL', () => {
-    assert.match(brandingCss, /body\.login \.dg-hero-track\s*\{[^}]*\bdirection:\s*ltr;/);
-});
-
 test('ordinary Enter remains ordinary when a secondary SMS button exists', () => {
     const harness=createHarness({});
     const listeners={};

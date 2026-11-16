@@ -347,22 +347,23 @@
     }
 
     function injectLoginToggle() {
-        if (!config.showLoginThemeSwitcher || !document.body?.classList.contains('login') || document.querySelector('[data-dg-theme-toggle-button]')) {
-            return;
-        }
-
+        if (!document.body?.classList.contains('login') || document.querySelector('.dg-login-preferences')) { return; }
         var login = document.getElementById('login');
-        if (!login) { return; }
+        var language = document.querySelector('.language-switcher');
+        if (!login || (!language && !config.showLoginThemeSwitcher)) { return; }
         var controls = document.createElement('div');
         controls.className = 'dg-login-preferences';
-        login.after(controls);
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'dg-theme-toggle-button';
-        button.setAttribute('data-dg-theme-toggle-button', 'true');
-        button.addEventListener('click', toggleTheme);
-        controls.append(button);
-        var language = document.querySelector('.language-switcher');
+        var shell = login.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        if (shell) { shell.append(controls); }
+        else { login.after(controls); }
+        if (config.showLoginThemeSwitcher) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'dg-theme-toggle-button';
+            button.setAttribute('data-dg-theme-toggle-button', 'true');
+            button.addEventListener('click', toggleTheme);
+            controls.append(button);
+        }
         if (language) { controls.append(language); }
         syncToggleLabels(currentTheme());
     }
@@ -388,12 +389,12 @@
         form.setAttribute('novalidate', 'novalidate');
 
         function submitLanguageForm() {
-            if (typeof form.requestSubmit === 'function') {
-                form.requestSubmit();
-                return;
-            }
-
-            nativeSubmit.click();
+            var url = new URL(window.location.href);
+            url.searchParams.set('wp_lang', select.value);
+            form.querySelectorAll('input[type="hidden"][name]').forEach(function (field) {
+                if (!url.searchParams.has(field.name)) { url.searchParams.set(field.name, field.value); }
+            });
+            window.location.replace(url.href);
         }
 
         var picker = document.createElement('div');
@@ -412,6 +413,7 @@
         menu.className = 'dg-language-menu';
         menu.setAttribute('role', 'listbox');
         menu.setAttribute('aria-hidden', 'true');
+        menu.inert = true;
 
         function syncChevron(open) {
             var chevron = trigger.querySelector('.dg-language-chevron');
@@ -426,6 +428,7 @@
         function closeMenu(restoreFocus) {
             picker.classList.remove('is-open');
             menu.setAttribute('aria-hidden', 'true');
+            menu.inert = true;
             trigger.setAttribute('aria-expanded', 'false');
             syncChevron(false);
             if (restoreFocus) {
@@ -450,6 +453,7 @@
         function openMenu(focusIndex) {
             picker.classList.add('is-open');
             menu.setAttribute('aria-hidden', 'false');
+            menu.inert = false;
             trigger.setAttribute('aria-expanded', 'true');
             syncChevron(true);
             if (typeof focusIndex === 'number') {
@@ -576,12 +580,12 @@
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body:not(.digits-tab_active),body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body[hidden]{display:none!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body.digits-tab_active{display:block!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity:not([data-dg-identity="phone"]) .digits-form_countrycode{display:none!important;}',
-            'body.login .dg-digits-login-shell :is(.digits-form_input_row, .digits-form_input){border-color:var(--dg-border)!important;border-radius:16px!important;color:var(--dg-text)!important;}',
-            'body.login .dg-digits-login-shell .digits-form_input_row:not(.digits-form_rememberme,:has(.dg-otp-editor,.dg-password-field)){min-height:58px!important;margin-block:11px!important;padding-inline:14px!important;background:var(--dg-input-bg)!important;}',
+            'body.login .dg-digits-login-shell :is(.digits-form_input_row, .digits-form_input):not(.dg-auth-field){border-color:var(--dg-border)!important;border-radius:16px!important;color:var(--dg-text)!important;}',
+            'body.login .dg-digits-login-shell .digits-form_input_row:not(.digits-form_rememberme,:has(.dg-otp-editor,.dg-password-field)){min-height:58px!important;margin-block:11px!important;padding-inline:14px!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme:not([hidden]){display:flex!important;align-items:center!important;justify-content:flex-start!important;min-height:auto!important;height:auto!important;margin-block:4px 24px!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme :is(.digits-form_input,.dig_opt_mult_con,.dig_opt_mult,label,.dig_input_wrapper,.dig_input_wrapper>div){display:inline-flex!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;width:auto!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;line-height:1.35!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .dig_input_wrapper::before,body.login .dg-digits-login-shell .digits-form_rememberme .dig_input_wrapper::after,body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::before,body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::after,html[dir="rtl"] body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::before,html[dir="rtl"] body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::after{content:none!important;display:none!important;opacity:0!important;visibility:hidden!important;}',
-            'body.login .dg-digits-login-shell .digits-form_input input:not(.digits_login_remember_me,.dg-otp-slot input){min-height:48px!important;margin:0!important;border:0!important;background:transparent!important;color:var(--dg-text)!important;box-shadow:none!important;font-family:var(--dg-font)!important;}',
+            'body.login .dg-digits-login-shell .digits-form_input input:not(.digits_login_remember_me,.dg-auth-input){min-height:48px!important;margin:0!important;border:0!important;background:transparent!important;color:var(--dg-text)!important;box-shadow:none!important;font-family:var(--dg-font)!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me{appearance:none!important;-webkit-appearance:none!important;display:inline-grid!important;place-items:center!important;visibility:visible!important;opacity:1!important;inline-size:22px!important;block-size:22px!important;width:22px!important;height:22px!important;min-width:22px!important;min-height:22px!important;max-width:22px!important;max-height:22px!important;flex:0 0 22px!important;margin:0!important;padding:0!important;line-height:1!important;border:1px solid var(--dg-border)!important;border-radius:8px!important;background:color-mix(in srgb,var(--dg-panel-soft) 72%,transparent)!important;box-shadow:inset 0 1px 0 color-mix(in srgb,#ffffff 10%,transparent),var(--dg-shadow-soft)!important;transform:scale(1)!important;transition:background-color .18s ease,background-image .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s cubic-bezier(.2,.8,.2,1)!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me::before{content:""!important;display:block!important;visibility:visible!important;width:6px!important;height:11px!important;margin:-1px 0 0!important;border:solid #fff!important;border-width:0 2px 2px 0!important;opacity:0;transform:rotate(45deg) scale(.62);transform-origin:center;transition:opacity .16s ease,transform .18s cubic-bezier(.2,.8,.2,1);}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me:active,body.login #rememberme:active{transform:scale(.92)!important;}',
@@ -592,8 +596,6 @@
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="email"] .digits-form_input_row:has(input[name="digits_email"]){direction:ltr!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper{display:flex!important;align-items:center!important;gap:10px!important;width:100%!important;direction:ltr;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper:before{content:none!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-form_countrycode{position:relative!important;z-index:60!important;display:inline-flex!important;min-width:0!important;min-height:40px!important;justify-content:center!important;padding-inline:0 6px!important;border:0!important;border-inline-end:1px solid var(--dg-border)!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-form_countrycode input{width:42px!important;min-height:0!important;height:auto!important;padding:0!important;line-height:1!important;text-align:left!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper>.digits-form_input:not(.digits-form_countrycode){flex:1 1 auto!important;min-width:0!important;width:auto!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .mobile_field{flex:1 1 auto!important;min-width:0!important;width:100%!important;direction:ltr!important;text-align:left!important;}',
             'body.login .dg-digits-login-shell :is(.digits-form_button,.digits-form_submit-btn):not(.digits-form_passwordless_login){min-height:56px!important;border:0!important;border-radius:18px!important;background:linear-gradient(135deg,var(--dg-accent),var(--dg-accent-strong))!important;color:#fff!important;font-family:var(--dg-font)!important;font-size:16px!important;font-weight:800!important;overflow:hidden!important;}',
@@ -650,6 +652,9 @@
         var normalized = normalizeDigits(value).trim();
         var compact = normalized.replace(/[\s().-]+/g, '');
         var country = selectedCountry || '+98';
+        if (selectedCountry && !isCountryCallingCode(selectedCountry) && /^\d+$/.test(compact)) {
+            return { type: 'phone', national: compact, normalized: normalized, valid: false, countryCode: selectedCountry };
+        }
         // The picker already displays +98. Wait for the second digit so a typed 00 can still start an international number.
         var iranTrunkPrefix = country === '+98' && /^0[1-9]\d*$/.test(compact);
         if (window.libphonenumber && /^(?:\+\d*|\d+)$/.test(compact)) {
@@ -781,7 +786,8 @@
         input.setAttribute('dir', 'auto');
 
         var wrapper = document.createElement('span');
-        wrapper.className = 'dg-login-identity-control';
+        wrapper.className = 'dg-auth-field dg-login-identity-control';
+        input.classList.add('dg-auth-input');
         input.parentNode.insertBefore(wrapper, input);
         wrapper.appendChild(input);
 
@@ -936,12 +942,12 @@
         var providerField = input.closest('.wp-pwd, .digits_password_inp_row, .password-input-wrapper') || parent;
         providerField.querySelectorAll('.wp-hide-pw, .digits_password_eye').forEach(function (button) { button.remove(); });
         var field = document.createElement('div');
-        field.className = 'dg-password-field';
+        field.className = 'dg-auth-field dg-password-field';
         var toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'dg-password-toggle';
         if (input.id) { toggle.setAttribute('aria-controls', input.id); }
-        input.classList.add('dg-password-input');
+        input.classList.add('dg-auth-input', 'dg-password-input');
         input.dir = 'ltr';
         input.before(field);
         field.append(input, toggle);
@@ -1463,15 +1469,15 @@
         });
     }
 
-    function showDigitsSmsIdentity(form) {
+    function showDigitsSmsIdentity(form, submitEmail) {
         var identity = digitsIdentityValue(form);
         var email = !!emailDomain(identity);
         var back = form.querySelector('.dg-username-password-step:not([hidden]) .dg-username-login-back, .digits_form_back:not(.digits_hide_back)');
         if (back) { back.click(); }
         form.dataset.dgSmsIdentity = 'true';
         if (email) {
-            selectDigitsMode('email', false);
-            submitDigitsSecureForm(form);
+            selectDigitsMode('email', submitEmail === false);
+            if (submitEmail !== false) { submitDigitsSecureForm(form); }
             return;
         }
         var currentPhone = form.querySelector('[name="digits_phone"]');
@@ -1509,7 +1515,9 @@
             return { type: 'password', enabled: true };
         }
         if (mode === 'phone') {
-            var number = phonePartsFromValue(value, form.querySelector('[name="login_digt_countrycode"]')?.value);
+            var prefix = form.querySelector('[name="login_digt_countrycode"]');
+            if (prefix && !isCountryCallingCode(prefix.value)) { return { type: 'continue', enabled: false }; }
+            var number = phonePartsFromValue(value, prefix?.value);
             if (number.valid && (!number.kind || ['MOBILE', 'FIXED_LINE_OR_MOBILE', 'FIXED_LINE'].includes(number.kind))) {
                 var byCall = number.kind === 'FIXED_LINE'
                     || (form.dataset.dgPhoneChannel === 'call' && canChoosePhoneChannel(number, shell));
@@ -1525,7 +1533,7 @@
         if (!button) { return; }
         var action = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         var label = getLabel('continue', 'Continue');
-        if (action?.type === 'password') {
+        if (action?.type === 'password' && form.closest('.dg-digits-login-shell')?.dataset.dgIdentity === 'username') {
             label = getLabel('enterPassword', 'Enter password');
         } else if (action?.type === 'email') {
             label = getLabel('sendEmailCode', 'Send email code');
@@ -1968,8 +1976,16 @@
 
     function restoreDigitsOtpContinuation() {
         var state = readDigitsOtpContinuation();
+        function continuationRoute(value) {
+            if (typeof value !== 'string') { return ''; }
+            try {
+                var address = new URL(value, window.location.origin);
+                address.searchParams.delete('wp_lang');
+                return address.origin + address.pathname + address.search;
+            } catch (_error) { return ''; }
+        }
         if (!state || !state.html || !Array.isArray(state.fields)
-            || state.path !== window.location.pathname + window.location.search) { return; }
+            || continuationRoute(state.path) !== continuationRoute(window.location.href)) { return; }
         var selector = state.signup ? 'form.digits_register' : 'form.digloginpage';
         var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
         var form = shell?.querySelector(selector);
@@ -2319,9 +2335,10 @@
 
         for (var index = 0; index < count; index++) {
             var slot = document.createElement('span');
-            slot.className = 'dg-otp-slot';
+            slot.className = 'dg-auth-field dg-otp-slot';
             var cell = document.createElement('input');
             cell.type = 'text';
+            cell.className = 'dg-auth-input dg-otp-input';
             cell.inputMode = 'numeric';
             cell.autocomplete = index === 0 ? 'one-time-code' : 'off';
             cell.placeholder = ' ';
@@ -3253,10 +3270,6 @@
         { code: '+93', flag: 'af', label: 'Afghanistan', labelFa: 'افغانستان' }
     ];
 
-    function countryLabel(option) {
-        return isPersianLocale() ? (option.labelFa || option.label) : option.label;
-    }
-
     function countryFlagUrl(option) {
         var base = config.flagBaseUrl || '/wp-content/plugins/digitalogic-wp/assets/images/flags/';
         return base.replace(/\/?$/, '/') + encodeURIComponent(option.flag || 'intl') + '.svg';
@@ -3267,133 +3280,229 @@
     }
 
     function normalizeCountryCode(value) {
-        var digits = normalizeDigits(value).replace(/\D/g, '');
-        if (!digits) {
-            return '';
-        }
+        var text = normalizeDigits(value).normalize('NFKC').trim();
+        var digits = text.replace(/\D/g, '');
+        if (!digits && !text) { return ''; }
+        return '+' + digits.replace(/^0+/, '');
+    }
 
-        if (digits.indexOf('00') === 0) {
-            digits = digits.slice(2);
+    var countryCallingCodes;
+    function isCountryCallingCode(value) {
+        if (!countryCallingCodes) {
+            var library = window.libphonenumber;
+            countryCallingCodes = new Set(dgCountryOptions.map(function (option) { return option.code; }));
+            library?.getCountries().forEach(function (region) {
+                countryCallingCodes.add('+' + library.getCountryCallingCode(region));
+            });
         }
-
-        return '+' + digits.slice(0, 4);
+        return countryCallingCodes.has(value);
     }
 
     function countryOptionForCode(code) {
-        var normalized = normalizeCountryCode(code);
-        return dgCountryOptions.find(function (option) {
-            return option.code === normalized;
-        }) || { code: normalized || (config.defaultCountryCode || '+98'), flag: 'intl', label: 'International', labelFa: 'بین المللی' };
+        return dgCountryOptions.find(function (option) { return option.code === code; }) ||
+            { flag: 'intl', label: 'International', labelFa: 'بین‌المللی' };
     }
 
     function bindCountryCodePicker(shell) {
-        var wrap = shell && shell.querySelector('.digits-form_countrycode');
-        var input = wrap && wrap.querySelector('input[name="login_digt_countrycode"]');
-
-        if (!wrap || !input || wrap.dataset.dgCountryReady === 'true') {
-            return;
-        }
+        var input = shell?.querySelector('input[name="login_digt_countrycode"]');
+        var wrap = input?.closest('.digits-form_countrycode');
+        if (!wrap || wrap.dataset.dgCountryReady === 'true') { return; }
 
         wrap.dataset.dgCountryReady = 'true';
         wrap.classList.add('dg-country-code-control');
-        input.setAttribute('inputmode', 'tel');
-        input.setAttribute('autocomplete', 'tel-country-code');
+        input.classList.add('dg-auth-input', 'dg-country-input');
+        input.dir = 'ltr';
+        input.inputMode = 'tel';
+        input.autocomplete = 'tel-country-code';
+        input.maxLength = 8;
+        var lang = document.documentElement.lang;
+        var persian = lang ? /^fa(?:[-_]|$)/i.test(lang) : isPersianLocale();
+        function countryLabel(option) {
+            return persian ? (option.labelFa || option.label) : option.label;
+        }
+        var label = getLabel('chooseCountryCode', 'Choose country code');
+        input.setAttribute('aria-label', persian ? 'پیش‌شماره کشور' : 'Country calling code');
 
         var flag = document.createElement('button');
         flag.type = 'button';
         flag.className = 'dg-country-flag';
+        flag.setAttribute('aria-label', persian ? 'وارد کردن شماره تلفن' : 'Enter phone number');
         function focusPhone() {
-            var phone = shell.querySelector('input[name="digits_phone"]');
-            if (phone) { phone.focus({ preventScroll: true }); }
+            shell.querySelector('input[name="digits_phone"]')?.focus({ preventScroll: true });
         }
-        flag.addEventListener('click', function () {
-            closeMenu();
-            focusPhone();
-        });
 
         var chevron = document.createElement('button');
         chevron.type = 'button';
         chevron.className = 'dg-country-trigger';
-        chevron.setAttribute('aria-label', getLabel('chooseCountryCode', 'Choose country code'));
+        chevron.setAttribute('aria-label', label);
         chevron.setAttribute('aria-haspopup', 'listbox');
         chevron.setAttribute('aria-expanded', 'false');
-        chevron.innerHTML = '<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>';
+        chevron.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
         var menu = document.createElement('div');
+        menu.id = 'dg-country-code-options';
         menu.className = 'dg-country-menu';
         menu.setAttribute('role', 'listbox');
+        menu.setAttribute('aria-label', label);
         menu.setAttribute('aria-hidden', 'true');
+        menu.inert = true;
+        chevron.setAttribute('aria-controls', menu.id);
+
+        var status = document.createElement('p');
+        status.id = 'dg-country-code-status';
+        status.className = 'dg-country-code-status';
+        status.setAttribute('role', 'status');
+        wrap.closest('.digits-mobile_wrapper')?.after(status);
+        input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
+
+        var options = dgCountryOptions.map(function (option) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.tabIndex = -1;
+            button.className = 'dg-country-option';
+            button.dataset.code = option.code;
+            button.setAttribute('role', 'option');
+            button.innerHTML = countryFlagMarkup(option, 'dg-country-option-flag') +
+                '<span class="dg-country-option-code" dir="ltr">' + escapeHtml(option.code) + '</span>' +
+                '<span class="dg-country-option-name" dir="auto">' + escapeHtml(countryLabel(option)) + '</span>';
+            button.addEventListener('click', function () {
+                input.value = option.code;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                focusPhone();
+                closeMenu();
+            });
+            menu.appendChild(button);
+            return button;
+        });
 
         function closeMenu() {
             wrap.classList.remove('is-open');
             chevron.setAttribute('aria-expanded', 'false');
             menu.setAttribute('aria-hidden', 'true');
+            menu.inert = true;
         }
 
-        function toggleMenu() {
-            var open = !wrap.classList.contains('is-open');
-            wrap.classList.toggle('is-open', open);
-            chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-            menu.setAttribute('aria-hidden', open ? 'false' : 'true');
+        function openMenu(fromEnd) {
+            wrap.classList.add('is-open');
+            chevron.setAttribute('aria-expanded', 'true');
+            menu.setAttribute('aria-hidden', 'false');
+            menu.inert = false;
+            var selected = options.find(function (button) { return button.dataset.code === input.value; });
+            focusOption(selected || options[fromEnd ? options.length - 1 : 0]);
+        }
+
+        function focusOption(button) {
+            button.focus({ preventScroll: true });
+            // Scroll the list, keeping the sign-in card and page stationary.
+            var list = menu.getBoundingClientRect();
+            var row = button.getBoundingClientRect();
+            if (row.bottom > list.bottom - 8) { menu.scrollTop += row.bottom - list.bottom + 8; }
+            if (row.top < list.top + 8) { menu.scrollTop -= list.top - row.top + 8; }
+        }
+
+        function showValidation(show) {
+            var invalid = show && !isCountryCallingCode(input.value);
+            input.setAttribute('aria-invalid', String(invalid));
+            status.textContent = invalid
+                ? (persian ? 'پیش‌شمارهٔ معتبر وارد کنید یا کشوری از فهرست انتخاب کنید.' : 'Enter a valid calling code or choose a country from the list.')
+                : '';
+        }
+
+        function syncSelection() {
+            input.toggleAttribute('data-dg-code-selected', document.activeElement === input &&
+                input.selectionStart === 0 && input.selectionEnd === input.value.length);
         }
 
         function syncFlag() {
-            var value = normalizeCountryCode(input.value) || (config.defaultCountryCode || '+98');
-            input.value = value;
+            var start = input.selectionStart;
+            var end = input.selectionEnd;
+            var original = input.value;
+            var value = normalizeCountryCode(original) || '+';
+            if (value.length > 4) { value = '+'; }
+            if (original !== value) {
+                input.value = value;
+                if (start !== null && end !== null) {
+                    input.setSelectionRange(
+                        (normalizeCountryCode(original.slice(0, start)) || '+').length,
+                        (normalizeCountryCode(original.slice(0, end)) || '+').length
+                    );
+                }
+            }
+            input.style.setProperty('--dg-code-chars', String(value.length));
             var option = countryOptionForCode(value);
-            flag.textContent = '';
             flag.style.setProperty('--dg-flag', 'url(' + countryFlagUrl(option) + ')');
-            flag.setAttribute('title', countryLabel(option));
-            flag.setAttribute('aria-label', isPersianLocale() ? 'وارد کردن شماره تلفن' : 'Enter phone number');
-
-            menu.querySelectorAll('.dg-country-option').forEach(function (button) {
-                var active = button.dataset.code === value;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-selected', active ? 'true' : 'false');
+            flag.title = countryLabel(option);
+            options.forEach(function (button) {
+                button.setAttribute('aria-selected', String(button.dataset.code === value));
             });
+            showValidation(document.activeElement !== input);
+            syncSelection();
         }
 
-        dgCountryOptions.forEach(function (option) {
-            var button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'dg-country-option';
-            button.dataset.code = option.code;
-            button.setAttribute('role', 'option');
-            button.innerHTML = countryFlagMarkup(option, 'dg-country-option-flag') +
-                '<span class="dg-country-option-code">' + escapeHtml(option.code) + '</span>' +
-                '<span class="dg-country-option-name">' + escapeHtml(countryLabel(option)) + '</span>';
-            button.addEventListener('click', function () {
-                input.value = option.code;
-                syncFlag();
-                closeMenu();
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                focusPhone();
-            });
-            menu.appendChild(button);
-        });
-
         wrap.insertBefore(flag, input);
-        wrap.appendChild(chevron);
-        wrap.appendChild(menu);
+        wrap.append(chevron, menu);
 
-        chevron.addEventListener('click', function (event) {
-            event.preventDefault();
-            event.stopPropagation();
-            toggleMenu();
+        flag.addEventListener('click', function () {
+            focusPhone();
+            closeMenu();
         });
-
+        chevron.addEventListener('click', function () {
+            if (menu.inert) { openMenu(false); }
+            else { closeMenu(); }
+        });
+        [input, chevron].forEach(function (control) {
+            control.addEventListener('keydown', function (event) {
+                if (!['ArrowDown', 'ArrowUp'].includes(event.key)) { return; }
+                event.preventDefault();
+                openMenu(event.key === 'ArrowUp');
+            });
+        });
+        input.addEventListener('beforeinput', function (event) {
+            if (event.inputType !== 'insertText' || !event.data || event.isComposing) { return; }
+            var next = input.value.slice(0, input.selectionStart) + event.data + input.value.slice(input.selectionEnd);
+            if (!/^[+\d]+$/.test(normalizeDigits(event.data).normalize('NFKC')) || normalizeCountryCode(next).length > 4) {
+                event.preventDefault();
+            }
+        });
         input.addEventListener('input', syncFlag);
         input.addEventListener('focus', function () { input.select(); });
-        menu.addEventListener('keydown', function (event) {
-            if (event.key === 'Escape') {
-                closeMenu();
-                chevron.focus();
-            }
+        input.addEventListener('select', syncSelection);
+        input.addEventListener('selectionchange', syncSelection);
+        input.addEventListener('blur', function () {
+            syncSelection();
+            showValidation(true);
         });
-        document.addEventListener('click', function (event) {
-            if (!wrap.contains(event.target)) {
+        input.addEventListener('keydown', function (event) {
+            if (event.key !== 'Enter' || event.isComposing) { return; }
+            event.preventDefault();
+            if (isCountryCallingCode(input.value)) { focusPhone(); }
+            else { showValidation(true); }
+        });
+        menu.addEventListener('keydown', function (event) {
+            var index = options.indexOf(document.activeElement);
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                chevron.focus({ preventScroll: true });
                 closeMenu();
+                return;
             }
+            if (event.key === 'Tab') {
+                // Return to the trigger before the browser advances along the form.
+                chevron.focus({ preventScroll: true });
+                closeMenu();
+                return;
+            }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { return; }
+            event.preventDefault();
+            var next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 :
+                Math.max(0, Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+            focusOption(options[next]);
+        });
+        wrap.addEventListener('focusout', function (event) {
+            if (!wrap.contains(event.relatedTarget)) { closeMenu(); }
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (!wrap.contains(event.target)) { closeMenu(); }
         });
 
         syncFlag();
@@ -3454,6 +3563,29 @@
         var updateEmailFeedback = bindEmailDomainFeedback(emailInput);
         var login = phoneInput.form;
         if (login) {
+            var lanAction = shell.querySelector('[data-call-lan-action]');
+            if (lanAction) {
+                var submit = login.querySelector('.digits-form_login > .digits-form_submit-btn');
+                submit?.after(lanAction);
+                putAuthIcon(lanAction, 'phone');
+                var updateLanAction = async function () {
+                    var identity = digitsIdentityValue(login).toLowerCase();
+                    var available = callVerificationEnabled(shell);
+                    lanAction.hidden = !available || identity !== lanAction.dataset.login.toLowerCase();
+                    if (!available || !emailDomain(identity) || !window.crypto?.subtle) { return; }
+                    try {
+                        var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
+                        var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+                        if (identity === digitsIdentityValue(login).toLowerCase()) {
+                            lanAction.hidden = hex !== lanAction.dataset.emailDigest;
+                        }
+                    } catch (_error) {
+                        // The assigned username remains available on browsers without digest support.
+                    }
+                };
+                login.addEventListener('input', updateLanAction);
+                updateLanAction();
+            }
             shell.addEventListener('digitalogic:call-error', function (event) {
                 showDigitsInlineMessage(login, event.detail, 'warning');
             });
@@ -3635,12 +3767,12 @@
             recoveryHeading.textContent = title;
             login.querySelector('.digits-form_heading')?.appendChild(recoveryHeading);
             if (pageHeading) { pageHeading.textContent = title; }
-            showDigitsSmsIdentity(login);
+            showDigitsSmsIdentity(login, false);
             shell.dataset.dgRecovery = 'true';
             var url = new window.URL(window.location.href);
             url.searchParams.delete('action');
             url.searchParams.set('recover', '1');
-            window.history.replaceState(null, '', url);
+            window.history.replaceState(window.history.state, '', url);
         }
         function returnToSignIn() {
             setBrandedAuthForm(shell, false);
@@ -3655,7 +3787,7 @@
             var url = new window.URL(window.location.href);
             url.searchParams.delete('recover');
             url.searchParams.delete('action');
-            window.history.replaceState(null, '', url);
+            window.history.replaceState(window.history.state, '', url);
         }
         var help = document.createElement('p');
         help.className = 'dg-sms-identity-help';
@@ -3674,6 +3806,84 @@
             setBrandedAuthForm(shell, false);
         }
         if (authRecovery) { beginRecovery(); }
+        return function () { bindBrandedStepLocation(shell, login, beginRecovery, returnToSignIn); };
+    }
+
+    function bindBrandedStepLocation(shell, login, beginRecovery, returnToSignIn) {
+        var routes = ['login', 'password', 'contact', 'recover', 'signup', 'code', 'call', 'call-code', 'success'];
+        var previous;
+
+        function currentStep() {
+            if (document.querySelector('.dg-auth-success[open]')) { return 'success'; }
+            var call = shell.querySelector('[data-call-unified]')?.dataset.callStep;
+            if (call === 'preview' || call === 'code') { return call === 'code' ? 'call-code' : 'call'; }
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (form && visibleDigitsOtpInput(form)) { return 'code'; }
+            if (form?.matches('.digits_register')) { return 'signup'; }
+            if (visibleDigitsPassword(login)) { return 'password'; }
+            if (shell.dataset.dgRecovery === 'true') { return 'recover'; }
+            if (login.dataset.dgSmsIdentity === 'true') { return 'contact'; }
+            return 'login';
+        }
+
+        function writeStep() {
+            var step = currentStep();
+            if (step === previous) { return; }
+            previous = step;
+            var url = new URL(window.location.href);
+            if (url.hash === '#' + step) { return; }
+            url.hash = step;
+            window.history.replaceState(window.history.state, '', url);
+        }
+
+        function leaveSecureStep() {
+            if (shell.classList.contains('dg-call-code-active')) { window.DigitalogicCallLogin?.back(); }
+            shell.querySelector('.dg-username-password-step:not([hidden]) .dg-username-login-back')?.click();
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (form && !form.classList.contains('digits_form_index_section')) {
+                form.querySelector('.digits_form_back:not(.digits_hide_back)')?.click();
+            }
+        }
+
+        function openStep() {
+            var requested = window.location.hash.slice(1);
+            var current = currentStep();
+            // Dynamic steps can only be resumed once their prerequisites exist.
+            if (requested !== current && routes.includes(requested) && current !== 'success') {
+                if (requested === 'login') {
+                    leaveSecureStep();
+                    returnToSignIn();
+                } else if (requested === 'recover' || requested === 'contact' || requested === 'signup') {
+                    leaveSecureStep();
+                    if (requested === 'recover') {
+                        if (shell.dataset.dgRecovery !== 'true') { beginRecovery(); }
+                        else { showDigitsSmsIdentity(login, false); }
+                    } else {
+                        returnToSignIn();
+                        showDigitsSmsIdentity(login, false);
+                    }
+                } else if (requested === 'password' && current === 'login') {
+                    var action = digitsIdentityAction(login);
+                    if (action.type === 'password' && action.enabled) {
+                        showDigitsUsernamePasswordStep(login, digitsIdentityValue(login));
+                    }
+                } else if ((requested === 'call' || requested === 'call-code') && current !== 'call-code') {
+                    if (current !== 'call') {
+                        var number = digitsIdentityAction(login).number;
+                        if (number?.valid && callVerificationEnabled(shell)) { window.DigitalogicCallLogin?.start(number.e164); }
+                    }
+                }
+            }
+            previous = undefined;
+            writeStep();
+        }
+
+        openStep();
+        window.addEventListener('hashchange', openStep);
+        var observer = new MutationObserver(writeStep);
+        observer.observe(shell, {subtree: true, childList: true, attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'data-call-step', 'data-dg-sms-identity', 'data-dg-recovery']});
+        observer.observe(document.body, {childList: true});
     }
 
     function enforceDigitsRegisterMobile() {
@@ -3769,376 +3979,206 @@
         });
     }
 
-    async function buildLoginHeroCarousel() {
+    function buildLoginStories() {
         var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
-        if (!config.loginSlidesUrl || !document.body.classList.contains('login')) {
-            return;
-        }
+        if (!shell || !config.loginSlidesUrl || !document.body.classList.contains('login')) { return; }
 
-        var slides;
-        try {
-            var presentation = await authSocketRequest('digitalogic_auth_presentation', {});
-            if (presentation && Array.isArray(presentation.slides)) {
-                slides = presentation.slides;
-            } else {
-                var response = await window.fetch(config.loginSlidesUrl, { credentials: 'same-origin' });
-                slides = response.ok ? await response.json() : null;
-            }
-        } catch (error) {
-            return;
-        }
-        if (!shell || !Array.isArray(slides)) {
-            return;
-        }
-        var images = slides.flatMap(function (slide) {
+        var wide = window.matchMedia('(min-width: 720px)');
+        var loading = false;
+        function storyUrl(value) {
+            if (typeof value !== 'string' || !value) { return ''; }
             try {
-                var url = new window.URL(slide.image);
-                return /^https?:$/.test(url.protocol) ? [url.href] : [];
-            } catch (error) {
-                return [];
-            }
-        });
-        if (!images.length) {
-            return;
+                var url = new URL(value, window.location.href);
+                return url.origin === window.location.origin && /^https?:$/.test(url.protocol) ? url.href : '';
+            } catch (_error) { return ''; }
         }
 
-        var hero = document.createElement('div');
-        hero.className = 'dg-login-hero-carousel';
-        hero.dataset.dgSlide = '0';
-        var track = document.createElement('span');
-        track.className = 'dg-hero-track';
-        track.setAttribute('aria-hidden', 'true');
-        hero.appendChild(track);
-        var dots = document.createElement('span');
-        dots.className = 'dg-hero-dots';
-        images.forEach(function (url, index) {
-            var slide = document.createElement('span');
-            slide.className = 'dg-hero-slide';
-            slide.style.backgroundImage = 'url("' + url.replace(/"/g, '%22') + '")';
-            track.appendChild(slide);
-            if (images.length > 1) {
-                var dot = document.createElement('button');
-                dot.type = 'button';
-                dot.dataset.dgSlide = String(index);
-                dot.setAttribute('aria-label', getLabel('heroSlide', 'Show image %d').replace('%d', String(index + 1)));
-                dots.appendChild(dot);
-            }
-        });
-
-        shell.classList.add('dg-has-hero-carousel');
-        shell.insertBefore(hero, shell.firstElementChild);
-        if (images.length > 1) {
-            hero.appendChild(dots);
-            bindHeroCarousel(hero);
-        } else {
-            hero.classList.add('dg-hero-static');
-            hero.style.setProperty('--dg-track-index', '0');
-        }
-    }
-
-    function bindHeroCarousel(hero) {
-        if (!hero || hero.dataset.dgCarouselReady === 'true') {
-            return;
-        }
-
-        hero.dataset.dgCarouselReady = 'true';
-
-        var track = hero.querySelector('.dg-hero-track');
-        if (!track) {
-            track = document.createElement('span');
-            track.className = 'dg-hero-track';
-            Array.prototype.slice.call(hero.querySelectorAll(':scope > .dg-hero-slide')).forEach(function (slide) {
-                track.appendChild(slide);
+        function readCards(rows) {
+            if (!Array.isArray(rows)) { return []; }
+            return rows.slice(0, 8).flatMap(function (row) {
+                if (!row || typeof row !== 'object') { return []; }
+                var image = storyUrl(row.image);
+                var link = storyUrl(row.link);
+                if (!image || typeof row.title !== 'string' || !row.title.trim()) { return []; }
+                return [{
+                    image: image,
+                    link: link,
+                    title: row.title,
+                    tab: typeof row.tab === 'string' && row.tab.trim() ? row.tab : row.title,
+                    description: typeof row.description === 'string' ? row.description : '',
+                    action: typeof row.action === 'string' ? row.action : '',
+                    notes: Array.isArray(row.notes) ? row.notes.filter(function (note) {
+                        return typeof note === 'string' && note.trim();
+                    }).slice(0, 2) : []
+                }];
             });
-            hero.insertBefore(track, hero.firstElementChild);
         }
 
-        var dots = Array.prototype.slice.call(hero.querySelectorAll('[data-dg-slide]'));
-        var originalSlides = Array.prototype.slice.call(track.querySelectorAll('.dg-hero-slide:not([data-dg-clone])'));
-        var slideCount = Math.max(1, originalSlides.length);
-        var activeTrackIndex = normalizeSlide(currentSlide()) + (slideCount > 1 ? 1 : 0);
-        var pendingSnapIndex = null;
-        var startX = 0;
-        var currentX = 0;
-        var dragDelta = 0;
-        var lastMoveX = 0;
-        var lastMoveTime = 0;
-        var dragVelocity = 0;
-        var activePointerId = null;
-        var activeDragType = null;
-        var autoplayTimer = null;
-
-        if (slideCount > 1 && !track.querySelector('[data-dg-clone="true"]')) {
-            var firstClone = originalSlides[0].cloneNode(true);
-            var lastClone = originalSlides[slideCount - 1].cloneNode(true);
-
-            firstClone.dataset.dgClone = 'true';
-            lastClone.dataset.dgClone = 'true';
-            firstClone.setAttribute('aria-hidden', 'true');
-            lastClone.setAttribute('aria-hidden', 'true');
-            track.insertBefore(lastClone, originalSlides[0]);
-            track.appendChild(firstClone);
-        }
-
-        function currentSlide() {
-            return Number(hero.dataset.dgSlide || '0') || 0;
-        }
-
-        function normalizeSlide(index) {
-            return ((index % slideCount) + slideCount) % slideCount;
-        }
-
-        function syncTrack(dragPx) {
-            hero.style.setProperty('--dg-slide', String(currentSlide()));
-            hero.style.setProperty('--dg-track-index', String(activeTrackIndex));
-            hero.style.setProperty('--dg-drag', (dragPx || 0) + 'px');
-            hero.style.setProperty('--dg-drag-progress', String(Math.min(1, Math.abs(dragPx || 0) / Math.max(1, hero.getBoundingClientRect().width || 1))));
-        }
-
-        function stopAutoplay() {
-            window.clearInterval(autoplayTimer);
-            autoplayTimer = null;
-        }
-
-        function startAutoplay() {
-            stopAutoplay();
-
-            if (slideCount < 2) {
-                return;
-            }
-
-            autoplayTimer = window.setInterval(function () {
-                if (activeDragType || document.hidden) {
-                    return;
+        async function loadCards() {
+            if (!wide.matches || loading || shell.querySelector('.dg-login-stories')) { return; }
+            loading = true;
+            var fa = /^fa(?:[-_]|$)/i.test(document.documentElement.lang);
+            var locale = fa ? 'fa_IR' : 'en_US';
+            try {
+                var response = await authSocketRequest('digitalogic_auth_presentation', { locale: locale });
+                var cards = readCards(response?.slides);
+                if (!cards.length) {
+                    var url = new URL(config.loginSlidesUrl, window.location.href);
+                    url.searchParams.set('locale', locale);
+                    var fallback = await window.fetch(url, { credentials: 'same-origin' });
+                    cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
-
-                setSlide(currentSlide() + 1, false);
-            }, 9200);
-        }
-
-        function updateDots(next) {
-            dots.forEach(function (dot) {
-                var active = dot.dataset.dgSlide === String(next);
-                dot.classList.toggle('is-active', active);
-                dot.setAttribute('aria-pressed', active ? 'true' : 'false');
-            });
-        }
-
-        function snapTrack(index) {
-            activeTrackIndex = index;
-            hero.classList.add('is-jump-reset');
-            syncTrack(0);
-            track.offsetHeight;
-            window.requestAnimationFrame(function () {
-                hero.classList.remove('is-jump-reset');
-            });
-        }
-
-        function setSlide(index, manual) {
-            var next = normalizeSlide(index);
-            var targetTrackIndex = next + (slideCount > 1 ? 1 : 0);
-
-            if (slideCount > 1 && index >= slideCount && currentSlide() === slideCount - 1) {
-                targetTrackIndex = slideCount + 1;
-                pendingSnapIndex = 1;
-            } else if (slideCount > 1 && index < 0 && currentSlide() === 0) {
-                targetTrackIndex = 0;
-                pendingSnapIndex = slideCount;
-            } else {
-                pendingSnapIndex = null;
-            }
-
-            hero.dataset.dgSlide = String(next);
-            activeTrackIndex = targetTrackIndex;
-
-            if (manual) {
-                hero.classList.add('is-manual');
-                startAutoplay();
-            }
-
-            updateDots(next);
-            syncTrack(0);
-        }
-
-        track.addEventListener('transitionend', function (event) {
-            if (event.target !== track || event.propertyName !== 'transform' || pendingSnapIndex === null) {
-                return;
-            }
-
-            snapTrack(pendingSnapIndex);
-            pendingSnapIndex = null;
-        });
-
-        dots.forEach(function (dot) {
-            dot.addEventListener('click', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
-                setSlide(Number(dot.dataset.dgSlide || '0'), true);
-            });
-        });
-
-        function beginDrag(clientX, type, event) {
-            if (event && event.target && event.target.closest && event.target.closest('.dg-hero-dots [data-dg-slide]')) {
-                return false;
-            }
-
-            if (activeDragType) {
-                return false;
-            }
-
-            stopAutoplay();
-            activeDragType = type;
-            startX = clientX;
-            currentX = clientX;
-            dragDelta = 0;
-            lastMoveX = clientX;
-            lastMoveTime = Date.now();
-            dragVelocity = 0;
-            pendingSnapIndex = null;
-            hero.classList.add('is-dragging');
-            syncTrack(0);
-
-            if (event && typeof event.preventDefault === 'function') {
-                event.preventDefault();
-            }
-
-            return true;
-        }
-
-        function updateDrag(clientX, type, event) {
-            if (activeDragType !== type) {
-                return;
-            }
-
-            currentX = clientX;
-            dragDelta = currentX - startX;
-            var now = Date.now();
-            var elapsed = Math.max(1, now - lastMoveTime);
-            dragVelocity = (clientX - lastMoveX) / elapsed;
-            lastMoveX = clientX;
-            lastMoveTime = now;
-            syncTrack(dragDelta);
-
-            if (event && typeof event.preventDefault === 'function') {
-                event.preventDefault();
+                if (cards.length && shell.isConnected) { mountLoginStories(shell, cards, wide, fa); }
+            } catch (_error) {
+                // The sign-in form and compact brand artwork remain available.
+            } finally {
+                loading = false;
             }
         }
 
-        function finishDrag(clientX, type) {
-            if (activeDragType !== type) {
-                return;
-            }
-
-            var delta = clientX - startX;
-            var width = hero.getBoundingClientRect().width || 1;
-            var threshold = Math.min(118, Math.max(48, width * 0.2));
-            var velocityHint = Math.abs(dragVelocity) > 0.58 && Math.abs(delta) > 18;
-            var shouldMove = Math.abs(delta) >= threshold || velocityHint;
-            var direction = delta < 0 ? 1 : -1;
-
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            dragDelta = 0;
-            dragVelocity = 0;
-
-            if (!shouldMove) {
-                syncTrack(0);
-                startAutoplay();
-                return;
-            }
-
-            setSlide(currentSlide() + direction, true);
-        }
-
-        hero.addEventListener('pointerdown', function (event) {
-            if (!beginDrag(event.clientX, 'pointer', event)) {
-                return;
-            }
-
-            activePointerId = event.pointerId;
-
-            if (hero.setPointerCapture) {
-                hero.setPointerCapture(activePointerId);
-            }
-        });
-
-        hero.addEventListener('pointerup', function (event) {
-            if (activePointerId !== event.pointerId) {
-                return;
-            }
-
-            finishDrag(event.clientX, 'pointer');
-        });
-
-        hero.addEventListener('pointermove', function (event) {
-            if (activePointerId !== event.pointerId) {
-                return;
-            }
-
-            updateDrag(event.clientX, 'pointer', event);
-        });
-
-        hero.addEventListener('pointercancel', function () {
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            syncTrack(0);
-            startAutoplay();
-        });
-
-        hero.addEventListener('mousedown', function (event) {
-            if (event.button !== 0) {
-                return;
-            }
-
-            beginDrag(event.clientX, 'mouse', event);
-        });
-
-        window.addEventListener('mouseup', function (event) {
-            finishDrag(event.clientX, 'mouse');
-        });
-
-        window.addEventListener('mousemove', function (event) {
-            updateDrag(event.clientX, 'mouse', event);
-        });
-
-        hero.addEventListener('touchstart', function (event) {
-            if (!event.touches || event.touches.length !== 1) {
-                return;
-            }
-
-            beginDrag(event.touches[0].clientX, 'touch', event);
-        }, { passive: false });
-
-        hero.addEventListener('touchmove', function (event) {
-            if (!event.touches || event.touches.length !== 1) {
-                return;
-            }
-
-            updateDrag(event.touches[0].clientX, 'touch', event);
-        }, { passive: false });
-
-        hero.addEventListener('touchend', function (event) {
-            if (!event.changedTouches || !event.changedTouches.length) {
-                return;
-            }
-
-            finishDrag(event.changedTouches[0].clientX, 'touch');
-        });
-
-        hero.addEventListener('touchcancel', function () {
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            syncTrack(0);
-            startAutoplay();
-        });
-
-        setSlide(currentSlide(), false);
-        snapTrack(activeTrackIndex);
-        startAutoplay();
+        wide.addEventListener('change', loadCards);
+        void loadCards();
     }
+
+    function mountLoginStories(shell, cards, wide, fa) {
+        function element(tag, className, content) {
+            var node = document.createElement(tag);
+            node.className = className;
+            if (content) { node.textContent = content; }
+            return node;
+        }
+
+        var region = element('aside', 'dg-login-stories');
+        region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
+        var header = element('div', 'dg-story-header');
+        var brand = element('span', 'dg-story-brand', fa ? 'دیجیتالاجیک' : 'Digitalogic');
+        header.append(brand, element('span', 'dg-story-kicker', fa ? 'محصولات و خدمات' : 'Products & services'));
+        var stage = element('div', 'dg-story-stage');
+        var controls = element('div', 'dg-story-controls');
+        var tabs = element('div', 'dg-story-tabs');
+        var announcement = element('span', 'dg-visually-hidden');
+        announcement.setAttribute('aria-live', 'polite');
+        var articles = [];
+        var buttons = [];
+
+        cards.forEach(function (card, index) {
+            var article = element('article', 'dg-story-card');
+            var figure = element('div', 'dg-story-figure');
+            var photo = element('img', 'dg-story-image');
+            photo.src = card.image;
+            photo.alt = '';
+            photo.decoding = 'async';
+            figure.append(photo);
+            card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
+            var copy = element('div', 'dg-story-copy');
+            copy.append(element('h2', 'dg-story-title', card.title));
+            if (card.description) { copy.append(element('p', 'dg-story-description', card.description)); }
+            if (card.link && card.action) {
+                var action = element('a', 'dg-story-link');
+                action.href = card.link;
+                action.append(element('span', '', card.action));
+                putAuthIcon(action, 'arrow');
+                copy.append(action);
+            }
+            article.append(figure, copy);
+            articles.push(article);
+            stage.append(article);
+
+            var button = element('button', 'dg-story-tab', card.tab);
+            button.type = 'button';
+            button.addEventListener('click', function () { select(index, true); });
+            buttons.push(button);
+            tabs.append(button);
+        });
+
+        var active = 0;
+        var timer;
+        var hovering = false;
+        var playing = true;
+        var onScreen = true;
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+        var rotation = element('button', 'dg-story-rotation');
+        rotation.type = 'button';
+
+        function schedule() {
+            window.clearTimeout(timer);
+            if (cards.length > 1 && playing && !reduced.matches && wide.matches && onScreen &&
+                !document.hidden && !hovering && !region.contains(document.activeElement)) {
+                timer = window.setTimeout(function () { select(active + 1, false); }, 9000);
+            }
+        }
+
+        function select(index, manual) {
+            active = (index + cards.length) % cards.length;
+            articles.forEach(function (article, position) {
+                var visible = position === active;
+                article.inert = !visible;
+                article.setAttribute('aria-hidden', String(!visible));
+                article.classList.toggle('is-active', visible);
+                buttons[position].setAttribute('aria-pressed', String(visible));
+            });
+            if (manual) { announcement.textContent = cards[active].title; }
+            schedule();
+        }
+
+        function syncRotation() {
+            var label = playing ? (fa ? 'توقف پخش خودکار' : 'Pause automatic rotation') :
+                (fa ? 'شروع پخش خودکار' : 'Start automatic rotation');
+            rotation.setAttribute('aria-label', label);
+            rotation.title = label;
+            rotation.dataset.playing = String(playing);
+            rotation.hidden = reduced.matches;
+            schedule();
+        }
+
+        region.append(header, stage);
+        if (cards.length > 1) {
+            controls.append(tabs, rotation);
+            region.append(controls, announcement);
+            rotation.addEventListener('click', function () { playing = !playing; syncRotation(); });
+            tabs.addEventListener('keydown', function (event) {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { return; }
+                event.preventDefault();
+                var right = fa ? -1 : 1;
+                var focused = buttons.indexOf(document.activeElement);
+                var index = event.key === 'Home' ? 0 : event.key === 'End' ? cards.length - 1 :
+                    focused + (event.key === 'ArrowRight' ? right : -right);
+                select(index, true);
+                buttons[active].focus();
+            });
+            var startX;
+            stage.addEventListener('pointerdown', function (event) {
+                if (event.pointerType === 'touch' && !event.target.closest('a')) { startX = event.clientX; }
+            });
+            stage.addEventListener('pointercancel', function () { startX = undefined; });
+            stage.addEventListener('pointerup', function (event) {
+                var delta = event.clientX - startX;
+                startX = undefined;
+                if (Math.abs(delta) >= 52) { select(active + Math.sign(delta) * (fa ? 1 : -1), true); }
+            });
+            region.addEventListener('pointerenter', function (event) {
+                if (event.pointerType === 'mouse') { hovering = true; schedule(); }
+            });
+            region.addEventListener('pointerleave', function () { hovering = false; schedule(); });
+            region.addEventListener('focusin', schedule);
+            region.addEventListener('focusout', function () { window.setTimeout(schedule, 0); });
+            document.addEventListener('visibilitychange', schedule);
+            wide.addEventListener('change', schedule);
+            reduced.addEventListener('change', syncRotation);
+            if ('IntersectionObserver' in window) {
+                new IntersectionObserver(function (entries) {
+                    onScreen = entries[0].isIntersecting;
+                    schedule();
+                }, { threshold: 0.2 }).observe(region);
+            }
+            syncRotation();
+        }
+
+        select(0, false);
+        shell.prepend(region);
+        shell.classList.add('dg-has-login-stories');
+    }
+
 
     function authPageAction() {
         if (!document.body || !document.body.classList) {
@@ -4357,6 +4397,7 @@
         document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) form.digits_register').forEach(prepareRegistrationOtp);
         mountLoginAlternatives();
         decorateAuthControls();
+        prepareDigitsTextFields();
         mountRememberedAccount();
         normalizeDigitsLoginFallback();
         normalizeRecoveryIdentity();
@@ -4377,6 +4418,8 @@
         back: 'M19 12H5m6-6-6 6 6 6',
         check: 'M5 12l4 4L19 6',
         info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
+        edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
+        clock: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM12 6v6l4 2',
         more: 'M4 7h16 M4 12h16 M4 17h16 M8 5v4 M15 10v4 M10 15v4'
     };
 
@@ -4397,13 +4440,58 @@
         node.prepend(svg);
     }
 
+    function decorateNativeLoginCards() {
+        var login = document.querySelector('body.login #login');
+        if (!login) { return; }
+        var preferences = login.nextElementSibling;
+        var form = login.querySelector(':scope > .admin-email-confirm-form');
+        if (form) {
+            putAuthIcon(form.querySelector('.admin-email__heading'), 'email');
+            putAuthIcon(form.querySelector('.admin-email__details a'), 'info');
+            putAuthIcon(form.querySelector('.admin-email__actions-secondary a'), 'clock');
+
+            var actions = form.querySelector('.admin-email__actions-primary');
+            var confirm = actions?.querySelector(':scope > #correct-admin-email');
+            if (confirm) { actions.prepend(confirm); }
+            putAuthIcon(actions?.querySelector(':scope > a.button'), 'edit');
+
+            var email = form.querySelectorAll('p.admin-email__details')[1]?.querySelector('strong');
+            if (email) { email.dir = 'ltr'; }
+            if (preferences?.classList.contains('dg-login-preferences')) { login.append(preferences); }
+            return;
+        }
+
+        // Reuse the translated WordPress heading and its notice, including any links.
+        var body = document.body;
+        var isCheckEmail = body.classList.contains('login-action-checkemail');
+        var isConfirmed = body.classList.contains('login-action-confirmaction');
+        var isReset = body.matches('.login-action-rp, .login-action-resetpass') && !login.querySelector('#resetpassform');
+        if (!isCheckEmail && !isConfirmed && !isReset) { return; }
+        var heading = body.querySelector(':scope > h1.screen-reader-text');
+        var notice = isConfirmed && login.querySelector(':scope > p.success');
+        notice = notice || login.querySelector(isReset ? ':scope > .message.reset-pass' : ':scope > .message:not(.notice-error)');
+        if (!heading || !notice) { return; }
+        var followup = isConfirmed && notice.matches('p.success') && notice.nextElementSibling;
+
+        var card = document.createElement('section');
+        card.className = 'dg-native-auth-card' + (isCheckEmail ? '' : ' dg-native-auth-card--success');
+        heading.classList.remove('screen-reader-text');
+        heading.classList.add('dg-native-card-heading');
+        putAuthIcon(heading, isCheckEmail ? 'email' : 'check');
+        notice.before(card);
+        card.append(heading, notice);
+        if (followup && followup.matches('p:not([id], [class])')) { card.append(followup); }
+        if (preferences?.classList.contains('dg-login-preferences')) { login.append(preferences); }
+    }
+
     function decorateAuthControls() {
         var selectors = {
             '.digits-form_heading:not([data-call-code-title])': 'user',
             '.dg-passkey-options summary': 'more',
             '.dg-passkey-options .digitalogic-call-toggle, [data-call-start]': 'phone',
             '.dg-otp-resend': 'sms',
-            '.digits-form_button_ic': 'arrow'
+            '[data-call-preview-back]': 'back',
+            '.digits-form_button_ic, .dg-auth-primary': 'arrow'
         };
         Object.keys(selectors).forEach(function (selector) {
             document.querySelectorAll(selector).forEach(function (node) { putAuthIcon(node, selectors[selector]); });
@@ -4571,6 +4659,15 @@
         }
     }
 
+    function prepareDigitsTextFields() {
+        document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_input_row input:is(:not([type]), [type="text"], [type="tel"], [type="email"], [type="number"], [type="url"], [type="search"]):not(.dg-auth-input, .otp_input, [name="sms_otp"], [name="email_otp"])').forEach(function (input) {
+            var row = input.closest('.digits-form_input_row');
+            if (!row || row.matches('.digits_captcha_row, .digits-form_rememberme')) { return; }
+            row.classList.add('dg-auth-field');
+            input.classList.add('dg-auth-input');
+        });
+    }
+
     function observeAuthChrome() {
         normalizeAuthChrome();
 
@@ -4583,8 +4680,8 @@
             var shouldNormalize = mutations.some(function (mutation) {
                 return Array.prototype.some.call(mutation.addedNodes, function (node) {
                     return node.nodeType === 1 && (
-                        node.matches && node.matches('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register') ||
-                        node.querySelector && node.querySelector('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register')
+                        node.matches && node.matches('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register, .digits-form_input_row') ||
+                        node.querySelector && node.querySelector('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register, .digits-form_input_row')
                     );
                 });
             });
@@ -4686,15 +4783,17 @@
         injectLoginToggle();
         buildLanguageSwitcher();
         injectLateLoginOverrides();
-        buildLoginHeroCarousel();
+        decorateNativeLoginCards();
+        buildLoginStories();
         bindAuthPressFeedback();
         window.addEventListener('pagehide', function () { if (authSocket) { authSocket.close(); } });
         (window.requestIdleCallback || window.setTimeout)(prefetchAuthPages);
         bindLoginValidation();
         bindDigitsAutoIdentity();
-        bindBrandedAuthNavigation();
+        var routeBrandedAuth = bindBrandedAuthNavigation();
         restoreDigitsOtpContinuation();
         observeAuthChrome();
+        routeBrandedAuth?.();
         animateBrandedAuthSteps();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();

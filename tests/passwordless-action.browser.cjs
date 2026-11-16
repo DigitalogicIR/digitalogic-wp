@@ -233,13 +233,106 @@ async function checkEmailGate(page, labels) {
     await expectState('unavailable', false);
     await status.getByRole('button').click();
     await expectState('valid', true);
-    assert.equal(await primary.innerText(), labels.enterPassword);
+    assert.equal(await primary.innerText(), labels.continue);
     assert.equal(await email.getAttribute('aria-invalid'), 'false');
     assert.equal(colors.size, 4);
+    await primary.click();
+    await form.locator('.dg-username-password-input').waitFor();
+    const passwordStep = form.locator('.dg-username-password-step');
+    assert.ok(await passwordStep.getByText(labels.skipPasswordCaption, { exact: true }).isVisible());
+    assert.ok(await passwordStep.getByRole('button', { name: labels.skipPassword, exact: true }).isVisible());
+    await form.locator('.dg-username-login-back').click();
     await email.fill('preview');
     assert.equal(await primary.isEnabled(), true);
     await phone.fill('');
     assert.equal(await primary.isDisabled(), true);
+}
+
+async function checkStepLocation(page) {
+    await page.waitForURL('**/#login');
+    const phone = page.locator('[name="digits_phone"]');
+    await phone.fill('known-user');
+    const navigate = async (hash) => {
+        await page.evaluate(value => { window.location.hash = value; }, hash);
+    };
+    await navigate('password');
+    await page.locator('.dg-username-password-input').waitFor();
+    await page.locator('.dg-username-login-back').click();
+    await page.waitForURL('**/#login');
+    assert.equal(await phone.inputValue(), 'known-user');
+
+    await navigate('recover');
+    await page.locator('.dg-recovery-heading').waitFor();
+    await page.waitForURL('**/login/?recover=1#recover');
+    await navigate('login');
+    await page.waitForURL('**/#login');
+    assert.equal(await page.locator('.dg-recovery-heading').count(), 0);
+    assert.equal(new URL(page.url()).searchParams.has('recover'), false);
+
+    await navigate('contact');
+    await page.locator('form[data-dg-sms-identity="true"]').waitFor();
+    await page.waitForURL('**/#contact');
+    await navigate('code');
+    await page.waitForURL('**/#contact');
+    assert.equal(await page.locator('.dg-otp-editor').count(), 0, 'A link cannot create a verification challenge');
+}
+
+async function checkCountryPicker(page) {
+    const phone = page.locator('[name="digits_phone"]');
+    const code = page.locator('[name="login_digt_countrycode"]');
+    const primary = page.locator('.digits-form_login > .digits-form_submit-btn');
+    const trigger = page.locator('.dg-country-trigger');
+    const menu = page.getByRole('listbox');
+    const focusedCode = () => page.evaluate(() => document.activeElement.dataset.code);
+    const focusCode = country => menu.locator(`[data-code="${country}"]:focus`).waitFor();
+
+    await phone.fill('09120000000');
+    await code.click();
+    await code.locator('xpath=self::*[@data-dg-code-selected]').waitFor();
+    const corners = await code.evaluate(input => getComputedStyle(input).borderRadius);
+    assert.equal(corners, '7px');
+    await code.press('ArrowDown');
+    await focusCode('+98');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await focusedCode(), '+1');
+    await page.keyboard.press('End');
+    assert.equal(await focusedCode(), '+93');
+    assert.ok(await menu.evaluate(list => list.scrollTop > 0), 'Keyboard navigation scrolls the list');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await focusedCode(), '+964');
+    await page.keyboard.press('Escape');
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    assert.ok(await trigger.evaluate(button => button === document.activeElement));
+    assert.equal(await code.inputValue(), '+98', 'Escaping preserves the selected code');
+
+    await code.fill('+۰');
+    assert.equal(await code.inputValue(), '+', 'A country calling code cannot start with zero');
+    assert.equal(await primary.isDisabled(), true);
+    await code.fill('+999');
+    await code.press('Tab');
+    assert.equal(await code.getAttribute('aria-invalid'), 'true');
+    assert.ok(await page.locator('.dg-country-code-status').isVisible());
+    assert.equal(await primary.isDisabled(), true);
+    await code.fill('۰۰۳۵۸');
+    await code.press('Tab');
+    assert.equal(await code.inputValue(), '+358', 'Normalize Persian digits and the international 00 prefix');
+    assert.equal(await code.getAttribute('aria-invalid'), 'false', 'Accept allocated codes beyond the shortcut menu');
+    assert.equal(await page.locator('.dg-country-code-status').isVisible(), false);
+
+    await trigger.press('ArrowDown');
+    await focusCode('+98');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Tab');
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    assert.ok(await phone.evaluate(input => input === document.activeElement), 'Tab advances to the phone number');
+    await trigger.press('Enter');
+    await focusCode('+98');
+    await page.keyboard.press('Space');
+    assert.equal(await code.inputValue(), '+98');
+    assert.equal(await primary.isEnabled(), true);
+    assert.ok(await phone.evaluate(input => input === document.activeElement));
+    await page.locator('.dg-country-flag').click();
+    assert.ok(await phone.evaluate(input => input === document.activeElement));
 }
 
 async function checkSmsAction(page, labels) {
@@ -404,19 +497,19 @@ async function checkVerificationLabels(page, labels) {
     const email = page.locator('input[name="digits_email"]');
     const primary = page.locator('.digits-form_login > .digits-form_submit-btn');
     for (const [field, value, expected, isPhone] of [
-        [phone, '', 'Continue'],
-        [phone, 'sample-user', 'Continue'],
-        [phone, '۰۹۱۲', 'Continue', true],
+        [phone, '', labels.continue],
+        [phone, 'sample-user', labels.continue],
+        [phone, '۰۹۱۲', labels.continue, true],
         [phone, '۰۹۱۲۰۰۰۰۰۰۰', labels.sendSmsCode, true],
         [phone, '۰۲۱۱۲۳۴۵۶۷۸', labels.getCallCode, true],
         [phone, '+442079460018', labels.getCallCode, true],
         [phone, '+12025550123', labels.continueBySms, true],
-        [phone, '+448001111', 'Continue', true],
+        [phone, '+448001111', labels.continue, true],
         [phone, '+989120000000', labels.sendSmsCode, true],
-        [phone, 'demo@', 'Continue'],
+        [phone, 'demo@', labels.continue],
         [email, 'demo@example.com', labels.sendEmailCode],
-        [email, 'demo', 'Continue'],
-        [phone, '', 'Continue']
+        [email, 'demo', labels.continue],
+        [phone, '', labels.continue]
     ]) {
         await field.fill(value);
         assert.equal(await primary.innerText(), expected, value || '(empty identity)');
@@ -426,7 +519,7 @@ async function checkVerificationLabels(page, labels) {
     assert.equal(await primary.innerText(), labels.sendSmsCode);
     await page.locator('.dg-country-trigger').click();
     await page.locator('.dg-country-option[data-code="+1"]').click();
-    assert.equal(await primary.innerText(), 'Continue', 'The previous SMS label must clear on country changes');
+    assert.equal(await primary.innerText(), labels.continue, 'The previous SMS label must clear on country changes');
 }
 
 async function checkIdentityPrompt(page, expected) {
@@ -491,10 +584,17 @@ async function checkOtpEditor(page, channel) {
     assert.equal(await cells.first().evaluate(element => getComputedStyle(element.closest('.dg-otp-editor')).direction), 'ltr');
     const centers = await cells.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().left));
     assert.ok(centers.every((left, index) => index === 0 || left - centers[index - 1] >= 20), 'All six digits have separate positions');
-    assert.ok(await cells.evaluateAll(elements => elements.every(element => parseFloat(getComputedStyle(element).borderTopWidth) >= 1)), 'Every empty OTP cell has a visible outline');
+    assert.ok(await cells.evaluateAll(elements => elements.every(element => {
+        const surface = element.closest('.dg-auth-field');
+        return element.classList.contains('dg-auth-input') && surface && parseFloat(getComputedStyle(surface).borderTopWidth) >= 1;
+    })), 'Every empty OTP cell uses the shared input and visible field border');
     await cells.first().focus();
     const form = page.locator('form.digloginpage');
     const firstSlot = page.locator('.dg-otp-slot').first();
+    assert.ok(await firstSlot.evaluate(slot => {
+        const style = getComputedStyle(slot);
+        return style.boxShadow === 'none' && style.transitionProperty.includes('border-color');
+    }), 'OTP focus transitions the shared border without adding a shadow');
     const cursor = () => firstSlot.evaluate(slot => {
         const style = getComputedStyle(slot, '::after');
         return { animation: style.animationName, height: style.height };
@@ -506,6 +606,7 @@ async function checkOtpEditor(page, channel) {
     await form.evaluate(element => { element.dataset.dgOtpCursor = 'bar'; });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     assert.deepEqual(await cursor(), { animation: 'none', height: '18px' });
+    assert.equal(await firstSlot.evaluate(slot => getComputedStyle(slot).transitionProperty), 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     const entry = await cells.first().evaluate(cell => {
         cell.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '۱', cancelable: true }));
@@ -530,6 +631,45 @@ async function checkOtpEditor(page, channel) {
     assert.equal(await page.locator(`input[name="${channel}_otp"]`).inputValue(), '123456');
     await page.locator('.dg-otp-feedback').waitFor();
     assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
+}
+
+async function checkLoginStories(browser) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 }, reducedMotion: 'reduce' });
+    let requests = 0;
+    await page.route('https://digitalogic.test/login/', route => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<html lang="fa-IR" dir="rtl"><body class="login login-action-login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body></html>'
+    }));
+    await page.route('https://digitalogic.test/stories?locale=fa_IR', route => {
+        requests++;
+        return route.fulfill({ json: ['قطعات', 'ساخت برد', 'تأمین'].map((title, index) => ({
+            image: '/story.webp', tab: title, title, description: 'متن از سرور',
+            notes: ['نمونه'], action: 'مشاهده', link: '/product/' + index
+        })) });
+    });
+    await page.route('https://digitalogic.test/story.webp', route => route.fulfill({
+        contentType: 'image/gif',
+        body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+    }));
+    await page.addInitScript(() => { window.DigitalogicBranding = { loginSlidesUrl: '/stories' }; });
+    await page.goto('https://digitalogic.test/login/');
+    await page.addStyleTag({ path: styles });
+    await page.addScriptTag({ path: branding });
+    await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+    assert.equal(requests, 0, 'The phone layout does not fetch the presentation');
+    await page.setViewportSize({ width: 768, height: 1024 });
+    const panel = page.locator('.dg-login-stories');
+    await panel.waitFor();
+    assert.equal(requests, 1);
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
+    assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
+    await panel.getByRole('button', { name: 'قطعات' }).press('ArrowLeft');
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
+    assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
+    assert.equal(await panel.locator('article[inert]').count(), 2);
+    await page.setViewportSize({ width: 390, height: 850 });
+    await panel.waitFor({ state: 'hidden' });
+    await page.close();
 }
 
 async function checkLoginSwitchers(browser) {
@@ -575,6 +715,7 @@ async function checkLoginSwitchers(browser) {
     const browser = await chromium.launch(process.env.DG_BROWSER_CHANNEL ? { channel: process.env.DG_BROWSER_CHANNEL } : {});
     try {
         await checkLoginSwitchers(browser);
+        await checkLoginStories(browser);
         for (const [direction, width, skipPassword, skipPasswordCaption] of [
             ['rtl', 390, 'ورود بدون رمز عبور', 'رمز خود را فراموش کرده اید؟'],
             ['ltr', 1024, 'Sign in without a password', 'Forgot your password?']
@@ -590,6 +731,7 @@ async function checkLoginSwitchers(browser) {
                 passkeyLogin: direction === 'rtl' ? 'ورود با کلید عبور' : 'Sign in with a passkey',
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
+                continue: direction === 'rtl' ? 'ادامه' : 'Continue',
                 enterPassword: direction === 'rtl' ? 'وارد کردن رمز عبور' : 'Enter password',
                 getCallCode: direction === 'rtl' ? 'ادامه با تماس تلفنی' : 'Continue by phone call',
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',
@@ -668,6 +810,7 @@ async function checkLoginSwitchers(browser) {
                     await page.locator('.dg-skip-password:visible').click();
                 }
                 await checkOtpEditor(page, native ? 'sms' : 'email');
+                await page.waitForURL('**/#code');
                 assert.equal(await page.locator('.digits-form_login > .digits-form_submit-btn').innerText(), labels.verifyCode);
                 await checkAlternatives(page, false);
                 await page.close();
@@ -688,8 +831,13 @@ async function checkLoginSwitchers(browser) {
             await emailGate.close();
             const smsAction = await browser.newPage({ viewport: { width, height: 800 } });
             await render(smsAction, direction, labels, false);
+            await checkCountryPicker(smsAction);
             await checkSmsAction(smsAction, labels);
             await smsAction.close();
+            const location = await browser.newPage({ viewport: { width, height: 800 } });
+            await render(location, direction, labels, false);
+            await checkStepLocation(location);
+            await location.close();
             const continuity = await browser.newPage({ viewport: { width, height: 800 } });
             await checkOtpContinuity(continuity, labels, direction);
             await continuity.close();

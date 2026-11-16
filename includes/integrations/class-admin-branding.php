@@ -111,9 +111,48 @@ HTML;
 		);
 	}
 
-	/** Return the artwork configured for the login page. */
-	public static function login_slides(): array {
-		return array( array( 'image' => DIGITALOGIC_PLUGIN_URL . 'assets/images/branding/login-hero.png' ) );
+	/** Return the cards for the requested login page language. */
+	public static function login_slides( ?WP_REST_Request $request = null ): array {
+		$locale = $request ? $request->get_param( 'locale' ) : '';
+		return self::login_story_cards( is_string( $locale ) ? $locale : '' );
+	}
+
+	private static function login_story_cards( string $locale ): array {
+		$fa     = str_starts_with( strtolower( $locale ?: determine_locale() ), 'fa' );
+		$images = DIGITALOGIC_PLUGIN_URL . 'assets/images/branding/login-stories/';
+		$cards  = array(
+			array(
+				'id'          => 'components',
+				'image'       => $images . 'components.webp',
+				'tab'         => $fa ? 'قطعات و ماژول‌ها' : 'Components',
+				'title'       => $fa ? 'از ایده تا اولین مدار' : 'From idea to first circuit',
+				'description' => $fa ? 'بردهای توسعه، حسگرها و نمایشگرها را پیدا کنید و مشخصاتشان را برای پروژهٔ بعدی مقایسه کنید.' : 'Find development boards, sensors, and displays. Compare specifications for your next project.',
+				'notes'       => $fa ? array( 'بردهای توسعه', 'حسگر و نمایشگر' ) : array( 'Development boards', 'Sensors and displays' ),
+				'link'        => home_url( '/catalog/' ),
+				'action'      => $fa ? 'دیدن محصولات' : 'Browse components',
+			),
+			array(
+				'id'          => 'pcb',
+				'image'       => $images . 'pcb.webp',
+				'tab'         => $fa ? 'ساخت PCB' : 'PCB fabrication',
+				'title'       => $fa ? 'طرح شما، روی برد' : 'Turn your layout into a board',
+				'description' => $fa ? 'فایل Gerber را برای ساخت برد دو یا چهار لایه بفرستید و هزینه و زمان تحویل را بررسی کنید.' : 'Send your Gerber files for two or four layer fabrication and check the cost and lead time.',
+				'notes'       => $fa ? array( 'برد دو و چهار لایه', 'فایل Gerber' ) : array( 'Two and four layers', 'Gerber files' ),
+				'link'        => home_url( '/سفارش-چاپ-برد-pcb/' ),
+				'action'      => $fa ? 'سفارش ساخت برد' : 'Explore PCB fabrication',
+			),
+			array(
+				'id'          => 'sourcing',
+				'image'       => $images . 'sourcing.webp',
+				'tab'         => $fa ? 'تأمین قطعه' : 'Sourcing',
+				'title'       => $fa ? 'قطعهٔ خاص، سفارش مستقیم' : 'Source hard-to-find parts',
+				'description' => $fa ? 'برای قطعات کمیاب یا سفارش تعداد بالا، شمارهٔ قطعه یا لینک محصول را برای تأمین مستقیم از چین بفرستید.' : 'Share a part number or product link for direct sourcing from China, including scarce parts and volume orders.',
+				'notes'       => $fa ? array( 'شمارهٔ قطعه', 'سفارش تعداد بالا' ) : array( 'Part number', 'Volume orders' ),
+				'link'        => home_url( '/import-of-electronic-products/' ),
+				'action'      => $fa ? 'ثبت درخواست تأمین' : 'Request sourcing',
+			),
+		);
+		return (array) apply_filters( 'digitalogic_login_story_cards', $cards, $fa ? 'fa_IR' : 'en_US' );
 	}
 
 	/**
@@ -124,8 +163,9 @@ HTML;
 	 */
 	public static function auth_presentation_commands( array $commands, string $transport ): array {
 		if ( 'websocket' === $transport ) {
-			$commands['digitalogic_auth_presentation'] = static function (): array {
-				return array( 'slides' => self::login_slides() );
+			$commands['digitalogic_auth_presentation'] = static function ( array $payload = array() ): array {
+				$locale = $payload['locale'] ?? '';
+				return array( 'slides' => self::login_story_cards( is_string( $locale ) ? $locale : '' ) );
 			};
 		}
 		return $commands;
@@ -561,7 +601,7 @@ JS;
 
         $config['labels'] = self::client_labels();
 		if ( $is_login ) {
-			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', false );
+			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
 			$config['otpCursor']          = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
 			$config['emailDomainNonce']   = wp_create_nonce( 'digitalogic_email_domain' );
 			$config['loginSlidesUrl']     = rest_url( 'digitalogic/v1/login-slides' );

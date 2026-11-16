@@ -105,19 +105,17 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertSame('https://digitalogic.test/login/', $config['loginUrl']);
         $this->assertSame('https://digitalogic.test/' . rest_get_url_prefix() . '/digitalogic/v1/login-slides', $config['loginSlidesUrl']);
         $this->assertSame(array(), $config['rememberedAccount']);
-        $this->assertFalse($config['showLoginThemeSwitcher']);
+        $this->assertTrue($config['showLoginThemeSwitcher']);
     }
 
-    public function test_theme_switcher_can_be_enabled_while_the_language_switcher_stays_off(): void {
-        $callback = static fn() => true;
-        add_filter('digitalogic_login_show_theme_switcher', $callback);
-        try {
-            $config = new ReflectionMethod(Digitalogic_Plugin_Admin_Branding::class, 'client_config');
-            $this->assertTrue($config->invoke(null, true, false)['showLoginThemeSwitcher']);
-            $this->test_custom_footer_suppresses_remote_language_discovery_only_while_rendering();
-        } finally {
-            remove_filter('digitalogic_login_show_theme_switcher', $callback);
-        }
+    public function test_login_stories_use_the_same_localized_cards_on_each_transport(): void {
+        $request = new WP_REST_Request(['locale' => 'fa_IR']);
+        $rest = Digitalogic_Plugin_Admin_Branding::login_slides($request);
+        $commands = Digitalogic_Plugin_Admin_Branding::auth_presentation_commands([], 'websocket');
+        $socket = $commands['digitalogic_auth_presentation'];
+        $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
+        $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
+        $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
     }
 
     public function test_recovery_identity_labels_match_the_wordpress_backend(): void {
@@ -153,7 +151,15 @@ final class AdminBrandingAuthTest extends TestCase {
 
     public function test_custom_footer_suppresses_remote_language_discovery_only_while_rendering(): void {
         $method = new ReflectionMethod(Digitalogic_Plugin_Auth_Routes::class, 'render_login_footer');
-        $method->invoke(null);
+        $disable = static fn() => false;
+        add_filter('digitalogic_login_show_language_switcher', $disable);
+        try {
+            $method->invoke(null);
+        } finally {
+            remove_filter('digitalogic_login_show_language_switcher', $disable);
+        }
+        $config = new ReflectionMethod(Digitalogic_Plugin_Admin_Branding::class, 'client_config');
+        $this->assertTrue($config->invoke(null, true, false)['showLoginThemeSwitcher']);
 
         $this->assertSame('user_login', $GLOBALS['digitalogic_test_login_footer_input']);
         $this->assertCount(1, $GLOBALS['digitalogic_test_login_footer_filters']);
@@ -167,8 +173,8 @@ final class AdminBrandingAuthTest extends TestCase {
     }
 
     public function test_enabled_language_switcher_uses_only_installed_languages_even_on_a_cache_miss(): void {
-        $callback = static fn() => true;
-        add_filter('digitalogic_login_show_language_switcher', $callback);
+        $callback = static fn() => false;
+        add_filter('digitalogic_login_show_theme_switcher', $callback);
         try {
             $method = new ReflectionMethod(Digitalogic_Plugin_Auth_Routes::class, 'render_login_footer');
             $method->invoke(null);
@@ -184,7 +190,7 @@ final class AdminBrandingAuthTest extends TestCase {
             $config = new ReflectionMethod(Digitalogic_Plugin_Admin_Branding::class, 'client_config');
             $this->assertFalse($config->invoke(null, true, false)['showLoginThemeSwitcher']);
         } finally {
-            remove_filter('digitalogic_login_show_language_switcher', $callback);
+            remove_filter('digitalogic_login_show_theme_switcher', $callback);
         }
     }
 
