@@ -212,19 +212,26 @@ class Digitalogic_Frontend_Search {
 				$suggestions = $search->build_suggestions( $search->get_main_suggestions(), $search->get_product_categories_suggestions(), $search->get_blog_suggestions() );
 				$data        = array( 'suggestions' => $suggestions );
 				foreach ( $data['suggestions'] as &$item ) {
-					if ( isset( $item['price'], $item['permalink'] ) ) {
-						$item['_dg_product_id'] = url_to_postid( $item['permalink'] );
+					if ( isset( $item['permalink'] ) ) {
+						$product_id = url_to_postid( $item['permalink'] );
+						$product    = $product_id > 0 ? wc_get_product( $product_id ) : false;
+						if ( ! $product ) {
+							continue;
+						}
+						$item['_dg_product_id'] = $product_id;
 						unset( $item['price'] );
 					}
 				}
 				unset( $item );
+				$data['suggestions'] = $this->filter_public_product_suggestions( $data['suggestions'] );
 			} finally {
 				$_REQUEST = $old_request;
 			}
 		}
 		// Keep price HTML out of the shared search cache. This also covers an
 		// external pricing commit whose asynchronous invalidation is pending.
-		$result = $data;
+		$result                = $data;
+		$result['suggestions'] = $this->filter_public_product_suggestions( (array) ( $result['suggestions'] ?? array() ) );
 		foreach ( $result['suggestions'] as &$item ) {
 			if ( isset( $item['_dg_product_id'] ) ) {
 				$product   = wc_get_product( $item['_dg_product_id'] );
@@ -266,6 +273,36 @@ class Digitalogic_Frontend_Search {
 		wp_send_json( $result );
 	}
 	// phpcs:enable WordPress.Security.NonceVerification.Recommended
+
+	/**
+	 * Prevent cached or theme-generated suggestions from bypassing catalog visibility.
+	 *
+	 * Category and blog suggestions have no product identity and remain untouched.
+	 *
+	 * @param array $suggestions WoodMart suggestions.
+	 * @return array
+	 */
+	private function filter_public_product_suggestions( $suggestions ) {
+		return array_values(
+			array_filter(
+				(array) $suggestions,
+				static function ( $item ) {
+					if ( ! is_array( $item ) ) {
+						return true;
+					}
+					$product_id = isset( $item['_dg_product_id'] )
+						? max( 0, (int) $item['_dg_product_id'] )
+						: ( isset( $item['permalink'] ) ? max( 0, (int) url_to_postid( $item['permalink'] ) ) : 0 );
+					$product    = $product_id > 0 ? wc_get_product( $product_id ) : false;
+					if ( ! $product ) {
+						return true;
+					}
+
+					return ! class_exists( 'Digitalogic_Storefront_Catalog' ) || Digitalogic_Storefront_Catalog::product_has_public_title( $product_id );
+				}
+			)
+		);
+	}
 
 	public function allow_public_search_command( $requires_auth, $command, $payload, $transport ) {
 		if ( $transport === 'websocket' && in_array( $command, $this->public_actions, true ) ) {

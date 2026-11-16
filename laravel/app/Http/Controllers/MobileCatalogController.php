@@ -264,36 +264,53 @@ final class MobileCatalogController {
 	 */
 	private function productsData( array $query ): array {
 		global $wpdb;
-		$lookup = $wpdb->prefix . 'wc_product_meta_lookup';
-		$where  = "p.post_status = 'publish' AND p.post_password = ''";
-		$values = array();
-		$scope  = "CASE WHEN p.post_type='product_variation' THEN p.post_parent ELSE p.ID END";
-		if ( '' === $query['search'] ) {
-			$where .= " AND p.post_type='product'";
-		} else {
-			$where   .= " AND (p.post_type='product' OR (p.post_type='product_variation' AND l.sku=%s AND parent.post_type='product' AND parent.post_status='publish' AND parent.post_password=''))";
-			$values[] = $query['search'];
+		$lookup      = $wpdb->prefix . 'wc_product_meta_lookup';
+		$where       = "p.post_type='product' AND p.post_status = 'publish' AND p.post_password = ''";
+		$values      = array();
+		$invalid_ids = class_exists( '\\Digitalogic_Storefront_Catalog' ) ? \Digitalogic_Storefront_Catalog::instance()->invalid_product_title_ids() : array();
+		if ( ! empty( $invalid_ids ) ) {
+			$where .= ' AND p.ID NOT IN (' . implode( ',', array_map( 'absint', $invalid_ids ) ) . ')';
 		}
 		$visibility = '' === $query['search'] ? 'exclude-from-catalog' : 'exclude-from-search';
-		$where     .= " AND NOT EXISTS (SELECT 1 FROM {$wpdb->term_relationships} vr JOIN {$wpdb->term_taxonomy} vt ON vt.term_taxonomy_id=vr.term_taxonomy_id JOIN {$wpdb->terms} v ON v.term_id=vt.term_id WHERE vr.object_id IN (p.ID,{$scope}) AND vt.taxonomy='product_visibility' AND v.slug=%s)";
+		$where     .= " AND NOT EXISTS (SELECT 1 FROM {$wpdb->term_relationships} vr JOIN {$wpdb->term_taxonomy} vt ON vt.term_taxonomy_id=vr.term_taxonomy_id JOIN {$wpdb->terms} v ON v.term_id=vt.term_id WHERE vr.object_id=p.ID AND vt.taxonomy='product_visibility' AND v.slug=%s)";
 		$values[]   = $visibility;
 		if ( $query['has_images'] ) {
-			$where .= " AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} image WHERE image.post_id IN (p.ID,{$scope}) AND image.meta_key='_thumbnail_id' AND CAST(image.meta_value AS UNSIGNED)>0)";
+			$where .= " AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} image WHERE image.post_id=p.ID AND image.meta_key='_thumbnail_id' AND CAST(image.meta_value AS UNSIGNED)>0)";
 		}
 		if ( '' !== $query['search'] ) {
-			$matches = array();
+			$parent_matches = array();
+			$parent_values  = array();
+			$child_matches  = array();
+			$child_values   = array();
 			foreach ( $query['search_terms'] as $term ) {
-				$matches[] = 'p.post_title LIKE %s';
-				$values[]  = '%' . $wpdb->esc_like( $term ) . '%';
+				$like             = '%' . $wpdb->esc_like( $term ) . '%';
+				$parent_matches[] = 'p.post_title LIKE %s';
+				$parent_values[]  = $like;
+				$parent_matches[] = 'l.sku LIKE %s';
+				$parent_values[]  = $like;
+				$child_matches[]  = 'variations.post_title LIKE %s';
+				$child_values[]   = $like;
+				$child_matches[]  = 'variation_lookup.sku LIKE %s';
+				$child_values[]   = $like;
 			}
-			$where   .= ' AND (' . implode( ' OR ', $matches ) . ' OR l.sku LIKE %s)';
-			$values[] = '%' . $wpdb->esc_like( $query['search'] ) . '%';
+			$invalid_variations = empty( $invalid_ids ) ? '' : ' AND variations.ID NOT IN (' . implode( ',', array_map( 'absint', $invalid_ids ) ) . ')';
+			$where             .= ' AND ((' . implode( ' OR ', $parent_matches ) . ") OR EXISTS (
+				SELECT 1
+				FROM {$wpdb->posts} variations
+				LEFT JOIN {$lookup} variation_lookup ON variation_lookup.product_id=variations.ID
+				WHERE variations.post_parent=p.ID
+					AND variations.post_type='product_variation'
+					AND variations.post_status='publish'
+					AND variations.post_password=''
+					{$invalid_variations}
+					AND (" . implode( ' OR ', $child_matches ) . ')))';
+			$values             = array_merge( $values, $parent_values, $child_values );
 		}
 		if ( $query['category'] > 0 ) {
 			$children = get_term_children( $query['category'], 'product_cat' );
 			$ids      = array_merge( array( $query['category'] ), is_wp_error( $children ) ? array() : array_map( 'absint', $children ) );
 			$ids      = implode( ',', array_map( 'absint', $ids ) );
-			$where   .= " AND EXISTS (SELECT 1 FROM {$wpdb->term_relationships} cr JOIN {$wpdb->term_taxonomy} ct ON ct.term_taxonomy_id=cr.term_taxonomy_id WHERE cr.object_id=({$scope}) AND ct.taxonomy='product_cat' AND ct.term_id IN ({$ids}))";
+			$where   .= " AND EXISTS (SELECT 1 FROM {$wpdb->term_relationships} cr JOIN {$wpdb->term_taxonomy} ct ON ct.term_taxonomy_id=cr.term_taxonomy_id WHERE cr.object_id=p.ID AND ct.taxonomy='product_cat' AND ct.term_id IN ({$ids}))";
 		}
 		if ( '' !== $query['stock_status'] ) {
 			$where   .= ' AND l.stock_status=%s';
@@ -316,7 +333,7 @@ final class MobileCatalogController {
 		} else {
 			$order = ( $sorts[ $query['orderby'] ] ?? $sorts['date'] ) . ' ' . $query['order'] . ', p.ID ' . $query['order'];
 		}
-		$from = "FROM {$wpdb->posts} p LEFT JOIN {$lookup} l ON l.product_id=p.ID LEFT JOIN {$wpdb->posts} parent ON parent.ID=p.post_parent AND p.post_type='product_variation' WHERE {$where}";
+		$from = "FROM {$wpdb->posts} p LEFT JOIN {$lookup} l ON l.product_id=p.ID WHERE {$where}";
      // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- Only trusted table names and allowlisted sort fragments are interpolated.
 		$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$from}", $values ) );
 		$args  = array_merge( $values, $order_values, array( $query['per_page'], ( $query['page'] - 1 ) * $query['per_page'] ) );
@@ -328,8 +345,13 @@ final class MobileCatalogController {
 		$items = array();
 		foreach ( $ids as $id ) {
 			$product = wc_get_product( $id );
-			if ( $product ) {
-				$items[] = $this->project( $product, false );
+			if ( $product && $this->isPublic( $product ) ) {
+				$item                 = $this->project( $product, false );
+				$matched_variation_id = $this->exactMatchedVariationId( $product, $query['search'] );
+				if ( null !== $matched_variation_id ) {
+					$item['matched_variation_id'] = $matched_variation_id;
+				}
+				$items[] = $item;
 			}
 		}
 		$more = $query['page'] * $query['per_page'] < $total;
@@ -367,12 +389,15 @@ final class MobileCatalogController {
 				function ( $term ): array {
 						$image_id = (int) get_term_meta( $term->term_id, 'thumbnail_id', true );
 						$url      = get_term_link( $term );
+						$count    = class_exists( '\\Digitalogic_Storefront_Catalog' )
+							? \Digitalogic_Storefront_Catalog::instance()->public_category_product_count( $term->term_id )
+							: (int) $term->count;
 						return array(
 							'id'        => $term->term_id,
 							'name'      => $term->name,
 							'slug'      => $term->slug,
 							'parent'    => $term->parent,
-							'count'     => $term->count,
+							'count'     => $count,
 							'permalink' => is_wp_error( $url ) ? '' : $url,
 							'image'     => $image_id > 0 ? $this->image( $image_id ) : null,
 						);
@@ -392,11 +417,39 @@ final class MobileCatalogController {
 		if ( $product->get_status() !== 'publish' || get_post_field( 'post_password', $product->get_id() ) !== '' || $product->get_catalog_visibility() === 'hidden' ) {
 			return false;
 		}
+		if ( $product instanceof \WC_Product && class_exists( '\\Digitalogic_Storefront_Catalog' ) && ! \Digitalogic_Storefront_Catalog::product_has_public_title( $product ) ) {
+			return false;
+		}
 		if ( $product->is_type( 'variation' ) ) {
 			$parent = wc_get_product( $product->get_parent_id() );
 			return $parent && $this->isPublic( $parent );
 		}
 		return true;
+	}
+
+	/**
+	 * Resolve only an exact variation SKU match under the canonical parent card.
+	 *
+	 * @param mixed  $product Canonical parent product.
+	 * @param string $search Normalized customer query.
+	 * @return int|null Exact public variation ID, or no preselection.
+	 */
+	private function exactMatchedVariationId( $product, string $search ): ?int {
+		if ( '' === $search || ! $product->is_type( 'variable' ) ) {
+			return null;
+		}
+		foreach ( (array) $product->get_children() as $child_id ) {
+			$child = wc_get_product( $child_id );
+			if ( ! $child || ! $this->isPublic( $child ) ) {
+				continue;
+			}
+			$sku = CatalogSearchPolicy::normalize( (string) $child->get_sku() );
+			if ( '' !== $sku && hash_equals( $sku, $search ) ) {
+				return (int) $child->get_id();
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -606,7 +659,16 @@ final class MobileCatalogController {
 			}
 		}
 		if ( $details ) {
-			$data['related_ids'] = wc_get_related_products( $product->get_id(), 8 );
+			$data['related_ids'] = array_values(
+				array_filter(
+					array_map( 'absint', wc_get_related_products( $product->get_id(), 8 ) ),
+					function ( $related_id ) {
+						$related = wc_get_product( $related_id );
+
+						return $related && $this->isPublic( $related );
+					}
+				)
+			);
 			$data['documents']   = class_exists( 'Digitalogic_Product_Resources' ) ? \Digitalogic_Product_Resources::instance()->get_documents( $product->get_id() ) : array();
 		}
 		return $data;
@@ -641,7 +703,7 @@ final class MobileCatalogController {
 	private function cached( Request $request, string $route, array $query, callable $build ): Response {
 		$generation = class_exists( 'Digitalogic_Report_Engine' ) ? \Digitalogic_Report_Engine::instance()->current_projection_generation() : '';
 		$generation = is_wp_error( $generation ) ? '' : $generation;
-		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), 'browser-session-1', 'device-report-automatic-1', 'availability-11' ) ) );
+		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
 		$private    = get_current_user_id() > 0;
 		$data       = $private ? false : wp_cache_get( $key, 'digitalogic-mobile' );
 		$hit        = is_array( $data );

@@ -44,6 +44,19 @@ final class CatalogSearchPolicyTest extends TestCase {
 		self::assertSame( array( 'a' ), Policy::terms( 'a', array( 'invalid', array( 'a', array( 'invalid' ) ) ) ) );
 	}
 
+	/** Exact model separators are presentation variants, not fuzzy identities. */
+	public function test_model_separator_variants_are_bounded_and_do_not_expand_words(): void {
+		$terms = Policy::terms( 'Super Mini', array() );
+		self::assertContains( 'super mini', $terms );
+		self::assertContains( 'super-mini', $terms );
+		self::assertContains( 'supermini', $terms );
+		self::assertNotContains( 'super miniature', $terms );
+		self::assertNotContains( 'supermini', Policy::terms( 'Super Miniature', array() ) );
+		self::assertSame( array( '-5v' ), Policy::terms( '-5V', array() ) );
+		self::assertContains( 'esp32-c3', Policy::terms( 'ESP32-C3', array() ) );
+		self::assertLessThanOrEqual( 12, count( $terms ) );
+	}
+
 	/** Prior app builds can keep sending date; new normal search selects relevance. */
 	public function test_default_relevance_never_overrides_an_explicit_sort(): void {
 		self::assertSame( 'date', MobileCatalogController::normalizeQuery( array() )['orderby'] );

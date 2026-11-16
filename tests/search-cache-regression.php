@@ -40,11 +40,14 @@ function wc_get_product($id) { return new SearchProduct(); }
 class SearchTheme {
     public static $queries = 0;
     public static $race = false;
+	public static $omit_price = false;
     public static function get_instance() { return new self(); }
     public function get_main_suggestions() {
         self::$queries++;
         if (self::$race) Digitalogic_Report_Engine::$generation = 'raced';
-        return array(array('value' => 'TEC1-12704', 'permalink' => '/product/tec1-12704/', 'price' => 'old-theme-price'));
+		$item = array('value' => 'TEC1-12704', 'permalink' => '/product/tec1-12704/');
+		if (!self::$omit_price) $item['price'] = 'old-theme-price';
+		return array($item);
     }
     public function get_product_categories_suggestions() { return array(); }
     public function get_blog_suggestions() { return array(); }
@@ -80,4 +83,6 @@ Digitalogic_Report_Engine::$generation = 'three'; SearchTheme::$race = true;
 verify(search_response()->status === 409, 'concurrent change fails closed');
 Digitalogic_Report_Engine::$generation = new WP_Error();
 verify(search_response()->status === 503, 'unavailable generation fails closed');
-echo "Search cache regression: 8 boundaries passed\n";
+Digitalogic_Report_Engine::$generation = 'four'; SearchTheme::$race = false; SearchTheme::$omit_price = true; SearchProduct::$in_stock = true;
+verify(search_response()->result['suggestions'][0]['price'] === '506000', 'price-less theme product remains identified and refreshed');
+echo "Search cache regression: 9 boundaries passed\n";

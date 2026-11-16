@@ -71,11 +71,49 @@ final class CatalogSearchPolicy {
 				break;
 			}
 		}
+		$expanded = $terms;
+		foreach ( $terms as $term ) {
+			$expanded = array_merge( $expanded, self::separatorVariants( $term ) );
+		}
+		$terms        = array_values( array_unique( $expanded ) );
 		$alternatives = array_values( array_diff( $terms, array( $search ) ) );
 		sort( $alternatives, SORT_STRING );
 		$terms = array_merge( array( $search ), array_slice( $alternatives, 0, 11 ) );
 		sort( $terms, SORT_STRING );
 		return $terms;
+	}
+
+	/**
+	 * Build exact separator variants for model discovery, never fuzzy spellings.
+	 *
+	 * `super mini`, `super-mini` and `supermini` are equivalent query forms;
+	 * `super miniature` remains unrelated. Very short compact forms are not
+	 * expanded so voltage signs and one-character model punctuation stay exact.
+	 *
+	 * @param string $term Normalized term.
+	 * @return string[]
+	 */
+	public static function separatorVariants( string $term ): array {
+		$term = self::normalize( $term );
+		if ( '' === $term || 1 !== preg_match( '/[\p{White_Space}\p{Dash}_]/u', $term ) ) {
+			return array( $term );
+		}
+
+		$compact = preg_replace( '/[\p{White_Space}\p{Dash}_]+/u', '', $term );
+		if ( ! is_string( $compact ) || mb_strlen( $compact, 'UTF-8' ) < 4 ) {
+			return array( $term );
+		}
+
+		return array_values(
+			array_unique(
+				array(
+					$term,
+					trim( preg_replace( '/[\p{White_Space}\p{Dash}_]+/u', ' ', $term ) ),
+					trim( preg_replace( '/[\p{White_Space}\p{Dash}_]+/u', '-', $term ), '-' ),
+					$compact,
+				)
+			)
+		);
 	}
 
 	/**

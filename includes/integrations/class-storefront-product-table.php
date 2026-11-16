@@ -253,7 +253,11 @@ final class Digitalogic_Storefront_Product_Table {
 	private function products_from_query( $query ) {
 		return array_filter(
 			array_map(
-				static fn( $post ) => wc_get_product( $post->ID ),
+				static function ( $post ) {
+					$product = wc_get_product( $post->ID );
+
+					return $product && ( ! class_exists( 'Digitalogic_Storefront_Catalog' ) || Digitalogic_Storefront_Catalog::product_has_public_title( $product ) ) ? $product : false;
+				},
 				$query->posts
 			)
 		);
@@ -450,6 +454,9 @@ final class Digitalogic_Storefront_Product_Table {
 			),
 			'tax_query'              => $tax_query, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_tax_query
 		);
+		if ( class_exists( 'Digitalogic_Storefront_Catalog' ) ) {
+			$args['post__not_in'] = Digitalogic_Storefront_Catalog::instance()->invalid_product_title_ids(); // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_post__not_in -- Small cached safety set is required in the persistent WP-CLI WebSocket process.
+		}
 
 		if ( '' !== $filters['search'] ) {
 			$args['post__in'] = $this->search_product_ids( $filters['search'] ); // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_post__in
@@ -566,6 +573,9 @@ final class Digitalogic_Storefront_Product_Table {
 			$like
 		);
 		$ids  = array_map( 'absint', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		if ( class_exists( 'Digitalogic_Storefront_Catalog' ) ) {
+			$ids = array_values( array_diff( $ids, Digitalogic_Storefront_Catalog::instance()->invalid_product_title_ids() ) );
+		}
 
 		return $ids ?: array( 0 );
 	}

@@ -9,10 +9,61 @@ use Digitalogic\Laravel\Http\Controllers\MobileCatalogController;
 use PHPUnit\Framework\TestCase;
 
 require_once dirname( __DIR__ ) . '/includes/integrations/class-digitalogic-mobile-api.php';
+require_once dirname( __DIR__ ) . '/includes/integrations/class-storefront-catalog.php';
 require_once dirname( __DIR__ ) . '/laravel/app/Http/Controllers/MobileCatalogController.php';
 
 /** Regression coverage for the native adapter. */
 final class MobileCatalogContractTest extends TestCase {
+	protected function tearDown(): void {
+		$GLOBALS['wpdb'] = new Digitalogic_Test_WPDB();
+		wp_cache_delete( 'invalid-product-titles-v1', 'digitalogic-storefront-catalog' );
+	}
+
+	/** Search queries select one canonical parent and match exact child models. */
+	public function test_mobile_search_uses_separator_variants_and_variation_parent_discovery(): void {
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public $catalog_queries = array();
+			public $catalog_values  = array();
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function get_results( $prepared, $output = ARRAY_A ) {
+				unset( $prepared, $output );
+
+				return array();
+			}
+
+			public function get_var( $prepared ) {
+				$this->catalog_queries[] = is_array( $prepared ) ? $prepared['query'] : (string) $prepared;
+				$this->catalog_values[]  = is_array( $prepared ) ? $prepared['args'] : array();
+
+				return 0;
+			}
+
+			public function get_col( $prepared ) {
+				$this->catalog_queries[] = is_array( $prepared ) ? $prepared['query'] : (string) $prepared;
+				$this->catalog_values[]  = is_array( $prepared ) ? $prepared['args'] : array();
+
+				return array();
+			}
+		};
+		Digitalogic_Storefront_Catalog::instance()->clear_public_title_cache();
+		$controller = new MobileCatalogController();
+		$method     = new ReflectionMethod( $controller, 'productsData' );
+		$result     = $method->invoke( $controller, MobileCatalogController::normalizeQuery( array( 'search' => 'Super Mini' ) ) );
+		$sql        = implode( "\n", $GLOBALS['wpdb']->catalog_queries );
+		$values     = array_merge( ...array_map( static fn( $args ) => isset( $args[0] ) && is_array( $args[0] ) ? $args[0] : $args, $GLOBALS['wpdb']->catalog_values ) );
+
+		self::assertSame( 0, $result['pagination']['total'] );
+		self::assertSame( array(), $result['items'] );
+		self::assertStringContainsString( "p.post_type='product'", $sql );
+		self::assertStringContainsString( 'variations.post_parent=p.ID', $sql );
+		self::assertStringContainsString( "variations.post_type='product_variation'", $sql );
+		self::assertStringNotContainsString( "p.post_type='product_variation'", $sql );
+		self::assertContains( '%supermini%', $values );
+	}
 	/**
 	 * Verify public entry cannot dispatch internal routes or unbounded ids.
 	 *

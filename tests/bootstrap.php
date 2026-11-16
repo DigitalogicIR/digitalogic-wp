@@ -1139,6 +1139,13 @@ function get_post($post_id) {
     );
 }
 
+function get_post_field( $field, $post_id, $context = 'display' ) {
+	unset( $context );
+	$post = get_post( $post_id );
+
+	return $post && isset( $post->{$field} ) ? $post->{$field} : '';
+}
+
 function get_the_title($post_id = 0) {
 	$post = get_post($post_id);
 
