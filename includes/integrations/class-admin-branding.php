@@ -450,9 +450,13 @@ HTML;
             true
         );
 
+        $config = self::client_config($is_login, $is_frontend_auth);
+		if ( $is_login ) {
+			$config['loginAssetFontsAndLogos'] = array_values( array_merge( self::auth_font_urls(), self::logo_urls() ) );
+		}
         wp_add_inline_script(
             self::SCRIPT_HANDLE,
-            'window.DigitalogicBranding = ' . wp_json_encode(self::client_config($is_login, $is_frontend_auth)) . ';',
+            'window.DigitalogicBranding = ' . wp_json_encode($config) . ';',
             'before'
         );
     }
@@ -609,7 +613,6 @@ JS;
 
         $config['labels'] = self::client_labels();
 		if ( $is_login ) {
-			$config['loginAssetFontsAndLogos'] = array_values( array_merge( self::auth_font_urls(), self::logo_urls() ) );
 			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
 			$config['otpCursor']          = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
 			$config['emailDomainNonce']   = wp_create_nonce( 'digitalogic_email_domain' );
