@@ -257,7 +257,7 @@ final class Digitalogic_Auth_Realtime {
 			$data['call'] = $result->get_data();
 		}
 		$response = new WP_REST_Response( $data );
-		$response->header( 'Cache-Control', 'private, no-store' );
+		$response->header( 'Cache-Control', 'private, no-store, no-transform' );
 		return $response;
 	}
 
@@ -275,7 +275,6 @@ final class Digitalogic_Auth_Realtime {
 		}
 		header( 'Content-Type: text/event-stream; charset=UTF-8' );
 		header( 'X-Accel-Buffering: no' );
-		header( 'Content-Encoding: identity' );
 		echo "retry: 4000\nevent: snapshot\ndata: " . wp_json_encode( $result->get_data(), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT ) . "\n\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON event payload.
 		return true;
 	}
