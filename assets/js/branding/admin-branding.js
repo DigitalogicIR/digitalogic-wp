@@ -3770,9 +3770,9 @@
             if (!actions) {
                 actions = document.createElement('div');
                 actions.className = 'dg-auth-card-actions';
-                var heading = form.querySelector('.digits-form_heading');
-                if (!heading) { return; }
-                heading.after(actions);
+                var step = form.querySelector('.digits-form_login, .digits-form_register');
+                if (!step) { return; }
+                step.appendChild(actions);
             }
             var button = document.createElement('button');
             button.type = 'button';
