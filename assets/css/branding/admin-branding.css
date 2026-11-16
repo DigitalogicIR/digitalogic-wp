@@ -4444,6 +4444,156 @@ body.login .dg-call-code-prompt {
     line-height: 1.65;
 }
 
+body.login {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+body.login #login :is(input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .dg-auth-selectable, [data-call-code], [data-call-dial], [data-call-preview-dial], .admin-email__details strong, [role="alert"]) {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+body.login #login :is(img, svg) {
+    -webkit-user-drag: none;
+}
+
+body.login .dg-auth-context-menu {
+    box-sizing: border-box;
+    position: fixed;
+    z-index: 10000;
+    min-inline-size: min(180px, calc(100vw - 16px));
+    max-inline-size: calc(100vw - 16px);
+    padding: 5px;
+    border: 1px solid var(--dg-border);
+    border-radius: 14px;
+    background: var(--dg-panel-strong);
+    box-shadow: var(--dg-shadow);
+    color: var(--dg-text);
+}
+
+body.login .dg-auth-context-menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    inline-size: 100%;
+    min-block-size: 42px;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+    transition: background-color 140ms ease, color 140ms ease;
+}
+
+body.login .dg-auth-context-menu button:is(:hover, :focus-visible) {
+    outline: none;
+    background: var(--dg-accent-soft);
+    color: var(--dg-accent-strong);
+}
+
+body.login .dg-digits-login-shell .dg-auth-preloader {
+    position: fixed;
+    z-index: 10001;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: var(--dg-panel-strong);
+    pointer-events: none;
+    transition: opacity 160ms ease, visibility 160ms ease;
+    animation: dg-auth-preloader-expire 180ms ease 700ms forwards;
+}
+
+body.login.no-js .dg-auth-preloader {
+    display: none;
+}
+
+body.login .dg-auth-preloader.is-ready {
+    visibility: hidden;
+    opacity: 0;
+    animation: none;
+}
+
+body.login .dg-auth-preloader > span {
+    box-sizing: border-box;
+    inline-size: 48px;
+    block-size: 48px;
+    padding: 4px;
+    border-radius: 50%;
+    background: conic-gradient(from 20deg, transparent 20%, var(--dg-accent) 72%, var(--dg-accent-strong));
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    animation: dg-fuji-spin 800ms linear infinite;
+}
+
+@keyframes dg-auth-preloader-expire {
+    to { visibility: hidden; opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.login .dg-auth-preloader,
+    body.login .dg-auth-context-menu button {
+        transition: none;
+    }
+    body.login .dg-auth-preloader > span {
+        animation: none;
+    }
+}
+
+/* Flex only stretches the active form chain. Digits still owns which steps are visible. */
+body.login .dg-digits-login-shell {
+    --dg-action-gap: clamp(16px, 2.4vw, 24px);
+}
+
+body.login .dg-digits-login-shell > .digits-form_container {
+    align-self: stretch;
+    min-block-size: clamp(320px, 53svh, 440px);
+}
+
+body.login .dg-digits-login-shell :is(.digits-form_container, .digits-form_wrapper, form.digloginpage, form.digits_register, .digits-form_login, .dg-call-unified, .dg-call-unified .digitalogic-call-panel, .dg-call-unified .digitalogic-call-instructions):not([hidden], [style*="display: none"]) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-inline-size: 0;
+}
+
+body.login .dg-digits-login-shell form.dg-username-step-active :is(.digits-form_tab_wrapper, .dg-username-password-step, .dg-username-password-step .digits-form_body_wrapper):not([hidden], [style*="display: none"]),
+body.login .dg-digits-login-shell.dg-digits-auto-identity form.dg-username-step-active .dg-username-password-step .digits-form_tab_body.digits-tab_active:not([hidden]) {
+    display: flex !important;
+    flex: 1 1 auto;
+    flex-direction: column;
+    transition-property: opacity, visibility;
+}
+
+body.login .dg-digits-login-shell :is(.digits-form_login > .digits-form_submit-btn, .dg-username-login-actions, .dg-call-unified [data-call-confirm], .dg-call-unified [data-call-cancel]) {
+    margin-block-start: auto;
+}
+
+body.login .dg-digits-login-shell .digits-form_login > :is(.digits-form_submit-btn:not([hidden]), .digits-form_footer):not([style*="display: none"]),
+body.login .dg-digits-login-shell .dg-username-login-actions {
+    flex-shrink: 0;
+}
+
+body.login .dg-digits-login-shell .digits-form_login:not(:has(.dg-username-password-step:not([hidden]))) > :is(.digits-form_tab_wrapper, .digits-form_input_row:has(.dg-otp-editor)) {
+    margin-block-end: var(--dg-action-gap);
+}
+
+body.login .dg-digits-login-shell .dg-username-login-actions {
+    padding-block-start: var(--dg-action-gap);
+}
+
+body.login .dg-digits-login-shell .dg-call-unified :is(.dg-call-steps, .dg-call-wait) {
+    margin-block-end: var(--dg-action-gap);
+}
+
+body.login .dg-call-unified [data-call-code]:focus-visible {
+    outline: 2px solid var(--dg-accent);
+    outline-offset: 4px;
+    border-radius: 12px;
+}
+
 @media (min-width: 720px) and (max-width: 782px) {
     body.login :is(.dg-digits-login-shell, .dg-digits-register-shell).dg-has-login-stories {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);

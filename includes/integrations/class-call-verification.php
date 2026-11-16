@@ -1818,7 +1818,7 @@ final class Digitalogic_Call_Verification {
 					<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
 					<div class="dg-call-wait" data-call-remember-anchor><p data-call-status role="status"><?php echo esc_html( $persian ? 'در انتظار تماس شما…' : 'Waiting for your call…' ); ?></p><span data-call-countdown role="timer" dir="ltr"></span></div>
 					<button type="button" class="dg-auth-back" data-call-cancel><span><?php echo esc_html( $persian ? 'ویرایش شماره تلفن' : 'Edit phone number' ); ?></span></button>
-					<output data-call-code dir="ltr"></output>
+					<output data-call-code dir="ltr" tabindex="0" aria-keyshortcuts="Shift+F10 ContextMenu"></output>
 				</div>
 			</div>
 		</section>
