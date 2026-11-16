@@ -65,7 +65,7 @@
 	const icons = {
 		check: 'M5 12l4 4L19 6',
 		phone: 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.69 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.26a2 2 0 0 1 2.11-.45c.91.33 1.85.56 2.81.69A2 2 0 0 1 22 16.92z',
-		keypad: 'M4 4h16v16H4zM8 8h.01M12 8h.01M16 8h.01M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01',
+		keypad: 'M7 3h10a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z M8 8h1m6 0h1M8 12h1m6 0h1M8 16h1m6 0h1',
 		arrow: 'M5 12h14m-7-7 7 7-7 7',
 		back: 'M19 12H5m7 7-7-7 7-7',
 	};
@@ -78,6 +78,8 @@
 		const path = document.createElementNS(svg.namespaceURI, 'path');
 		svg.setAttribute('viewBox', '0 0 24 24');
 		svg.setAttribute('aria-hidden', 'true');
+		svg.setAttribute('stroke-linecap', 'round');
+		svg.setAttribute('stroke-linejoin', 'round');
 		svg.classList.add('digitalogic-call-icon', `digitalogic-call-icon--${name}`);
 		path.setAttribute('d', icons[name]);
 		svg.appendChild(path);
@@ -100,10 +102,16 @@
 		const error = widget.querySelector('[data-call-error]');
 		const dial = widget.querySelector('[data-call-dial]');
 		const dialNumber = dial?.querySelector('[data-call-dial-number]') || dial;
+		const previewDial = widget.querySelector('[data-call-preview-dial]');
+		const previewNumber = previewDial?.querySelector('[data-call-dial-number]') || previewDial;
+		const callerSummary = widget.querySelector('[data-call-caller]');
+		const lanAction = widget.closest('.dg-digits-login-shell')?.querySelector('[data-call-lan-action]');
+		const publicDial = { href: previewDial?.getAttribute('href'), display: previewNumber?.textContent };
 		const entry = widget.querySelector('[data-call-entry]');
 		const countdown = widget.querySelector('[data-call-countdown]');
 		const codeTitle = widget.querySelector('[data-call-code-title]');
 		const preview = widget.querySelector('[data-call-preview]');
+		const previewTitle = preview?.querySelector('[data-call-preview-title]');
 		const confirm = widget.querySelector('[data-call-confirm]');
 		const outbound = widget.querySelector('[data-call-outbound]');
 		const back = widget.querySelector('[data-call-back]');
@@ -140,6 +148,13 @@
 		let delivery = 'incoming';
 		let remember = false;
 
+		function setConfirmLoading(loading) {
+			if (!confirm) { return; }
+			confirm.classList.toggle('is-loading', loading);
+			if (loading) { confirm.setAttribute('aria-busy', 'true'); }
+			else { confirm.removeAttribute('aria-busy'); }
+		}
+
 		function finish(destination) {
 			const navigate = () => destination ? window.location.assign(destination) : window.location.reload();
 			if (isBrandedLogin() && window.DigitalogicAuthSuccess) {
@@ -163,10 +178,13 @@
 				if (preview) { preview.hidden = step !== 'preview'; }
 				panel.hidden = step === 'entry';
 				widget.closest('.dg-digits-login-shell')?.classList.toggle('dg-call-code-active', step !== 'entry');
+				widget.dataset.callStep = step;
+				const title = step === 'preview' ? previewTitle : codeTitle;
+				if (title?.id) { panel.setAttribute('aria-labelledby', title.id); }
 				if (step === 'code') {
 					codeTitle.focus();
 				} else if (step === 'preview') {
-					preview.querySelector('[data-call-preview-title]').focus();
+					previewTitle?.focus();
 				} else {
 					widget.closest('.dg-digits-login-shell')?.querySelector('form.digloginpage [name="digits_phone"]')?.focus();
 				}
@@ -243,10 +261,12 @@
 			start.disabled = false;
 			if (confirm) { confirm.disabled = false; }
 			if (outbound) { outbound.disabled = false; }
+			setConfirmLoading(false);
 			if (cancel) {
 				cancel.disabled = false;
 			}
 			busyRegion.removeAttribute('aria-busy');
+			status.parentElement?.removeAttribute('data-verifying');
 			showStep(preview ? 'preview' : 'entry');
 			showError(message);
 		}
@@ -317,7 +337,10 @@
 					if (cancel) {
 						cancel.disabled = true;
 					}
-					busyRegion.setAttribute('aria-busy', 'true');
+					status.textContent = isBrandedLogin()
+						? (messages.finishing || 'Code confirmed. Finishing sign-in…')
+						: (messages.verified || 'Phone number verified. Finishing…');
+					status.parentElement?.setAttribute('data-verifying', '');
 					try {
 						await consume(expectedGeneration, expectedChallengeId, expectedCsrfToken);
 					} catch (consumeError) {
@@ -457,6 +480,7 @@
 			start.disabled = true;
 			if (confirm) { confirm.disabled = true; }
 			if (outbound) { outbound.disabled = true; }
+			setConfirmLoading(delivery !== 'outgoing');
 			if (cancel) {
 				cancel.disabled = false;
 			}
@@ -465,7 +489,7 @@
 				const data = await request(config.challengeUrl, {
 					method: 'POST',
 					headers: headers('', purpose === 'add_contact'),
-					body: JSON.stringify(delivery === 'outgoing' ? { phone: phone.value, purpose, delivery } : { phone: phone.value, purpose }),
+					body: JSON.stringify(delivery !== 'incoming' ? { phone: phone.value, purpose, delivery } : { phone: phone.value, purpose }),
 				});
 				if (stopped || expectedGeneration !== attemptGeneration) {
 					return;
@@ -491,7 +515,7 @@
 				if (dialNumber && data.dial) {
 					const display = String(data.dial.display || '');
 					const tel = String(data.dial.tel || '');
-					dialNumber.textContent = display;
+					if (display) { dialNumber.textContent = display; }
 				if (dial.matches('a') && /^\+?[0-9]+$/.test(tel)) {
 						dial.setAttribute('href', `tel:${tel}`);
 					}
@@ -511,6 +535,7 @@
 				if (outboundPrompt) { outboundPrompt.hidden = delivery !== 'outgoing'; }
 				updateCountdown(expectedGeneration);
 				showStep('code');
+				setConfirmLoading(false);
 				busyRegion.removeAttribute('aria-busy');
 				if (back) {
 					back.disabled = false;
@@ -523,6 +548,7 @@
 				start.disabled = false;
 				if (confirm) { confirm.disabled = false; }
 				if (outbound) { outbound.disabled = false; }
+				setConfirmLoading(false);
 				if (back) {
 					back.disabled = false;
 				}
@@ -532,11 +558,14 @@
 		});
 
 		if (unified) {
+			addIcon(previewTitle, 'phone');
 			addIcon(codeTitle, 'keypad');
 			addIcon(cancel, 'back');
-			addIcon(confirm, 'arrow');
+			addIcon(previewDial, 'phone');
+			addIcon(dial, 'phone');
+			addIcon(callerSummary?.querySelector('.dg-auth-identity-mark'), 'phone');
+			// The branded auth component supplies the forward arrow and direction.
 			confirm?.addEventListener('click', () => {
-				delivery = 'incoming';
 				start.click();
 			});
 			outbound?.addEventListener('click', () => {
@@ -549,12 +578,29 @@
 				showStep('entry');
 			});
 			window.DigitalogicCallLogin = {
-				start(value) {
+				back() {
+					if (widget.dataset.callStep === 'code' || start.disabled) { cancel?.click(); }
+					else { widget.querySelector('[data-call-preview-back]')?.click(); }
+				},
+				start(value, method = 'incoming') {
+					const internal = method === 'extension' && lanAction && /^[1-9]\d{2,5}$/.test(lanAction.dataset.extension);
 					if (!widget.isConnected || widget.dataset.callAvailable !== 'true'
-						|| !widget.closest('.dg-digits-login-shell') || !/^\+[1-9]\d{7,14}$/.test(value)) { return false; }
+						|| !widget.closest('.dg-digits-login-shell') || (!internal && !/^\+[1-9]\d{7,14}$/.test(value))) { return false; }
 					if (!start.disabled) {
-						phone.value = value;
-						delivery = 'incoming';
+						phone.value = internal ? '' : value;
+						delivery = internal ? 'extension' : 'incoming';
+						if (callerSummary) {
+							callerSummary.querySelector('[data-call-caller-number]').textContent = phone.value;
+							callerSummary.hidden = !phone.value;
+						}
+						if (previewDial) {
+							previewDial.href = internal ? `tel:${lanAction.dataset.extension}` : publicDial.href;
+							previewNumber.textContent = internal ? lanAction.dataset.extension : publicDial.display;
+							const lanNote = widget.querySelector('[data-call-lan-note]');
+							const publicNote = widget.querySelector('[data-call-public-note]');
+							if (lanNote) { lanNote.hidden = !internal; }
+							if (publicNote) { publicNote.hidden = Boolean(internal); }
+						}
 						remember = Boolean(widget.closest('.dg-digits-login-shell').querySelector('form.digloginpage input[name="rememberme"]:checked'));
 						error.hidden = true;
 						if (outbound) { outbound.hidden = !/^\+98[1-9]\d{9}$/.test(value); }
@@ -564,6 +610,7 @@
 					return true;
 				}
 			};
+			lanAction?.addEventListener('click', () => window.DigitalogicCallLogin.start('', 'extension'));
 		}
 
 		cancel?.addEventListener('click', async () => {
@@ -578,6 +625,7 @@
 			start.disabled = false;
 			if (confirm) { confirm.disabled = false; }
 			if (outbound) { outbound.disabled = false; }
+			setConfirmLoading(false);
 			error.hidden = true;
 			busyRegion.removeAttribute('aria-busy');
 			showStep('entry');

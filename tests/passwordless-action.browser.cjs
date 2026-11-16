@@ -233,25 +233,123 @@ async function checkEmailGate(page, labels) {
     await expectState('unavailable', false);
     await status.getByRole('button').click();
     await expectState('valid', true);
-    assert.equal(await primary.innerText(), labels.enterPassword);
+    assert.equal(await primary.innerText(), labels.continue);
     assert.equal(await email.getAttribute('aria-invalid'), 'false');
     assert.equal(colors.size, 4);
+    await primary.click();
+    await form.locator('.dg-username-password-input').waitFor();
+    const passwordStep = form.locator('.dg-username-password-step');
+    assert.ok(await passwordStep.getByText(labels.skipPasswordCaption, { exact: true }).isVisible());
+    assert.ok(await passwordStep.getByRole('button', { name: labels.skipPassword, exact: true }).isVisible());
+    await form.locator('.dg-username-login-back').click();
     await email.fill('preview');
     assert.equal(await primary.isEnabled(), true);
     await phone.fill('');
     assert.equal(await primary.isDisabled(), true);
 }
 
+async function checkStepLocation(page) {
+    await page.waitForURL('**/#login');
+    const phone = page.locator('[name="digits_phone"]');
+    await phone.fill('known-user');
+    const navigate = async (hash) => {
+        await page.evaluate(value => { window.location.hash = value; }, hash);
+    };
+    await navigate('password');
+    await page.locator('.dg-username-password-input').waitFor();
+    await page.locator('.dg-username-login-back').click();
+    await page.waitForURL('**/#login');
+    assert.equal(await phone.inputValue(), 'known-user');
+
+    await navigate('recover');
+    await page.locator('.dg-recovery-heading').waitFor();
+    await page.waitForURL('**/login/?recover=1#recover');
+    await navigate('login');
+    await page.waitForURL('**/#login');
+    assert.equal(await page.locator('.dg-recovery-heading').count(), 0);
+    assert.equal(new URL(page.url()).searchParams.has('recover'), false);
+
+    await navigate('contact');
+    await page.locator('form[data-dg-sms-identity="true"]').waitFor();
+    await page.waitForURL('**/#contact');
+    await navigate('code');
+    await page.waitForURL('**/#contact');
+    assert.equal(await page.locator('.dg-otp-editor').count(), 0, 'A link cannot create a verification challenge');
+}
+
+async function checkCountryPicker(page) {
+    const phone = page.locator('[name="digits_phone"]');
+    const code = page.locator('[name="login_digt_countrycode"]');
+    const primary = page.locator('.digits-form_login > .digits-form_submit-btn');
+    const trigger = page.locator('.dg-country-trigger');
+    const menu = page.getByRole('listbox');
+    const focusedCode = () => page.evaluate(() => document.activeElement.dataset.code);
+    const focusCode = country => menu.locator(`[data-code="${country}"]:focus`).waitFor();
+
+    await phone.fill('09120000000');
+    await code.click();
+    await code.locator('xpath=self::*[@data-dg-code-selected]').waitFor();
+    const corners = await code.evaluate(input => getComputedStyle(input).borderRadius);
+    assert.equal(corners, '7px');
+    await code.press('ArrowDown');
+    await focusCode('+98');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await focusedCode(), '+1');
+    await page.keyboard.press('End');
+    assert.equal(await focusedCode(), '+93');
+    assert.ok(await menu.evaluate(list => list.scrollTop > 0), 'Keyboard navigation scrolls the list');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await focusedCode(), '+964');
+    await page.keyboard.press('Escape');
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    assert.ok(await trigger.evaluate(button => button === document.activeElement));
+    assert.equal(await code.inputValue(), '+98', 'Escaping preserves the selected code');
+
+    await code.fill('+۰');
+    assert.equal(await code.inputValue(), '+', 'A country calling code cannot start with zero');
+    assert.equal(await primary.isDisabled(), true);
+    await code.fill('+999');
+    await code.press('Tab');
+    assert.equal(await code.getAttribute('aria-invalid'), 'true');
+    assert.ok(await page.locator('.dg-country-code-status').isVisible());
+    assert.equal(await primary.isDisabled(), true);
+    await code.fill('۰۰۳۵۸');
+    await code.press('Tab');
+    assert.equal(await code.inputValue(), '+358', 'Normalize Persian digits and the international 00 prefix');
+    assert.equal(await code.getAttribute('aria-invalid'), 'false', 'Accept allocated codes beyond the shortcut menu');
+    assert.equal(await page.locator('.dg-country-code-status').isVisible(), false);
+
+    await trigger.press('ArrowDown');
+    await focusCode('+98');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Tab');
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+    assert.ok(await phone.evaluate(input => input === document.activeElement), 'Tab advances to the phone number');
+    await trigger.press('Enter');
+    await focusCode('+98');
+    await page.keyboard.press('Space');
+    assert.equal(await code.inputValue(), '+98');
+    assert.equal(await primary.isEnabled(), true);
+    assert.ok(await phone.evaluate(input => input === document.activeElement));
+    await page.locator('.dg-country-flag').click();
+    assert.ok(await phone.evaluate(input => input === document.activeElement));
+}
+
 async function checkSmsAction(page, labels) {
     let attempts = 0;
-    await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => {
+    let releaseFailure;
+    const pendingFailure = new Promise(resolve => { releaseFailure = resolve; });
+    await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', async route => {
         if (route.request().postData().includes('digitalogic_otp_completion')) {
             return route.fulfill({ json: { success: true, data: { pending: true } } });
         }
         if (route.request().postData().includes('name="sms_otp"')) {
             assert.match(route.request().postData(), /name="rememberme"\r\n\r\n1/);
             attempts++;
-            if (attempts === 1) return route.fulfill({ status: 503, body: 'error' });
+            if (attempts === 1) {
+                await pendingFailure;
+                return route.fulfill({ status: 503, body: 'error' });
+            }
             if (attempts === 2) return route.fulfill({ json: { success: false, data: { message: 'Code expired. Request a new code.' } } });
             return route.fulfill({ json: { success: true, data: { redirect: '/complete' } } });
         }
@@ -321,6 +419,8 @@ async function checkSmsAction(page, labels) {
     });
     const verify = page.getByRole('button', { name: labels.verifyCode, exact: true });
     assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
+    await page.locator('.dg-otp-progress[data-state="verifying"]').waitFor();
+    releaseFailure();
     const alert = page.locator('.dg-otp-feedback');
     await alert.waitFor();
     assert.match(await alert.innerText(), /HTTP 503/);
@@ -330,13 +430,23 @@ async function checkSmsAction(page, labels) {
     await first.focus();
     await page.keyboard.insertText('۱۲۳۴۵۶');
     assert.equal(attempts, 1, 'Refilling a complete code must wait for explicit submit');
+    await page.locator('.dg-otp-progress[data-state="ready"]').waitFor();
     await verify.click();
     await page.locator('.dg-otp-editor[aria-invalid="true"]').waitFor();
     assert.equal(await alert.innerText(), 'Code expired. Request a new code.');
     assert.equal(await first.evaluate(el => document.activeElement === el), true);
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
     await verify.click();
-    await page.locator('dialog.dg-auth-success[open] .dg-auth-success-icon svg').waitFor();
+    await page.locator('.dg-auth-is-success > section.dg-auth-success .dg-auth-success-icon svg').waitFor();
+    const spinner = page.locator('.dg-auth-success-spinner');
+    await spinner.waitFor();
+    assert.equal(await spinner.getAttribute('aria-hidden'), 'true');
+    assert.equal(await spinner.evaluate(element => {
+        const caption = element.previousElementSibling.getBoundingClientRect();
+        const ring = element.getBoundingClientRect();
+        return caption.bottom < ring.top && getComputedStyle(element).animationName === 'dg-fuji-spin';
+    }), true);
+    assert.equal(await verify.isVisible(), false);
     assert.match(page.url(), /login/);
     await page.waitForURL('**/complete');
 }
@@ -393,7 +503,7 @@ async function checkOtpContinuity(page, labels, direction) {
     assert.equal(await page.locator('[name="otp_token_key"]').inputValue(), token);
     await cells.first().focus();
     await page.keyboard.insertText('۱۲۳۴۵۶');
-    await page.locator('dialog.dg-auth-success[open]').waitFor();
+    await page.locator('.dg-auth-is-success > section.dg-auth-success').waitFor();
     assert.equal(await page.locator('.dg-otp-feedback').count(), 0);
     await page.waitForURL(destination);
     assert.equal(submits, 1);
@@ -404,19 +514,19 @@ async function checkVerificationLabels(page, labels) {
     const email = page.locator('input[name="digits_email"]');
     const primary = page.locator('.digits-form_login > .digits-form_submit-btn');
     for (const [field, value, expected, isPhone] of [
-        [phone, '', 'Continue'],
-        [phone, 'sample-user', 'Continue'],
-        [phone, '۰۹۱۲', 'Continue', true],
+        [phone, '', labels.continue],
+        [phone, 'sample-user', labels.continue],
+        [phone, '۰۹۱۲', labels.continue, true],
         [phone, '۰۹۱۲۰۰۰۰۰۰۰', labels.sendSmsCode, true],
         [phone, '۰۲۱۱۲۳۴۵۶۷۸', labels.getCallCode, true],
         [phone, '+442079460018', labels.getCallCode, true],
         [phone, '+12025550123', labels.continueBySms, true],
-        [phone, '+448001111', 'Continue', true],
+        [phone, '+448001111', labels.continue, true],
         [phone, '+989120000000', labels.sendSmsCode, true],
-        [phone, 'demo@', 'Continue'],
+        [phone, 'demo@', labels.continue],
         [email, 'demo@example.com', labels.sendEmailCode],
-        [email, 'demo', 'Continue'],
-        [phone, '', 'Continue']
+        [email, 'demo', labels.continue],
+        [phone, '', labels.continue]
     ]) {
         await field.fill(value);
         assert.equal(await primary.innerText(), expected, value || '(empty identity)');
@@ -426,7 +536,7 @@ async function checkVerificationLabels(page, labels) {
     assert.equal(await primary.innerText(), labels.sendSmsCode);
     await page.locator('.dg-country-trigger').click();
     await page.locator('.dg-country-option[data-code="+1"]').click();
-    assert.equal(await primary.innerText(), 'Continue', 'The previous SMS label must clear on country changes');
+    assert.equal(await primary.innerText(), labels.continue, 'The previous SMS label must clear on country changes');
 }
 
 async function checkIdentityPrompt(page, expected) {
@@ -491,10 +601,17 @@ async function checkOtpEditor(page, channel) {
     assert.equal(await cells.first().evaluate(element => getComputedStyle(element.closest('.dg-otp-editor')).direction), 'ltr');
     const centers = await cells.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().left));
     assert.ok(centers.every((left, index) => index === 0 || left - centers[index - 1] >= 20), 'All six digits have separate positions');
-    assert.ok(await cells.evaluateAll(elements => elements.every(element => parseFloat(getComputedStyle(element).borderTopWidth) >= 1)), 'Every empty OTP cell has a visible outline');
+    assert.ok(await cells.evaluateAll(elements => elements.every(element => {
+        const surface = element.closest('.dg-auth-field');
+        return element.classList.contains('dg-auth-input') && surface && parseFloat(getComputedStyle(surface).borderTopWidth) >= 1;
+    })), 'Every empty OTP cell uses the shared input and visible field border');
     await cells.first().focus();
     const form = page.locator('form.digloginpage');
     const firstSlot = page.locator('.dg-otp-slot').first();
+    assert.ok(await firstSlot.evaluate(slot => {
+        const style = getComputedStyle(slot);
+        return style.boxShadow === 'none' && style.transitionProperty.includes('border-color');
+    }), 'OTP focus transitions the shared border without adding a shadow');
     const cursor = () => firstSlot.evaluate(slot => {
         const style = getComputedStyle(slot, '::after');
         return { animation: style.animationName, height: style.height };
@@ -506,6 +623,7 @@ async function checkOtpEditor(page, channel) {
     await form.evaluate(element => { element.dataset.dgOtpCursor = 'bar'; });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     assert.deepEqual(await cursor(), { animation: 'none', height: '18px' });
+    assert.equal(await firstSlot.evaluate(slot => getComputedStyle(slot).transitionProperty), 'none');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     const entry = await cells.first().evaluate(cell => {
         cell.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '۱', cancelable: true }));
@@ -532,6 +650,112 @@ async function checkOtpEditor(page, channel) {
     assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
 }
 
+async function checkLoginStories(browser) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 }, reducedMotion: 'reduce' });
+    let requests = 0;
+    let single = false;
+    let titles = ['قطعات', 'ساخت برد', 'تأمین'];
+    await page.route('https://digitalogic.test/login/', route => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<html lang="fa-IR" dir="rtl"><body class="login login-action-login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body></html>'
+    }));
+    await page.route('https://digitalogic.test/stories?locale=fa_IR', route => {
+        requests++;
+        return route.fulfill({ json: single ? [{ image: '/story.webp', alt: 'تصویر معرفی' }] : titles.map((title, index) => ({
+            image: '/story.webp', image_light: '/light.webp', tab: title, title, description: 'متن از سرور',
+            notes: ['نمونه'], action: 'مشاهده', link: '/product/' + index
+        })) });
+    });
+    await page.route(/https:\/\/digitalogic\.test\/(story|light)\.webp$/, route => route.fulfill({
+        contentType: 'image/gif',
+        body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+    }));
+    await page.addInitScript(() => {
+        window.DigitalogicBranding = { loginSlidesUrl: '/stories', showLoginThemeSwitcher: true };
+    });
+    async function open() {
+        await page.goto('https://digitalogic.test/login/');
+        await page.addStyleTag({ path: styles });
+        await page.addScriptTag({ path: branding });
+        await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+    }
+    await open();
+    assert.equal(requests, 0, 'The phone layout does not fetch the presentation');
+    await page.setViewportSize({ width: 768, height: 1024 });
+    const panel = page.locator('.dg-login-stories');
+    await panel.waitFor();
+    assert.equal(requests, 1);
+    async function assertSingleRow(visibleLabels) {
+        const controls = panel.locator('.dg-story-controls');
+        const layout = await controls.evaluate(el => {
+            const bounds = el.getBoundingClientRect();
+            return [...el.querySelectorAll('button:not([hidden])')].map(button => {
+                const rect = button.getBoundingClientRect();
+                return {
+                    centeredAt: (rect.top + rect.bottom) / 2,
+                    inside: rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+                };
+            });
+        });
+        assert.ok(layout.length > 1 && layout.every(button => button.inside && Math.abs(button.centeredAt - layout[0].centeredAt) < 1));
+        assert.equal(await controls.locator('.dg-story-label:visible').count(), visibleLabels);
+    }
+    await assertSingleRow(0);
+    await page.setViewportSize({ width: 1280, height: 1024 });
+    await assertSingleRow(3);
+    await page.setViewportSize({ width: 768, height: 1024 });
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
+    assert.equal(await page.locator('#login > .dg-login-preferences').count(), 1);
+    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/light.webp');
+    const theme = page.locator('.dg-login-preferences .dg-theme-toggle-button');
+    await theme.click();
+    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/story.webp');
+    assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
+    await panel.locator('.dg-story-dot').first().press('ArrowLeft');
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
+    assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
+    assert.equal(await panel.locator('article[inert]:not([data-dg-clone])').count(), 2);
+    assert.equal(await panel.locator('.dg-story-dot').count(), 3);
+    await panel.locator('.dg-story-dot').first().click();
+    assert.equal(await panel.locator('.dg-story-dot[aria-pressed="true"]').count(), 1);
+    await panel.getByRole('button', { name: 'اسلاید قبلی' }).click();
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'تأمین');
+    const bounds = await panel.locator('.dg-story-stage').boundingBox();
+    await page.mouse.move(bounds.x + 40, bounds.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + 175, bounds.y + 60, { steps: 6 });
+    assert.ok((await panel.locator('.dg-story-track').getAttribute('style')).includes('--dg-story-drag'));
+    await page.mouse.up();
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const rotation = panel.locator('.dg-story-rotation');
+    await rotation.waitFor();
+    const spacing = await rotation.evaluate(button => {
+        const box = button.getBoundingClientRect();
+        return {
+            fromEnd: box.left - button.parentElement.getBoundingClientRect().left,
+            fromArrows: button.previousElementSibling.getBoundingClientRect().left - box.right,
+        };
+    });
+    assert.ok(Math.abs(spacing.fromEnd) < 1 && spacing.fromArrows > 24, JSON.stringify(spacing));
+    await page.setViewportSize({ width: 390, height: 850 });
+    await panel.waitFor({ state: 'hidden' });
+    titles = Array.from({ length: 8 }, (_, index) => 'عنوان کامل محصول ' + (index + 1));
+    await page.setViewportSize({ width: 720, height: 1024 });
+    await open();
+    await panel.waitFor();
+    await assertSingleRow(0);
+    assert.equal(await panel.locator('.dg-story-dot:visible').count(), 8);
+    assert.equal(await rotation.isVisible(), true);
+    single = true;
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await open();
+    await panel.waitFor();
+    assert.equal(await panel.locator('article img[alt="تصویر معرفی"]').count(), 1);
+    assert.equal(await panel.locator('.dg-story-controls, .dg-story-stage[data-draggable]').count(), 0);
+    await page.close();
+}
+
 async function checkLoginSwitchers(browser) {
     for (const showTheme of [false, true]) {
         for (const showLanguage of [false, true]) {
@@ -542,7 +766,9 @@ async function checkLoginSwitchers(browser) {
                 '<input type="submit" value="Change"></form></div>';
             await page.route('https://digitalogic.test/login/**', route => route.fulfill({
                 contentType: 'text/html; charset=utf-8',
-                body: '<html lang="fa" dir="rtl"><body class="login"><div id="login"></div>' +
+                body: '<html lang="fa" dir="rtl"><body class="login"><div id="login">' +
+                    '<div class="dg-native-auth-card">Sign in</div><p id="backtoblog">' +
+                    '<a class="dg-auth-home" data-dg-exit-icon="back" href="/shop/">بازگشت به صفحهٔ قبلی</a></p></div>' +
                     (showLanguage ? language : '') + '</body></html>'
             }));
             await page.goto('https://digitalogic.test/login/');
@@ -552,8 +778,24 @@ async function checkLoginSwitchers(browser) {
             await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
             const theme = page.locator('.dg-theme-toggle-button');
             const picker = page.locator('.dg-language-trigger');
+            const footer = page.locator('#login > .dg-login-preferences');
             assert.equal(await theme.count(), Number(showTheme));
             assert.equal(await picker.count(), Number(showLanguage));
+            assert.equal(await footer.locator('#backtoblog a').getAttribute('href'), '/shop/');
+            assert.equal(await footer.locator('.dg-auth-icon--back').count(), 1);
+            const card = await page.locator('.dg-native-auth-card').boundingBox();
+            const footerBox = await footer.boundingBox();
+            assert.ok(footerBox.y > card.y + card.height);
+            for (const width of [320, 390, 768, 1280]) {
+                await page.setViewportSize({ width, height: 850 });
+                const row = await footer.locator(':is(.dg-auth-home, .dg-theme-toggle-button, .dg-language-trigger)').evaluateAll(elements =>
+                    elements.map(el => {
+                        const rect = el.getBoundingClientRect();
+                        return { center: (rect.top + rect.bottom) / 2, fits: rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44 };
+                    }));
+                assert.equal(row.length, 1 + Number(showTheme) + Number(showLanguage));
+                assert.ok(row.every(control => control.fits && Math.abs(control.center - row[0].center) <= 1), JSON.stringify(row));
+            }
             if (showTheme) {
                 await theme.click();
                 assert.equal(await page.locator('html').getAttribute('data-dg-theme'), 'dark');
@@ -575,6 +817,7 @@ async function checkLoginSwitchers(browser) {
     const browser = await chromium.launch(process.env.DG_BROWSER_CHANNEL ? { channel: process.env.DG_BROWSER_CHANNEL } : {});
     try {
         await checkLoginSwitchers(browser);
+        await checkLoginStories(browser);
         for (const [direction, width, skipPassword, skipPasswordCaption] of [
             ['rtl', 390, 'ورود بدون رمز عبور', 'رمز خود را فراموش کرده اید؟'],
             ['ltr', 1024, 'Sign in without a password', 'Forgot your password?']
@@ -590,6 +833,7 @@ async function checkLoginSwitchers(browser) {
                 passkeyLogin: direction === 'rtl' ? 'ورود با کلید عبور' : 'Sign in with a passkey',
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
+                continue: direction === 'rtl' ? 'ادامه' : 'Continue',
                 enterPassword: direction === 'rtl' ? 'وارد کردن رمز عبور' : 'Enter password',
                 getCallCode: direction === 'rtl' ? 'ادامه با تماس تلفنی' : 'Continue by phone call',
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',
@@ -668,6 +912,7 @@ async function checkLoginSwitchers(browser) {
                     await page.locator('.dg-skip-password:visible').click();
                 }
                 await checkOtpEditor(page, native ? 'sms' : 'email');
+                await page.waitForURL('**/#code');
                 assert.equal(await page.locator('.digits-form_login > .digits-form_submit-btn').innerText(), labels.verifyCode);
                 await checkAlternatives(page, false);
                 await page.close();
@@ -688,8 +933,13 @@ async function checkLoginSwitchers(browser) {
             await emailGate.close();
             const smsAction = await browser.newPage({ viewport: { width, height: 800 } });
             await render(smsAction, direction, labels, false);
+            await checkCountryPicker(smsAction);
             await checkSmsAction(smsAction, labels);
             await smsAction.close();
+            const location = await browser.newPage({ viewport: { width, height: 800 } });
+            await render(location, direction, labels, false);
+            await checkStepLocation(location);
+            await location.close();
             const continuity = await browser.newPage({ viewport: { width, height: 800 } });
             await checkOtpContinuity(continuity, labels, direction);
             await continuity.close();

@@ -16,6 +16,80 @@ const brandingCss = fs.readFileSync(
     'utf8'
 );
 
+test('login worker warms only public resources and uses exact asset versions', async () => {
+    const origin = 'https://digitalogic.test';
+    const stylesheet = origin + '/wp-content/plugins/digitalogic-wp/assets/css/branding/admin-branding.css';
+    const login = origin + '/login/';
+    const handlers = new Map();
+    const stored = new Map();
+    const upstream = [];
+    const cache = {
+        keys: async () => Array.from(stored.keys(), url => ({ url })),
+        match: async url => stored.get(url),
+        put: async (url, response) => stored.set(url, response),
+        delete: async request => stored.delete(request.url)
+    };
+    const worker = fs.readFileSync(path.join(__dirname, '..', 'assets', 'js', 'branding', 'auth-assets-worker.js'), 'utf8');
+    vm.runInNewContext(worker, {
+        URL,
+        caches: { open: async () => cache },
+        self: {
+            location: { origin },
+            registration: { scope: login },
+            addEventListener: (name, handler) => handlers.set(name, handler)
+        },
+        fetch: async (input, options) => {
+            const url = input.url || input;
+            upstream.push({ url, options });
+            const headers = new Headers({ 'Content-Type': 'text/css' });
+            if (url.includes('private.css')) headers.set('Cache-Control', 'private, no-store');
+            return new Response(url, { headers });
+        }
+    });
+
+    function warm(urls) {
+        let completion;
+        handlers.get('message')({
+            data: { type: 'DIGITALOGIC_PREFETCH_LOGIN_ASSETS', urls },
+            source: { url: login + '?wp_lang=fa_IR' },
+            waitUntil: promise => { completion = promise; }
+        });
+        return completion;
+    }
+
+    function request(url, destination, method = 'GET') {
+        let response;
+        handlers.get('fetch')({
+            request: { url, method, destination },
+            respondWith: promise => { response = promise; }
+        });
+        return response;
+    }
+
+    const privateFile = stylesheet.replace('admin-branding.css', 'private.css');
+    await warm([
+        stylesheet, stylesheet + '?ver=1', privateFile,
+        login + '?action=register', origin + '/wp-admin/admin-ajax.php',
+        stylesheet + '?ver=1&token=secret', 'https://elsewhere.test' + new URL(stylesheet).pathname
+    ]);
+    assert.deepEqual([...stored.keys()].sort(), [stylesheet, stylesheet + '?ver=1']);
+    assert.equal(upstream.length, 3);
+    assert.equal(upstream.every(({ options }) => options.credentials === 'omit'), true);
+
+    assert.equal(await (await request(stylesheet + '?ver=1', 'style')).text(), stylesheet + '?ver=1');
+    await warm([stylesheet + '?ver=1']);
+    assert.equal(upstream.length, 3);
+    assert.equal(await (await request(stylesheet + '?ver=2', 'style')).text(), stylesheet + '?ver=2');
+    assert.equal(upstream.at(-1).url, stylesheet + '?ver=2');
+    await warm([stylesheet + '?ver=2']);
+    assert.ok(stored.has(stylesheet + '?ver=2'));
+    await request(stylesheet, 'style');
+    assert.equal(upstream.at(-1).options.cache, 'no-cache');
+    assert.equal(request(stylesheet, 'document'), undefined);
+    assert.equal(request(stylesheet, 'style', 'POST'), undefined);
+    assert.equal(request(login, 'document'), undefined);
+});
+
 function fakeClassList(values) {
     const classes = new Set(values || []);
 
@@ -335,10 +409,6 @@ test('WebOTP waits for the SMS response and submits once', async () => {
     assert.equal(otp.value, '123456');
     assert.equal(submitted, 1);
     assert.equal(signal.aborted, true);
-});
-
-test('carousel slide track uses the same left-to-right geometry in RTL', () => {
-    assert.match(brandingCss, /body\.login \.dg-hero-track\s*\{[^}]*\bdirection:\s*ltr;/);
 });
 
 test('ordinary Enter remains ordinary when a secondary SMS button exists', () => {

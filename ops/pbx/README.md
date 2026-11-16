@@ -1,7 +1,10 @@
 # Digitalogic PBX operational assets
 
 Version 1.1.0 provides a dependency-free Node 18+ AGI helper for caller-aware
-phone verification at `+982166754123`. Both TCI entry routes check for a live
+phone verification at `+982166754123`. WordPress uses the
+`digitalogic_call_verification_public_number` filter for the public dial link and
+display number. Set it to a routed Iranian landline in E.164 format when the public
+entry number changes; this does not change the trusted PBX DID check. Both TCI entry routes check for a live
 website challenge before caller ID normalization and operator routing. A matching
 challenge opens the private keypad prompt. Other callers continue to the operator.
 No public verification digit exists.

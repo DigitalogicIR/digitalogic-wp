@@ -86,3 +86,11 @@ test('every dedicated verification prompt uses the filtered and limited BGM mix'
 	assert.match(installer, /for name in pending-code enter-code verified invalid temporary-failure/);
 	assert.match(read('prompts/fa-IR/pending-code.txt'), /کاربر گرامی/);
 });
+
+test('both verification prompts explain that the code grants access and must be trusted', () => {
+	for (const prompt of ['pending-code', 'enter-code']) {
+		const instructions = read(`prompts/fa-IR/${prompt}.txt`);
+		assert.match(instructions, /اجازهٔ ورود به حساب شما را می‌دهد.*فقط وقتی وارد کنید که خودتان درخواست ورود داده‌اید و به آن اعتماد دارید/u);
+	}
+	assert.match(read('prompts/fa-IR/pending-code.txt'), /برای انصراف، کلید ستاره را بزنید/u);
+});

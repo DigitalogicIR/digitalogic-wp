@@ -111,9 +111,56 @@ HTML;
 		);
 	}
 
-	/** Return the artwork configured for the login page. */
-	public static function login_slides(): array {
-		return array( array( 'image' => DIGITALOGIC_PLUGIN_URL . 'assets/images/branding/login-hero.png' ) );
+	/** Return the cards for the requested login page language. */
+	public static function login_slides( ?WP_REST_Request $request = null ): array {
+		$locale = $request ? $request->get_param( 'locale' ) : '';
+		return self::login_story_cards( is_string( $locale ) ? $locale : '' );
+	}
+
+	private static function login_story_cards( string $locale ): array {
+		$fa         = str_starts_with( strtolower( $locale ?: determine_locale() ), 'fa' );
+		$locale     = $fa ? 'fa_IR' : 'en_US';
+		$images     = DIGITALOGIC_PLUGIN_URL . 'assets/images/branding/login-stories/';
+		$configured = get_option( 'digitalogic_login_story_cards', array() );
+		$cards      = array(
+			array(
+				'id'          => 'components',
+				'image'       => $images . 'components.webp',
+				'image_light' => $images . 'components-aluminum-light.webp',
+				'tab'         => $fa ? 'قطعات و ماژول‌ها' : 'Components',
+				'title'       => $fa ? 'از ایده تا اولین مدار' : 'From idea to first circuit',
+				'description' => $fa ? 'بردهای توسعه، حسگرها و نمایشگرها را پیدا کنید و مشخصاتشان را برای پروژهٔ بعدی مقایسه کنید.' : 'Find development boards, sensors, and displays. Compare specifications for your next project.',
+				'notes'       => $fa ? array( 'بردهای توسعه', 'حسگر و نمایشگر' ) : array( 'Development boards', 'Sensors and displays' ),
+				'link'        => home_url( '/catalog/' ),
+				'action'      => $fa ? 'دیدن محصولات' : 'Browse components',
+			),
+			array(
+				'id'          => 'pcb',
+				'image'       => $images . 'pcb-branded.webp',
+				'image_light' => $images . 'pcb-branded-light.webp',
+				'tab'         => $fa ? 'ساخت PCB' : 'PCB fabrication',
+				'title'       => $fa ? 'طرح شما، روی برد' : 'Turn your layout into a board',
+				'description' => $fa ? 'فایل Gerber را برای ساخت برد دو یا چهار لایه بفرستید و هزینه و زمان تحویل را بررسی کنید.' : 'Send your Gerber files for two or four layer fabrication and check the cost and lead time.',
+				'notes'       => $fa ? array( 'برد دو و چهار لایه', 'فایل Gerber' ) : array( 'Two and four layers', 'Gerber files' ),
+				'link'        => home_url( '/سفارش-چاپ-برد-pcb/' ),
+				'action'      => $fa ? 'سفارش ساخت برد' : 'Explore PCB fabrication',
+			),
+			array(
+				'id'          => 'sourcing',
+				'image'       => $images . 'sourcing-labelled.webp',
+				'image_light' => $images . 'sourcing-labelled-light.webp',
+				'tab'         => $fa ? 'تأمین قطعه' : 'Sourcing',
+				'title'       => $fa ? 'قطعهٔ خاص، سفارش مستقیم' : 'Source hard-to-find parts',
+				'description' => $fa ? 'برای قطعات کمیاب یا سفارش تعداد بالا، شمارهٔ قطعه یا لینک محصول را برای تأمین مستقیم از چین بفرستید.' : 'Share a part number or product link for direct sourcing from China, including scarce parts and volume orders.',
+				'notes'       => $fa ? array( 'شمارهٔ قطعه', 'سفارش تعداد بالا' ) : array( 'Part number', 'Volume orders' ),
+				'link'        => home_url( '/import-of-electronic-products/' ),
+				'action'      => $fa ? 'ثبت درخواست تأمین' : 'Request sourcing',
+			),
+		);
+		if ( is_array( $configured[ $locale ] ?? null ) ) {
+			$cards = $configured[ $locale ];
+		}
+		return array_values( (array) apply_filters( 'digitalogic_login_story_cards', $cards, $locale ) );
 	}
 
 	/**
@@ -124,8 +171,9 @@ HTML;
 	 */
 	public static function auth_presentation_commands( array $commands, string $transport ): array {
 		if ( 'websocket' === $transport ) {
-			$commands['digitalogic_auth_presentation'] = static function (): array {
-				return array( 'slides' => self::login_slides() );
+			$commands['digitalogic_auth_presentation'] = static function ( array $payload = array() ): array {
+				$locale = $payload['locale'] ?? '';
+				return array( 'slides' => self::login_story_cards( is_string( $locale ) ? $locale : '' ) );
 			};
 		}
 		return $commands;
@@ -386,7 +434,7 @@ HTML;
             (string) filemtime($style_path)
         );
 
-        wp_add_inline_style(self::STYLE_HANDLE, self::dynamic_css());
+        wp_add_inline_style(self::STYLE_HANDLE, self::dynamic_css($is_login));
 
         $dependencies = [];
         if ($is_login) {
@@ -402,9 +450,13 @@ HTML;
             true
         );
 
+        $config = self::client_config($is_login, $is_frontend_auth);
+		if ( $is_login ) {
+			$config['loginAssetFontsAndLogos'] = array_values( array_merge( self::auth_font_urls(), self::logo_urls() ) );
+		}
         wp_add_inline_script(
             self::SCRIPT_HANDLE,
-            'window.DigitalogicBranding = ' . wp_json_encode(self::client_config($is_login, $is_frontend_auth)) . ';',
+            'window.DigitalogicBranding = ' . wp_json_encode($config) . ';',
             'before'
         );
     }
@@ -561,7 +613,7 @@ JS;
 
         $config['labels'] = self::client_labels();
 		if ( $is_login ) {
-			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', false );
+			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
 			$config['otpCursor']          = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
 			$config['emailDomainNonce']   = wp_create_nonce( 'digitalogic_email_domain' );
 			$config['loginSlidesUrl']     = rest_url( 'digitalogic/v1/login-slides' );
@@ -693,61 +745,84 @@ JS;
         ];
     }
 
-    private static function dynamic_css(): string {
-        $stylesheet_uri = get_stylesheet_directory_uri();
-        $font_regular = $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum).woff2');
-        $font_medium = $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum)_Medium.woff2');
-        $font_bold = $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum)_Bold.woff2');
-        $yekan_bakh = content_url('/uploads/2025/09/YekanBakh-Regular.woff2');
-        $logos = self::logo_urls();
+    private static function auth_font_urls(): array {
+        return [
+            'yekan_bakh' => content_url('/uploads/2026/07/yekanbakh-vf/YekanBakh-VF.woff2'),
+            'yekan_bakh_fanum' => content_url('/uploads/2026/07/yekanbakh-vf/YekanBakhFaNum-VF.woff2'),
+        ];
+    }
 
-		$yekan_bakh_fanum = content_url( '/uploads/2026/07/yekanbakh-vf/YekanBakhFaNum-VF.woff2' );
+    private static function dynamic_css(bool $is_login): string {
+        $logos = self::logo_urls();
+        $typography = $is_login ? self::auth_typography_css() : self::admin_typography_css();
+
+        return <<<CSS
+{$typography}
+:root {
+    --dg-logo-light: url("{$logos['light']}");
+    --dg-logo-dark: url("{$logos['dark']}");
+}
+CSS;
+    }
+
+    private static function admin_typography_css(): string {
+        $base = get_stylesheet_directory_uri() . '/fonts/woff2/';
+        $regular = $base . rawurlencode('IRANSansWeb(FaNum).woff2');
+        $medium = $base . rawurlencode('IRANSansWeb(FaNum)_Medium.woff2');
+        $bold = $base . rawurlencode('IRANSansWeb(FaNum)_Bold.woff2');
 
         return <<<CSS
 @font-face {
     font-family: "DigitalogicFanum";
-    src: url("{$font_regular}") format("woff2");
+    src: url("{$regular}") format("woff2");
     font-style: normal;
     font-weight: 400;
     font-display: swap;
 }
 @font-face {
     font-family: "DigitalogicFanum";
-    src: url("{$font_medium}") format("woff2");
+    src: url("{$medium}") format("woff2");
     font-style: normal;
     font-weight: 500;
     font-display: swap;
 }
 @font-face {
     font-family: "DigitalogicFanum";
-    src: url("{$font_bold}") format("woff2");
+    src: url("{$bold}") format("woff2");
     font-style: normal;
     font-weight: 700;
     font-display: swap;
 }
+:root {
+    --dg-font: "DigitalogicFanum", "IRANSans", system-ui, sans-serif;
+}
+CSS;
+    }
+
+    private static function auth_typography_css(): string {
+        $fonts = self::auth_font_urls();
+
+        return <<<CSS
 @font-face {
-    font-family: "DigitalogicTabularFaNum";
-    src: url("{$yekan_bakh_fanum}") format("woff2");
+    font-family: "DigitalogicYekanBakhVF";
+    src: url("{$fonts['yekan_bakh']}") format("woff2");
     font-style: normal;
-    font-weight: 100 900;
+    font-weight: 100 950;
     font-display: swap;
 }
 @font-face {
-    font-family: "DigitalogicYekanBakh";
-    src: url("{$yekan_bakh}") format("woff2");
+    font-family: "DigitalogicYekanBakhFaNumVF";
+    src: url("{$fonts['yekan_bakh_fanum']}") format("woff2");
     font-style: normal;
-    font-weight: 400;
+    font-weight: 100 950;
     font-display: swap;
 }
 :root {
-    --dg-font: "DigitalogicFanum", "IRANSans", system-ui, sans-serif;
-    --dg-auth-digits: "DigitalogicYekanBakh", system-ui, sans-serif;
-    --dg-placeholder-font: "DigitalogicYekanBakh", "DigitalogicFanum", "IRANSans", system-ui, sans-serif;
-    --dg-logo-light: url("{$logos['light']}");
-    --dg-logo-dark: url("{$logos['dark']}");
+    --dg-font: "DigitalogicYekanBakhVF", system-ui, sans-serif;
+    --dg-auth-digits: var(--dg-font);
 }
 :root:is(:lang(fa), :lang(ar), :lang(ur), :lang(ps), :lang(ckb), :lang(prs)) {
-    --dg-auth-digits: "DigitalogicTabularFaNum", var(--dg-font);
+    --dg-font: "DigitalogicYekanBakhFaNumVF", "DigitalogicYekanBakhVF", system-ui, sans-serif;
 }
 CSS;
     }

@@ -26,6 +26,7 @@ final class Digitalogic_Plugin_Auth_Routes {
         $booted = true;
 
         add_action('template_redirect', [self::class, 'redirect_legacy_login_page'], 1);
+        add_action('login_init', [self::class, 'serve_auth_asset_worker'], -1);
         add_action('login_init', [self::class, 'redirect_wp_login_to_canonical'], 0);
         add_action('login_form_login', [self::class, 'render_digits_login'], 1);
         add_action('login_form_register', [self::class, 'render_digits_register'], 1);
@@ -366,11 +367,17 @@ final class Digitalogic_Plugin_Auth_Routes {
 		return $send;
 	}
 
-	/** A signed, browser-local account hint; it cannot create a WordPress session. */
+	/** Return the workstation's preselected identity for a signed-out visitor. */
 	public static function remembered_account(): array {
-		if ( 'login' !== ( $GLOBALS['action'] ?? '' ) ) {
+		if ( 'login' !== ( $GLOBALS['action'] ?? '' ) || is_user_logged_in() ) {
 			return array();
 		}
+		$assigned = self::lan_assigned_user();
+		return $assigned ? self::account_hint( $assigned, true ) : array();
+	}
+
+	/** Match a workstation using the client address resolved by the web server. */
+	public static function lan_assigned_user(): ?WP_User {
 		$address = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
 		if ( str_starts_with( $address, '172.16.' ) && filter_var( $address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
 			// Only trust REMOTE_ADDR after the web server's trusted proxy handling.
@@ -379,11 +386,11 @@ final class Digitalogic_Plugin_Auth_Routes {
 			if ( is_string( $login ) && '' !== $login ) {
 				$assigned = get_user_by( 'login', $login );
 				if ( $assigned instanceof WP_User ) {
-					return self::account_hint( $assigned, true );
+					return $assigned;
 				}
 			}
 		}
-		return array();
+		return null;
 	}
 
 	/** Read the signed browser list, including old single-account cookies. */
@@ -465,7 +472,7 @@ final class Digitalogic_Plugin_Auth_Routes {
         }
 
         $args = [];
-        foreach (['action', 'redirect_to', 'reauth', 'wp_lang', 'login'] as $key) {
+        foreach ( array( 'action', 'redirect_to', 'reauth', 'wp_lang', 'login', 'loggedout', 'interim-login', 'recover' ) as $key ) {
             if (isset($_GET[$key]) && $_GET[$key] !== '') {
                 $args[$key] = sanitize_text_field(wp_unslash($_GET[$key]));
             }
@@ -479,6 +486,26 @@ final class Digitalogic_Plugin_Auth_Routes {
         exit;
     }
 
+	/** Serve the public worker from the login path so it only controls the login page. */
+	public static function serve_auth_asset_worker(): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route marker with a fixed value.
+		if ( ! self::is_canonical_login_request() || 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || 'worker' !== ( $_GET['dg_auth_assets'] ?? '' ) ) {
+			return;
+		}
+
+		$file = DIGITALOGIC_PLUGIN_DIR . 'assets/js/branding/auth-assets-worker.js';
+		if ( ! is_readable( $file ) ) {
+			status_header( 404 );
+			exit;
+		}
+
+		header( 'Content-Type: application/javascript; charset=UTF-8' );
+		header( 'X-Content-Type-Options: nosniff' );
+		header( 'Cache-Control: no-cache' );
+		readfile( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile -- Stream this local script directly.
+		exit;
+	}
+
     public static function render_digits_login(): void {
         if (isset($_SERVER['REQUEST_METHOD']) && strtoupper((string) $_SERVER['REQUEST_METHOD']) !== 'GET') {
             return;
@@ -488,10 +515,21 @@ final class Digitalogic_Plugin_Auth_Routes {
             return;
         }
 
-        $redirect_to = isset($_REQUEST['redirect_to']) ? esc_url_raw(wp_unslash($_REQUEST['redirect_to'])) : '';
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- Read-only sign-in entry and notice.
+		$redirect_to = isset( $_REQUEST['redirect_to'] ) && is_string( $_REQUEST['redirect_to'] )
+			? esc_url_raw( wp_unslash( $_REQUEST['redirect_to'] ) )
+			: '';
 
 		nocache_headers();
-		login_header( __( 'Log In' ), '', null );
+		$session_destination = self::existing_session_destination( $redirect_to, $_GET );
+		if ( '' !== $session_destination && wp_safe_redirect( $session_destination ) ) {
+			exit;
+		}
+
+		$logged_out = 'true' === sanitize_key( wp_unslash( $_GET['loggedout'] ?? '' ) ) && ! is_user_logged_in();
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		$messages   = $logged_out ? new WP_Error( 'loggedout', __( 'You are now logged out.' ), 'message' ) : null;
+		login_header( __( 'Log In' ), '', $messages );
 
         if (isset($_GET['login']) && sanitize_key(wp_unslash($_GET['login'])) === 'failed') {
             echo '<div id="login_error" class="notice notice-error"><p>';
@@ -500,6 +538,7 @@ final class Digitalogic_Plugin_Auth_Routes {
         }
 
 		echo '<div class="dg-digits-login-shell dg-digits-auto-identity">';
+        echo '<div class="dg-auth-preloader" aria-hidden="true"><span></span></div>';
         echo self::digits_login_form_html($redirect_to); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		do_action( 'digitalogic_branded_login_content' );
         echo '</div>';
@@ -507,6 +546,32 @@ final class Digitalogic_Plugin_Auth_Routes {
         self::render_login_footer();
         exit;
     }
+
+	/**
+	 * Resume a verified WordPress session on an ordinary sign-in GET.
+	 *
+	 * @param string $redirect_to Requested return URL.
+	 * @param array  $query       Query parameters used to recognize explicit sign-in flows.
+	 * @return string Validated destination, or an empty string to show sign-in.
+	 */
+	private static function existing_session_destination( string $redirect_to, array $query ): string {
+		if ( ! is_user_logged_in() ) {
+			return '';
+		}
+		foreach ( array( 'reauth', 'interim-login', 'recover', 'loggedout' ) as $explicit_flow ) {
+			if ( isset( $query[ $explicit_flow ] ) ) {
+				return '';
+			}
+		}
+
+		$fallback    = current_user_can( 'edit_posts' ) ? admin_url() : home_url( '/' );
+		$destination = '' === $redirect_to ? $fallback : wp_validate_redirect( $redirect_to, $fallback );
+		$path        = untrailingslashit( (string) wp_parse_url( $destination, PHP_URL_PATH ) );
+
+		return untrailingslashit( self::CANONICAL_LOGIN_PATH ) === $path || 'wp-login.php' === basename( $path )
+			? $fallback
+			: $destination;
+	}
 
     public static function redirect_failed_login(string $username): void {
         if (wp_doing_ajax()) {
@@ -615,7 +680,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 	/** Keep the core language selector optional and local to this footer render. */
 	private static function render_login_footer(): void {
-		$show_language = (bool) apply_filters( 'digitalogic_login_show_language_switcher', false );
+		$show_language = (bool) apply_filters( 'digitalogic_login_show_language_switcher', true );
 		$hook          = $show_language ? 'login_language_dropdown_args' : 'login_display_language_dropdown';
 		$callback      = $show_language ? self::installed_login_languages( ... ) : '__return_false';
 		add_filter( $hook, $callback, PHP_INT_MAX );

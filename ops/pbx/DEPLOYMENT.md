@@ -69,6 +69,15 @@ caller ID normalization or recording. Run the shortcut only for a positive looku
 End a verified call and keep the current operator and failover priorities for all
 other outcomes. Recheck the live checksum immediately before installation.
 
+For corporate extension login, configure the site-local
+`DIGITALOGIC_LAN_LOGIN_ACCOUNTS` map (workstation IP to WordPress login) and
+`DIGITALOGIC_LAN_PBX_EXTENSIONS` map (WordPress login to SIP endpoint). Install the
+matching extension hook and private context from
+`asterisk/digitalogic-extension-verification.conf`. The hook checks the source
+endpoint before recording or dialing. Keep the existing route after the hook so
+ordinary calls still reach the extension. Review each new endpoint and route
+before adding an assignment.
+
 Inside the existing `[prefix-tci-callerid]` subroutine, normalize `00989…` first,
 `0989…` second, and bare `989…` third, replacing each prefix with `09`. Then strip
 `021` from a same-city Tehran landline. Only after those transformations may the
