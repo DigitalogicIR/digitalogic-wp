@@ -534,9 +534,11 @@ async function checkStoryDrawer(browser, direction, labels) {
         const shell = page.locator('.dg-has-story-drawer');
         const toggle = shell.locator('.dg-story-drawer-toggle');
         await page.waitForFunction(() => document.querySelector('.dg-story-drawer-toggle')?.getAttribute('aria-expanded') === 'true');
-        assert.equal(await shell.locator('.dg-story-loading').isVisible(), true);
+        const loader = shell.locator('.dg-story-loading');
+        assert.equal(await loader.isVisible(), true);
+        assert.match(await loader.locator('span').evaluate(mark => getComputedStyle(mark, '::after').backgroundImage), /\/images\/icon\.svg/);
         showStories();
-        await shell.locator('.dg-story-loading').waitFor({ state: 'hidden' });
+        await loader.waitFor({ state: 'hidden' });
         await shell.evaluate(node => Promise.all(node.getAnimations({ subtree: true })
             .filter(animation => ['width', 'margin-left', 'transform'].includes(animation.transitionProperty))
             .map(animation => animation.finished.catch(() => {}))));
