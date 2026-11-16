@@ -22,6 +22,8 @@
 
         let google;
         let passkeyRequest;
+        let passkeyOptionsPending;
+        let manualPasskeyQueued = false;
         let completing = false;
         let userInteracted = false;
         const forbidden = ['reauth', 'interim-login', 'recover'].some(key => context.searchParams.has(key));
@@ -40,6 +42,7 @@
 
         const unavailable = text('ورود از طریق مرورگر انجام نشد. روش دیگری را امتحان کنید.', 'Browser sign-in could not finish. Try another sign-in method.');
         const unlinked = text('این حساب به ورود دیجیتالاجیک متصل نیست. از روش عادی ورود استفاده کنید.', 'This identity is not linked to a Digitalogic account. Use your regular sign-in method.');
+        const renewed = text('درخواست تازه آماده است. دوباره روی دکمه ورود بزنید.', 'A new sign-in request is ready. Select the sign-in button again.');
         const redirectTo = () => context.searchParams.get('redirect_to') || form.elements.digits_redirect_page?.value || '';
         const remembered = () => Boolean(form.querySelector('input[name="rememberme"]:checked'));
 
@@ -61,6 +64,13 @@
                 provider: provider.key, mode, redirect_to: redirectTo(), remember: remembered(),
                 flow: window.DigitalogicAuthRealtime?.flowId?.()
             });
+        }
+
+        async function browserChallenge(provider) {
+            const request = await prepare(provider);
+            if (typeof request.nonce !== 'string' || !request.nonce
+                || !Number.isFinite(request.expires_in) || request.expires_in <= 0) { throw new Error('challenge'); }
+            return { nonce: request.nonce, expiresAt: Date.now() + request.expires_in * 1000 };
         }
 
         function finish(destination) {
@@ -87,7 +97,10 @@
                 finish(response.redirect);
             } catch (error) {
                 completing = false;
-                tell(error.message === 'federation_account_unlinked' ? unlinked : unavailable);
+                if (error.message !== 'federation_expired') {
+                    tell(error.message === 'federation_account_unlinked' ? unlinked : unavailable);
+                }
+                return error.message;
             }
         }
 
@@ -103,7 +116,6 @@
 
         function cancelPasskey() {
             passkeyRequest?.abort();
-            passkeyRequest = undefined;
         }
 
         function stopBackground() {
@@ -134,24 +146,48 @@
         }
 
         async function enableGoogle(provider) {
-            try {
-                const [sdk, request] = await Promise.all([loadGoogle(), prepare(provider)]);
-                if (!request.nonce) { return; }
-                google = sdk;
+            let slot;
+            let refreshing = false;
+
+            function renderGoogleButton(challenge) {
                 google.initialize({
-                    client_id: provider.clientId, nonce: request.nonce, auto_select: false, button_auto_select: false,
-                    use_fedcm_for_prompt: true, use_fedcm_for_button: true, itp_support: true,
-                    callback: ({ credential }) => void accept(request.nonce, credential)
+                    client_id: provider.clientId, nonce: challenge.nonce, auto_select: false, button_auto_select: false,
+                    use_fedcm_for_button: true, itp_support: true,
+                    callback: ({ credential }) => void receiveGoogleCredential(challenge, credential)
                 });
-                if (context.searchParams.has('loggedout')) { google.disableAutoSelect(); }
-                const slot = document.createElement('div');
-                slot.className = 'dg-gis-button';
-                methods.insertBefore(slot, feedback);
+                if (!slot) {
+                    slot = document.createElement('div');
+                    slot.className = 'dg-gis-button';
+                    methods.insertBefore(slot, feedback);
+                }
+                slot.replaceChildren();
                 google.renderButton(slot, {
                     type: 'standard', size: 'large', shape: 'pill', text: 'signin_with',
                     theme: document.body.dataset.dgTheme === 'dark' ? 'filled_black' : 'outline',
                     locale: persian ? 'fa' : 'en', width: Math.max(180, Math.min(350, Math.floor(methods.clientWidth)))
                 });
+            }
+
+            async function receiveGoogleCredential(challenge, credential) {
+                if (!initialStep() || completing || refreshing || typeof credential !== 'string' || !credential) { return; }
+                if (Date.now() < challenge.expiresAt && await accept(challenge.nonce, credential) !== 'federation_expired') { return; }
+                refreshing = true;
+                try {
+                    const freshChallenge = await browserChallenge(provider);
+                    if (!initialStep()) { return; }
+                    renderGoogleButton(freshChallenge);
+                    tell(renewed);
+                } catch (error) {
+                    tell(unavailable);
+                } finally {
+                    refreshing = false;
+                }
+            }
+
+            try {
+                google = await loadGoogle();
+                renderGoogleButton(await browserChallenge(provider));
+                if (context.searchParams.has('loggedout')) { google.disableAutoSelect(); }
                 form.querySelector('#digits_google_login')?.setAttribute('aria-label',
                     text('حساب کاربری گوگل، ورود در پنجره جداگانه', 'Google account, sign in in a separate window'));
                 if (provider.oneTap && initialStep() && !context.searchParams.has('loggedout') && !userInteracted
@@ -176,29 +212,32 @@
                 });
             }
             if (!provider.fedcm || !window.IdentityCredential || typeof navigator.credentials?.get !== 'function') { return; }
-            let nonce;
-            let deadline;
+            let challenge;
             const button = addButton(text('ورود در مرورگر با ' + provider.label, 'Sign in in the browser with ' + provider.label), async () => {
-                if (!nonce || Date.now() >= deadline) { void ready(); return; }
+                if (!challenge || Date.now() >= challenge.expiresAt) { await ready(true); return; }
                 stopBackground();
                 button.disabled = true;
                 try {
+                    const nonce = challenge.nonce;
                     const assertion = await navigator.credentials.get({
                         identity: { mode: 'active', providers: [{ configURL: provider.fedcm, clientId: provider.clientId, params: { nonce } }] }
                     });
-                    if (assertion?.token) { await accept(nonce, assertion.token); }
+                    if (assertion?.token && await accept(nonce, assertion.token) === 'federation_expired') { await ready(true); }
                 } catch (error) {
                     if (!['AbortError', 'NotAllowedError'].includes(error.name)) { tell(unavailable); }
                 } finally { button.disabled = false; }
             });
-            async function ready() {
+            async function ready(retry = false) {
+                challenge = undefined;
                 button.disabled = true;
                 try {
-                    const request = await prepare(provider);
-                    nonce = request.nonce;
-                    deadline = Date.now() + request.expires_in * 1000;
+                    challenge = await browserChallenge(provider);
+                    if (retry) { tell(renewed); }
+                } catch (error) {
+                    if (retry) { tell(unavailable); }
+                } finally {
                     button.disabled = false;
-                } catch (error) { button.hidden = true; }
+                }
             }
             void ready();
         }
@@ -211,10 +250,20 @@
             if (identityField(event.target)) { userInteracted = true; google?.cancel(); }
         });
         form.addEventListener('click', event => {
-            if (event.target.closest('.digits-form_passwordless_login, #digits_google_login')) {
-                userInteracted = true;
-                stopBackground();
-            }
+            const button = event.target.closest('.digits-form_passwordless_login, #digits_google_login');
+            if (!button) { return; }
+            userInteracted = true;
+            stopBackground();
+            if (!button.matches('.digits-form_passwordless_login') || (!completing && !passkeyOptionsPending)) { return; }
+            // Digits uses the same server challenge for both passkey entry points.
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (completing || manualPasskeyQueued) { return; }
+            manualPasskeyQueued = true;
+            void passkeyOptionsPending.catch(() => {}).then(() => {
+                manualPasskeyQueued = false;
+                if (initialStep() && button.isConnected && button.closest('.dg-passkey-options[open]')) { button.click(); }
+            });
         }, true);
 
         async function enablePasskeyAutofill(target) {
@@ -234,10 +283,14 @@
                     if (field.name && field.type !== 'hidden' && field.name !== 'rememberme') { input.delete(field.name); }
                 }
                 input.set('sub_action', 'start_passwordless_login');
-                const send = async body => (await window.fetch(endpoint, {
-                    method: 'POST', credentials: 'same-origin', cache: 'no-store', body, signal: controller.signal
+                const send = async (body, signal) => (await window.fetch(endpoint, {
+                    method: 'POST', credentials: 'same-origin', cache: 'no-store', body, signal
                 })).json();
-                const start = await send(input);
+                const pending = send(input, window.AbortSignal?.timeout?.(6500));
+                passkeyOptionsPending = pending;
+                const start = await pending.finally(() => {
+                    if (passkeyOptionsPending === pending) { passkeyOptionsPending = undefined; }
+                });
                 if (!start.success || !start.data?.token || controller.signal.aborted || !initialStep()) { return; }
                 const publicKey = window.digits_preparePublicKeyOptions(start.data.token.public_key || start.data.token);
                 if (publicKey.allowCredentials?.length) { return; }
@@ -252,7 +305,7 @@
                 if (flow) { input.set('dg_auth_flow', flow); }
                 if (remembered()) { input.set('rememberme', '1'); }
                 else { input.delete('rememberme'); }
-                const finishPasskey = await send(input);
+                const finishPasskey = await send(input, controller.signal);
                 if (!finishPasskey.success || !window.DigitalogicFinishBrowserPasskey?.(form, finishPasskey.data)) { throw new Error('passkey'); }
             } catch (error) {
                 if (!controller.signal.aborted && completing) { completing = false; tell(unavailable); }
