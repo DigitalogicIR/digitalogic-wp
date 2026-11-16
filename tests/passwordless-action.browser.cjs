@@ -1338,6 +1338,17 @@ async function checkLoginSwitchers(browser) {
                     await identity.fill('09120000000');
                     await page.locator('.dg-phone-channels').getByRole('radio').last().waitFor();
                     assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Showing verification choices must not resize the card');
+                    if (direction === 'rtl') {
+                        await page.setViewportSize({ width, height: 320 });
+                        await identity.fill('');
+                        await page.locator('.dg-passkey-options summary').click();
+                        await page.waitForFunction(() => {
+                            const card = document.querySelector('.dg-digits-login-shell');
+                            return card.getBoundingClientRect().bottom <= innerHeight &&
+                                !card.matches('[data-dg-reserve-phone], [data-dg-reserve-passkey]');
+                        });
+                        await page.setViewportSize({ width, height: 800 });
+                    }
                     await identity.fill('fixture-user');
                     await page.getByRole('button', { name: labels.continue, exact: true }).click();
                     assert.equal(await remember.count(), 0);
