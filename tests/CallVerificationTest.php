@@ -26,9 +26,27 @@ final class CallVerificationTest extends TestCase {
         $configured = static fn() => '+982155550100';
         add_filter('digitalogic_call_verification_public_number', $configured);
         try {
-            $this->assertSame(['tel' => '+982155550100', 'display' => '021-55550100'], $dial->invoke(null));
+            $this->assertSame(['tel' => '+982155550100', 'display' => '021-55550100'], $dial->invoke(null, 'IR'));
+            $this->assertSame(['tel' => '+982155550100', 'display' => '+98 21-55550100'], $dial->invoke(null, 'DE'));
+            $this->assertSame($dial->invoke(null, 'DE'), $dial->invoke(null));
         } finally {
             remove_filter('digitalogic_call_verification_public_number', $configured);
+        }
+    }
+
+    public function test_request_country_prefers_the_verified_cdn_value(): void {
+        $server = $_SERVER;
+        try {
+            $_SERVER['REMOTE_ADDR'] = '10.0.0.10';
+            $_SERVER['HTTP_CF_IPCOUNTRY'] = 'IR';
+            $_SERVER['DIGITALOGIC_CDN_COUNTRY'] = 'DE';
+            $this->assertSame('DE', Digitalogic_Call_Verification::request_country());
+            foreach (['XX', 'T1', ''] as $unknown) {
+                $_SERVER['DIGITALOGIC_CDN_COUNTRY'] = $unknown;
+                $this->assertNull(Digitalogic_Call_Verification::request_country());
+            }
+        } finally {
+            $_SERVER = $server;
         }
     }
 

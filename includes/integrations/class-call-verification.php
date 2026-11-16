@@ -445,7 +445,6 @@ final class Digitalogic_Call_Verification {
 		$raw_phone = $request->get_param( 'phone' );
 		$phone     = Digitalogic_PBX_Phone::normalize( $raw_phone );
 		$delivery  = $request->get_param( 'delivery' ) ?? 'incoming';
-		$dial      = self::public_dial();
 		$internal  = 'extension' === $delivery;
 		if ( $internal ) {
 			$assigned = 'login' === $purpose && $user_id < 1 ? self::lan_assignment() : null;
@@ -481,7 +480,7 @@ final class Digitalogic_Call_Verification {
 			}
 		}
 		$binding_mac = self::lookup_hash( 'binding', $binding );
-		$ip_hash     = self::lookup_hash( 'ip', $this->request_ip() );
+		$ip_hash     = self::lookup_hash( 'ip', self::request_ip() );
 		$rate_error  = $this->enforce_creation_limits( $phone_hash, $binding_mac, $ip_hash );
 		if ( is_wp_error( $rate_error ) ) {
 			return $rate_error;
@@ -553,14 +552,16 @@ final class Digitalogic_Call_Verification {
 			return new WP_Error( 'digitalogic_call_queue', __( 'The callback could not be started. You can call us to verify instead.', 'digitalogic' ), array( 'status' => 503 ) );
 		}
 
+		$country = self::request_country();
 		return new WP_REST_Response(
 			array(
-				'success'      => true,
-				'challenge_id' => $public_id,
-				'code'         => $code,
-				'csrf_token'   => $csrf,
-				'expires_in'   => self::CHALLENGE_TTL,
-				'dial'         => $dial,
+				'success'         => true,
+				'challenge_id'    => $public_id,
+				'code'            => $code,
+				'csrf_token'      => $csrf,
+				'expires_in'      => self::CHALLENGE_TTL,
+				'dial'            => $dial ?? self::public_dial( $country ),
+				'request_country' => $country,
 			),
 			201
 		);
@@ -758,7 +759,7 @@ final class Digitalogic_Call_Verification {
 			return $bound;
 		}
 
-		$consume_rate = $this->rate_hit( 'consume-10m', self::lookup_hash( 'consume', $bound->binding_mac . '|' . $this->request_ip() ), 5, 600 );
+		$consume_rate = $this->rate_hit( 'consume-10m', self::lookup_hash( 'consume', $bound->binding_mac . '|' . self::request_ip() ), 5, 600 );
 		if ( is_wp_error( $consume_rate ) ) {
 			return $consume_rate;
 		}
@@ -1640,12 +1641,12 @@ final class Digitalogic_Call_Verification {
 	 *
 	 * @return array{tel:string, display:string}
 	 */
-	private static function public_dial(): array {
+	private static function public_dial( ?string $country = null ): array {
 		$number = apply_filters( 'digitalogic_call_verification_public_number', self::ACCESS_DID );
 		$tel    = is_string( $number ) && preg_match( '/^\+98[1-8][0-9]{9}$/D', $number ) ? $number : self::ACCESS_DID;
 		return array(
 			'tel'     => $tel,
-			'display' => '0' . substr( $tel, 3, 2 ) . '-' . substr( $tel, 5 ),
+			'display' => ( 'IR' === $country ? '0' : '+98 ' ) . substr( $tel, 3, 2 ) . '-' . substr( $tel, 5 ),
 		);
 	}
 
@@ -1819,9 +1820,9 @@ final class Digitalogic_Call_Verification {
 						<a class="dg-call-number" data-call-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><span data-call-dial-number><?php echo esc_html( $dial['display'] ); ?></span></a>
 					</div>
 					<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
+					<output data-call-code dir="ltr" tabindex="0" aria-keyshortcuts="Shift+F10 ContextMenu"></output>
 					<div class="dg-call-wait" data-call-remember-anchor><p data-call-status role="status"><?php echo esc_html( $persian ? 'در انتظار تماس شما…' : 'Waiting for your call…' ); ?></p><span data-call-countdown role="timer" dir="ltr"></span></div>
 					<button type="button" class="dg-auth-back" data-call-cancel><span><?php echo esc_html( $persian ? 'ویرایش شماره تلفن' : 'Edit phone number' ); ?></span></button>
-					<output data-call-code dir="ltr" tabindex="0" aria-keyshortcuts="Shift+F10 ContextMenu"></output>
 				</div>
 			</div>
 		</section>
@@ -1902,7 +1903,7 @@ final class Digitalogic_Call_Verification {
 					<label><?php esc_html_e( 'Mobile or landline number (include area code)', 'digitalogic' ); ?> <input type="tel" inputmode="tel" data-call-phone></label>
 					<button type="button" class="button" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 					<div class="digitalogic-call-instructions" data-call-instructions hidden aria-live="polite">
-						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" href="tel:<?php echo esc_attr( self::public_dial()['tel'] ); ?>"><?php echo esc_html( self::public_dial()['display'] ); ?></a>.</p>
+						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::public_dial()['tel'] ); ?>"><?php echo esc_html( self::public_dial()['display'] ); ?></a>.</p>
 						<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 						<output class="digitalogic-call-code" data-call-code dir="ltr"></output>
 						<p data-call-status><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>
@@ -2908,13 +2909,42 @@ final class Digitalogic_Call_Verification {
 	}
 
 	/**
-	 * Best available request IP; it is used only after keyed hashing.
+	 * Request IP after the web server's trusted proxy handling.
 	 *
 	 * @return string
 	 */
-	private function request_ip(): string {
+	private static function request_ip(): string {
 		$value = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
 		return false !== filter_var( $value, FILTER_VALIDATE_IP ) ? $value : 'unknown';
+	}
+
+	/** Return the ISO country for the public request IP, when known. */
+	public static function request_country(): ?string {
+		// The web server maps a verified CDN value to this variable.
+		$cdn_country = isset( $_SERVER['DIGITALOGIC_CDN_COUNTRY'] ) ? sanitize_text_field( wp_unslash( $_SERVER['DIGITALOGIC_CDN_COUNTRY'] ) ) : '';
+		if ( 'XX' !== $cdn_country && preg_match( '/\A[A-Z]{2}\z/', $cdn_country ) ) {
+			return $cdn_country;
+		}
+
+		$ip = self::request_ip();
+		if ( ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE ) ) {
+			return null;
+		}
+		$database = defined( 'DIGITALOGIC_IP_COUNTRY_DATABASE' ) ? DIGITALOGIC_IP_COUNTRY_DATABASE : '/var/lib/digitalogic/geoip/user-country.mmdb';
+		$country  = '';
+		if ( is_string( $database ) && is_readable( $database ) && class_exists( \MaxMind\Db\Reader::class ) ) {
+			try {
+				$reader  = new \MaxMind\Db\Reader( $database );
+				$country = $reader->get( $ip )['country']['iso_code'] ?? '';
+				$reader->close();
+			} catch ( \Exception $error ) {
+				$country = '';
+			}
+		}
+		if ( '' === $country && class_exists( 'WC_Geolocation' ) ) {
+			$country = WC_Geolocation::geolocate_ip( $ip, false, false )['country'] ?? '';
+		}
+		return is_string( $country ) && preg_match( '/\A[A-Z]{2}\z/', $country ) ? $country : null;
 	}
 
 	/**

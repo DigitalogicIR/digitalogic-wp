@@ -3024,8 +3024,10 @@ body.login .dg-call-unified [data-call-preview-title] {
     font-size: clamp(23px, 4.4vw, 34px);
     text-wrap: balance;
 }
-body.login .dg-call-unified .dg-call-code-slots {
+body.login .dg-digits-login-shell .dg-call-unified .dg-call-code-slots {
     --dg-otp-count: 6;
+    gap: clamp(3px, .75vw, 6px);
+    max-width: 330px;
 }
 body.login .dg-call-code-digit {
     display: grid;
