@@ -386,31 +386,41 @@ async function checkEmailGate(page, labels) {
 }
 
 async function checkBrowserManagedSignIn(browser) {
-    for (const method of ['google', 'fedcm', 'passkey']) {
+    for (const method of ['google', 'google-retry', 'fedcm', 'fedcm-retry', 'passkey', 'passkey-race']) {
         const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
         try {
-            const providers = method === 'passkey' ? [] : [{
-                key: method === 'google' ? 'google' : 'partner',
+            const google = method.startsWith('google');
+            const passkey = method.startsWith('passkey');
+            const retry = method.endsWith('-retry');
+            const providers = passkey ? [] : [{
+                key: google ? 'google' : 'partner',
                 label: 'Partner', clientId: 'registered-client', oneTap: true,
                 fedcm: 'https://partner.test/fedcm.json', redirect: false
             }];
             const completed = [];
+            let prepared = 0;
+            let releaseOptions;
+            const optionsReleased = new Promise(resolve => { releaseOptions = resolve; });
             await page.route('**/federation/prepare', route => route.fulfill({
-                json: { nonce: 'bound-challenge', expires_in: 600 }
+                json: { nonce: ++prepared === 1 ? 'bound-challenge' : 'renewed-challenge', expires_in: 600 }
             }));
             await page.route('**/federation/complete', route => {
                 completed.push(route.request().postDataJSON());
+                if (retry && completed.length === 1) {
+                    return route.fulfill({ status: 403, json: { code: 'federation_expired' } });
+                }
                 return route.fulfill({ json: { redirect: '/intended-destination' } });
             });
-            await page.route('**/passkey-vendor', route => {
+            await page.route('**/passkey-vendor', async route => {
                 const start = route.request().postData().includes('start_passwordless_login');
+                if (start && method === 'passkey-race') { await optionsReleased; }
                 return route.fulfill({
                     json: start ? { success: true, data: { token: { challenge: 'nonce', rpId: 'digitalogic.test' } } }
                         : { success: true, data: { process: true, process_type: 'login', redirect: '/intended-destination' } }
                 });
             });
             await render(page, 'ltr', {}, false, '', {
-                federatedLogin: { prepare: '/federation/prepare', complete: '/federation/complete', providers, passkeys: method === 'passkey' }
+                federatedLogin: { prepare: '/federation/prepare', complete: '/federation/complete', providers, passkeys: passkey }
             });
             await page.evaluate(() => {
                 window.digitalogicBrowserSuccess = 0;
@@ -437,14 +447,18 @@ async function checkBrowserManagedSignIn(browser) {
                     window.passkeyDestination = data.redirect;
                     return true;
                 };
+                window.manualPasskeyClicks = 0;
+                document.addEventListener('click', event => {
+                    if (event.target.closest('.digits-form_passwordless_login')) { window.manualPasskeyClicks++; }
+                });
                 Object.defineProperty(navigator.credentials, 'get', { value: async options => {
                     window.credentialOptions = options;
                     return options.identity ? { token: 'signed-fixture' } : { id: 'stored-passkey' };
                 } });
             });
             await page.addScriptTag({ path: path.join(__dirname, '..', 'assets', 'js', 'branding', 'browser-signin.js') });
-            if (method === 'google') {
-                const button = page.getByRole('button', { name: 'GIS fixture' });
+            const button = page.getByRole('button', { name: google ? 'GIS fixture' : 'Sign in in the browser with Partner' });
+            if (google) {
                 await button.waitFor();
                 const options = await page.evaluate(() => ({
                     nonce: window.GoogleFixture.options.nonce, fedcm: window.GoogleFixture.options.use_fedcm_for_button,
@@ -453,21 +467,41 @@ async function checkBrowserManagedSignIn(browser) {
                 assert.deepEqual(options, { nonce: 'bound-challenge', fedcm: true, auto: false, prompted: true });
                 assert.equal(await page.locator('#digits_google_login').isVisible(), true);
                 await button.click();
-            } else if (method === 'fedcm') {
-                await page.getByRole('button', { name: 'Sign in in the browser with Partner' }).click();
+            } else if (!passkey) {
+                await button.click();
                 const request = await page.evaluate(() => window.credentialOptions.identity);
                 assert.equal(request.mode, 'active');
                 assert.deepEqual(request.providers[0].params, { nonce: 'bound-challenge' });
             } else {
+                const vendorRequested = method === 'passkey-race' ? page.waitForRequest('**/passkey-vendor') : undefined;
                 await page.locator('input[name="digits_phone"]').click();
+                if (method === 'passkey-race') {
+                    try {
+                        await vendorRequested;
+                        await page.locator('.dg-passkey-options summary').click();
+                        const explicit = page.locator('.digits-form_passwordless_login');
+                        await explicit.click();
+                        await explicit.click();
+                        assert.equal(await page.evaluate(() => window.manualPasskeyClicks), 0);
+                    } finally { releaseOptions(); }
+                    await page.waitForFunction(() => window.manualPasskeyClicks === 1);
+                    assert.equal(await page.evaluate(() => window.credentialOptions), undefined);
+                    continue;
+                }
                 await page.waitForFunction(() => window.passkeyDestination === '/intended-destination');
                 assert.equal(await page.evaluate(() => window.credentialOptions.mediation), 'conditional');
                 continue;
             }
+            const expected = [{ nonce: 'bound-challenge', credential: 'signed-fixture' }];
+            if (retry) {
+                await page.getByText('A new sign-in request is ready.').waitFor();
+                assert.equal(prepared, 2);
+                assert.equal(completed.length, 1, 'A fresh browser response requires another selection');
+                await button.click();
+                expected.push({ nonce: 'renewed-challenge', credential: 'signed-fixture' });
+            }
             await page.waitForFunction(() => window.digitalogicBrowserSuccess === 1);
-            assert.deepEqual(completed.map(({ nonce, credential }) => ({ nonce, credential })), [
-                { nonce: 'bound-challenge', credential: 'signed-fixture' }
-            ]);
+            assert.deepEqual(completed.map(({ nonce, credential }) => ({ nonce, credential })), expected);
         } finally { await page.close(); }
     }
 }
