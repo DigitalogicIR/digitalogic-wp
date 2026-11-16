@@ -19,6 +19,13 @@ if (!function_exists('admin_url')) {
     }
 }
 
+if (!function_exists('wp_validate_redirect')) {
+    function wp_validate_redirect($target, $fallback = '') {
+        $host = parse_url($target, PHP_URL_HOST);
+        return $host === null || $host === 'digitalogic.test' ? $target : $fallback;
+    }
+}
+
 if (!function_exists('wp_create_nonce')) {
     function wp_create_nonce($action = -1) {
         return 'test-nonce';
@@ -106,6 +113,24 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertSame('https://digitalogic.test/' . rest_get_url_prefix() . '/digitalogic/v1/login-slides', $config['loginSlidesUrl']);
         $this->assertSame(array(), $config['rememberedAccount']);
         $this->assertTrue($config['showLoginThemeSwitcher']);
+    }
+
+    public function test_login_reuses_only_an_existing_session_on_ordinary_entry(): void {
+        $method = new ReflectionMethod(Digitalogic_Plugin_Auth_Routes::class, 'existing_session_destination');
+
+        $this->assertSame('', $method->invoke(null, '/checkout/', []));
+        $GLOBALS['digitalogic_test_current_user_id'] = 17;
+        try {
+            $this->assertSame('/checkout/', $method->invoke(null, '/checkout/', []));
+            $this->assertSame(home_url('/'), $method->invoke(null, '', []));
+            $this->assertSame(home_url('/'), $method->invoke(null, '/login/?wp_lang=fa_IR', []));
+            $this->assertSame(home_url('/'), $method->invoke(null, 'https://other.example/checkout/', []));
+            foreach (['loggedout', 'reauth', 'interim-login', 'recover'] as $flag) {
+                $this->assertSame('', $method->invoke(null, '/checkout/', [$flag => '1']));
+            }
+        } finally {
+            $GLOBALS['digitalogic_test_current_user_id'] = 0;
+        }
     }
 
     public function test_login_stories_use_the_same_localized_cards_on_each_transport(): void {

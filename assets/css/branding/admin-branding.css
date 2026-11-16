@@ -2178,17 +2178,81 @@ body.login .digits-social-text {
     font-weight: 700;
 }
 
-body.login #digits_google_login {
+body.login #login .dg-digits-login-shell #digits_google_login,
+body.login #login .dg-digits-register-shell #digits_google_login {
+    --dg-google-face: linear-gradient(180deg, #ffffffbf, #e0effbe0 58%, #c1d9ee 100%);
+    --dg-google-wall: linear-gradient(180deg, #c1d9ee 32%, #85accd 84%, #a6c8e5);
+    --dg-google-glint: radial-gradient(ellipse 72% 75% at 23% 0%, #fff, transparent 82%);
+    --dg-google-inset: inset 0 2px 4px #fff, inset 0 -3px 9px #77a5d04d, inset 7px 0 15px #ffffff63;
+    --dg-google-shadow: 0 11px 17px -7px #294e7680, 0 3px 5px -1px #234c6d3d;
+    --dg-google-ink: #16283a;
+    position: relative;
+    isolation: isolate;
+    overflow: visible;
     justify-content: center;
     direction: inherit;
-    border: 1px solid #747775 !important;
-    background: #fff !important;
-    color: #1f1f1f !important;
+    margin-block-end: 6px;
+    border: 0 !important;
+    background: transparent !important;
+    color: var(--dg-google-ink) !important;
     box-shadow: none;
     cursor: pointer;
 }
 
-body.login #digits_google_login:hover { background: #f3f7fd !important; }
+[data-dg-theme="dark"] body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login {
+    --dg-google-face: linear-gradient(180deg, #455d77db, #2b415af0 59%, #203650);
+    --dg-google-wall: linear-gradient(180deg, #2d4763 26%, #0a1423 86%, #263d57);
+    --dg-google-glint: radial-gradient(ellipse 75% 75% at 23% 0%, #a1c5e45c, transparent 82%);
+    --dg-google-inset: inset 0 2px 5px #b4daf166, inset 0 -3px 9px #070e1780, inset 7px 0 15px #88b8f51f;
+    --dg-google-shadow: 0 11px 17px -7px #020610e0, 0 3px 5px -1px #0009;
+    --dg-google-ink: #f3f8ff;
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login::before,
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login::after {
+    content: "";
+    position: absolute;
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login::before {
+    z-index: -2;
+    inset: 6px 0 -5px;
+    background: var(--dg-google-wall);
+    box-shadow: var(--dg-google-shadow);
+    transition: inset 150ms ease, box-shadow 220ms ease;
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login::after {
+    z-index: -1;
+    inset: 0;
+    backdrop-filter: blur(12px);
+    background: var(--dg-google-glint) left top / 136% 100% no-repeat, var(--dg-google-face);
+    box-shadow: var(--dg-google-inset);
+    transition: background-position 420ms ease, filter 220ms ease, translate 150ms ease;
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login:is(:hover, :focus-visible)::after {
+    background-position: right top, center;
+    filter: brightness(1.07);
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login:is(:active, .dg-touch-down)::before {
+    inset-block-end: -3px;
+    box-shadow: 0 4px 8px -4px #07172975;
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login:is(:active, .dg-touch-down)::after {
+    translate: 0 2px;
+    filter: brightness(.97);
+}
+
+body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login:focus-visible {
+    outline: 2px solid var(--dg-accent);
+    outline-offset: 7px;
+}
+
 body.login #digits_google_login .digits-social-icon-wrapper { flex: 0 0 20px; padding: 0 !important; background: none !important; }
 body.login #digits_google_login .digits-social-icon {
     width: 20px;
@@ -2196,46 +2260,9 @@ body.login #digits_google_login .digits-social-icon {
     background: center / contain no-repeat url("../../images/branding/google-g.svg") !important;
 }
 
-@media (min-width: 800px) and (hover: hover) and (pointer: fine) {
-    body.login #login .dg-digits-login-shell #digits_google_login {
-        position: relative;
-        overflow: hidden;
-        isolation: isolate;
-        border: 1px solid #b7cce2 !important;
-        background: linear-gradient(165deg, #fff 12%, #f6fbff 58%, #e3edf8 100%) !important;
-        box-shadow: inset 0 1px #fff, inset 0 -3px 0 #c4d8eb, 0 10px 22px rgb(26 77 134 / 19%);
-        transition: box-shadow .24s ease, filter .24s ease;
-    }
-
-    body.login #login .dg-digits-login-shell #digits_google_login::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        z-index: -1;
-        background: linear-gradient(110deg, transparent 19%, rgb(255 255 255 / 80%) 46%, transparent 75%) left / 235% 100% no-repeat;
-        opacity: 0;
-        transition: background-position .45s cubic-bezier(.2,.7,.3,1), opacity .24s ease;
-    }
-
-    body.login #login .dg-digits-login-shell #digits_google_login:is(:hover,:focus-visible) {
-        box-shadow: inset 0 1px #fff, inset 0 -3px 0 #aecde9, 0 13px 26px rgb(25 95 159 / 26%);
-    }
-
-    body.login #login .dg-digits-login-shell #digits_google_login:is(:hover,:focus-visible)::after {
-        background-position: right;
-        opacity: 1;
-    }
-
-    body.login #login .dg-digits-login-shell #digits_google_login:is(:active,.dg-touch-down) {
-        box-shadow: inset 0 2px 5px rgb(37 81 133 / 19%), inset 0 -1px #c4d8eb, 0 3px 7px rgb(26 77 134 / 17%);
-        filter: brightness(.98);
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        body.login #login .dg-digits-login-shell #digits_google_login,
-        body.login #login .dg-digits-login-shell #digits_google_login::after { transition: none; }
-    }
+@media (prefers-reduced-motion: reduce) {
+    body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login::before,
+    body.login #login :is(.dg-digits-login-shell, .dg-digits-register-shell) #digits_google_login::after { transition: none; }
 }
 
 body.login #login,
@@ -2826,6 +2853,25 @@ body.login .dg-account-hint :is(summary, button) {
     cursor: pointer;
 }
 body.login .dg-account-hint button { margin-block-start: 5px; }
+body.login .dg-account-hint summary {
+    justify-content: flex-start;
+    gap: 9px;
+}
+body.login .dg-account-hint summary::after {
+    content: "";
+    inline-size: 7px;
+    block-size: 7px;
+    margin-inline-start: auto;
+    margin-inline-end: 3px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    rotate: 45deg;
+    transition: rotate var(--dg-reveal-short) var(--dg-reveal-easing);
+}
+body.login .dg-account-hint[open] summary::after { rotate: 225deg; }
+@media (prefers-reduced-motion: reduce) {
+    body.login .dg-account-hint summary::after { transition: none; }
+}
 body.login .dg-account-hint-divider {
     margin: 10px 0 4px;
     padding-block-start: 8px;
