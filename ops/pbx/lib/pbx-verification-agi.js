@@ -193,6 +193,7 @@ function loadConfig(env = process.env) {
 	const prompts = {
 		enterCode: requireEnv(env, 'PBX_PROMPT_ENTER_CODE'),
 		pendingCode: requireEnv(env, 'PBX_PROMPT_PENDING_CODE'),
+		checking: env.PBX_PROMPT_CHECKING || 'beep',
 		verified: requireEnv(env, 'PBX_PROMPT_VERIFIED'),
 		invalid: requireEnv(env, 'PBX_PROMPT_INVALID'),
 		temporaryFailure: requireEnv(env, 'PBX_PROMPT_TEMPORARY_FAILURE'),
@@ -429,7 +430,7 @@ async function postSignedJson(config, secret, payload, endpoint, fetchImpl = glo
 		});
 		text = await readBoundedResponse(response, config.maxResponseBytes);
 	} catch (error) {
-		return { error: error instanceof ProtocolError ? 'protocol' : 'temporary' };
+		return { error: error instanceof ProtocolError ? 'protocol' : 'temporary', status: response?.status };
 	} finally {
 		clearTimeout(timer);
 	}
@@ -439,18 +440,24 @@ async function postSignedJson(config, secret, payload, endpoint, fetchImpl = glo
 		try {
 			json = JSON.parse(text);
 		} catch (_) {
-			return { error: 'protocol' };
+			return { error: 'protocol', status: response.status };
 		}
 	}
 	return { status: response.status, json };
 }
 
 async function postVerification(config, secret, payload, fetchImpl = globalThis.fetch) {
-	const result = await postSignedJson(config, secret, payload, {
+	const endpoint = {
 		path: config.callbackPath,
 		url: config.callbackUrl,
 		timeoutMs: config.httpTimeoutMs,
-	}, fetchImpl);
+	};
+	let result = await postSignedJson(config, secret, payload, endpoint, fetchImpl);
+	if (result.error === 'temporary' || [502, 503, 504].includes(result.status)) {
+		// WordPress may have committed the event before the response was lost.
+		// Keep the body and event ID; only regenerate the request signature and nonce.
+		result = await postSignedJson(config, secret, payload, endpoint, fetchImpl);
+	}
 	return result.error || classifyResponse(result.status, result.json);
 }
 
@@ -745,7 +752,9 @@ async function runAgi(dependencies = {}) {
 			if (challengeId) {
 				payload.challenge_id = challengeId;
 			}
-			return postVerification(config, secret, payload, fetchImpl);
+			const verification = postVerification(config, secret, payload, fetchImpl);
+			const [outcome] = await Promise.all([verification, agi.stream(config.prompts.checking)]);
+			return outcome;
 		};
 
 		if (mode === 'shortcut') {

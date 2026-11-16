@@ -26,6 +26,7 @@ final class Digitalogic_Plugin_Auth_Routes {
         $booted = true;
 
         add_action('template_redirect', [self::class, 'redirect_legacy_login_page'], 1);
+        add_action('login_init', [self::class, 'serve_auth_asset_worker'], -1);
         add_action('login_init', [self::class, 'redirect_wp_login_to_canonical'], 0);
         add_action('login_form_login', [self::class, 'render_digits_login'], 1);
         add_action('login_form_register', [self::class, 'render_digits_register'], 1);
@@ -485,6 +486,26 @@ final class Digitalogic_Plugin_Auth_Routes {
         exit;
     }
 
+	/** Serve the public worker from the login path so it only controls the login page. */
+	public static function serve_auth_asset_worker(): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route marker with a fixed value.
+		if ( ! self::is_canonical_login_request() || 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || 'worker' !== ( $_GET['dg_auth_assets'] ?? '' ) ) {
+			return;
+		}
+
+		$file = DIGITALOGIC_PLUGIN_DIR . 'assets/js/branding/auth-assets-worker.js';
+		if ( ! is_readable( $file ) ) {
+			status_header( 404 );
+			exit;
+		}
+
+		header( 'Content-Type: application/javascript; charset=UTF-8' );
+		header( 'X-Content-Type-Options: nosniff' );
+		header( 'Cache-Control: no-cache' );
+		readfile( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile -- Stream this local script directly.
+		exit;
+	}
+
     public static function render_digits_login(): void {
         if (isset($_SERVER['REQUEST_METHOD']) && strtoupper((string) $_SERVER['REQUEST_METHOD']) !== 'GET') {
             return;
@@ -517,6 +538,7 @@ final class Digitalogic_Plugin_Auth_Routes {
         }
 
 		echo '<div class="dg-digits-login-shell dg-digits-auto-identity">';
+        echo '<div class="dg-auth-preloader" aria-hidden="true"><span></span></div>';
         echo self::digits_login_form_html($redirect_to); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		do_action( 'digitalogic_branded_login_content' );
         echo '</div>';

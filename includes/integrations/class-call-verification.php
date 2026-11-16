@@ -1715,6 +1715,7 @@ final class Digitalogic_Call_Verification {
 					'redirecting'     => $persian ? 'شماره تأیید شد. در حال انتقال…' : 'Phone verified. Redirecting…',
 					'outboundWaiting' => $persian ? 'در انتظار تماس با شمارهٔ شما…' : 'Waiting for the PBX to call your phone…',
 					'verified'        => __( 'Phone number verified. Finishing…', 'digitalogic' ),
+					'finishing'       => $persian ? 'کد تأیید شد. در حال تکمیل ورود…' : 'Code confirmed. Finishing sign-in…',
 					'expired'         => __( 'This code expired. Please request another code.', 'digitalogic' ),
 					'error'           => __( 'Verification could not be completed. Please try again.', 'digitalogic' ),
 					'remaining'       => __( '%s seconds remaining', 'digitalogic' ),
@@ -1753,15 +1754,16 @@ final class Digitalogic_Call_Verification {
 	}
 
 	/**
-	 * Render a read-only summary of the caller on both instruction steps.
+	 * Render the caller identity alongside the issued code.
 	 *
 	 * @param bool $persian Whether to render the Persian label.
 	 */
 	private static function render_branded_caller_summary( bool $persian ): void {
 		?>
-		<div class="dg-call-caller dg-auth-field" data-call-caller hidden>
-			<span><?php echo esc_html( $persian ? 'شمارهٔ شما' : 'Your phone number' ); ?></span>
-			<bdi dir="ltr" data-call-caller-number></bdi>
+		<div class="dg-auth-identity dg-auth-identity--recipient" data-call-caller hidden>
+			<span class="dg-auth-identity-mark" aria-hidden="true"></span>
+			<span class="dg-auth-identity-label"><?php echo esc_html( $persian ? 'شمارهٔ شما' : 'Your phone number' ); ?></span>
+			<bdi class="dg-auth-identity-value" dir="ltr" data-call-caller-number></bdi>
 		</div>
 		<?php
 	}
@@ -1782,7 +1784,6 @@ final class Digitalogic_Call_Verification {
 			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>
 				<div class="digitalogic-call-instructions" data-call-preview hidden>
 					<h2 class="digits-form_heading" id="digitalogic-call-preview-title" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
-					<?php self::render_branded_caller_summary( $persian ); ?>
 					<ol class="dg-call-steps">
 						<li>
 							<div class="dg-call-line">
@@ -1818,7 +1819,7 @@ final class Digitalogic_Call_Verification {
 					<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
 					<div class="dg-call-wait" data-call-remember-anchor><p data-call-status role="status"><?php echo esc_html( $persian ? 'در انتظار تماس شما…' : 'Waiting for your call…' ); ?></p><span data-call-countdown role="timer" dir="ltr"></span></div>
 					<button type="button" class="dg-auth-back" data-call-cancel><span><?php echo esc_html( $persian ? 'ویرایش شماره تلفن' : 'Edit phone number' ); ?></span></button>
-					<output data-call-code dir="ltr"></output>
+					<output data-call-code dir="ltr" tabindex="0" aria-keyshortcuts="Shift+F10 ContextMenu"></output>
 				</div>
 			</div>
 		</section>

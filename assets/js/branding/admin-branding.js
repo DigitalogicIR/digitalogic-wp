@@ -1107,6 +1107,12 @@
         window.clearTimeout(loadingFailSafeTimer);
         document.body.classList.remove('dg-login-submitting');
         unlockPendingForms();
+        document.querySelectorAll('.dg-otp-progress[data-state="verifying"]').forEach(function (status) {
+            if (!digitsOtpChecking.has(status.closest('form'))) {
+                status.textContent = '';
+                delete status.dataset.state;
+            }
+        });
         document.querySelectorAll('.digits_form_processing').forEach(function (form) {
             form.classList.remove('digits_form_processing');
         });
@@ -1283,25 +1289,32 @@
     }
 
     function showAuthSuccess(continueSignIn) {
-        if (document.querySelector('.dg-auth-success')) { return; }
+        var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        if (!shell) { continueSignIn(); return; }
+        if (shell.classList.contains('dg-auth-is-success')) { return; }
         clearLoading();
         var persian = isPersianLocale();
-        var dialog = document.createElement('dialog');
-        dialog.className = 'dg-auth-success';
-        dialog.setAttribute('aria-labelledby', 'dg-auth-success-title');
+        var step = document.createElement('section');
+        step.className = 'dg-auth-success';
+        step.setAttribute('aria-labelledby', 'dg-auth-success-title');
+        var previous = Array.from(shell.children).find(function (node) {
+            return node.matches('.digits-form_container, .dg-call-unified, form') && isVisibleElement(node);
+        });
+        if (previous) { step.style.minBlockSize = previous.getBoundingClientRect().height + 'px'; }
         var icon = document.createElement('span');
         icon.className = 'dg-auth-success-icon';
         putAuthIcon(icon, 'check');
         var title = document.createElement('h2');
         title.id = 'dg-auth-success-title';
+        title.tabIndex = -1;
         title.textContent = persian ? 'ورود موفق بود' : 'Signed in successfully';
         var detail = document.createElement('p');
         detail.setAttribute('role', 'status');
         detail.textContent = persian ? 'در حال انتقال…' : 'Redirecting…';
-        dialog.append(icon, title, detail);
-        document.body.append(dialog);
-        dialog.addEventListener('cancel', function (event) { event.preventDefault(); });
-        dialog.showModal();
+        step.append(icon, title, detail);
+        shell.appendChild(step);
+        shell.classList.add('dg-auth-is-success');
+        title.focus({ preventScroll: true });
         window.requestAnimationFrame(function () {
             window.requestAnimationFrame(function () { window.setTimeout(continueSignIn, 650); });
         });
@@ -1723,10 +1736,7 @@
             step.innerHTML = [
                 '<div class="digits-form_body_wrapper">',
                 '<div class="digits-form_tab_body digits-tab_active">',
-                '<div class="dg-username-login-summary">',
-                '<span class="dg-username-login-avatar" aria-hidden="true"></span>',
-                '<bdi class="dg-username-login-value"></bdi>',
-                '</div>',
+                '<div class="dg-username-login-profile"></div>',
                 '<input class="dg-username-password-input" type="password" autocomplete="current-password" required aria-label="' + passwordLabel + '" placeholder="' + passwordLabel + '">',
                 '<div class="dg-username-login-actions">',
                 '<button type="button" class="button dg-username-login-back"><span class="dashicons dashicons-arrow-left-alt" aria-hidden="true"></span><span>' + escapeHtml(backLabel) + '</span></button>',
@@ -1759,23 +1769,17 @@
 
         step.hidden = false;
         step.style.display = '';
-        step.querySelector('.dg-username-login-value').textContent = username;
-        var avatar = step.querySelector('.dg-username-login-avatar');
-        avatar.replaceChildren();
-        putAuthIcon(avatar, 'user');
         var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
         var account = [config.rememberedAccount].concat(accounts).find(function (candidate) {
             return candidate && candidate.login === username;
         });
-        if (account?.avatar) {
-            var photo = document.createElement('img');
-            photo.alt = '';
-            photo.hidden = true;
-            photo.addEventListener('load', function () { photo.hidden = false; }, { once: true });
-            photo.addEventListener('error', function () { photo.remove(); }, { once: true });
-            avatar.appendChild(photo);
-            photo.src = account.avatar;
-        }
+        var photo = account?.avatar;
+        var kind = emailDomain(username) ? 'email' : 'user';
+        var identity = createAuthIdentity(username, kind, photo);
+        identity.classList.add('dg-username-login-summary');
+        identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
+        identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
+        step.querySelector('.dg-username-login-profile').replaceChildren(identity);
         var password = step.querySelector('.dg-username-password-input');
         password.disabled = false;
         password.focus({ preventScroll: true });
@@ -1958,6 +1962,7 @@
         var state = digitsOtpContinuations.get(form);
         if (state) {
             digitsOtpChecking.add(form);
+            setOtpProgress(form, 'verifying');
             try {
                 var response = await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
                     method: 'POST',
@@ -1980,7 +1985,10 @@
                     return;
                 }
             } catch (error) { /* Keep the current challenge available on a failed check. */ }
-            finally { digitsOtpChecking.delete(form); }
+            finally {
+                digitsOtpChecking.delete(form);
+                setOtpProgress(form, '');
+            }
             if (digitsOtpContinuations.get(form) !== state) { return; }
             state.verifying = false;
             if (state.html) { persistDigitsOtpContinuation(state); }
@@ -2225,6 +2233,17 @@
         });
     }
 
+    function setOtpProgress(form, state) {
+        var status = form?.querySelector('.dg-otp-progress');
+        if (!status || status.dataset.state === state) { return; }
+        status.dataset.state = state;
+        status.textContent = state === 'verifying'
+            ? authRequestLabel('Verifying your code…', 'در حال بررسی کد تأیید…')
+            : state === 'ready'
+                ? authRequestLabel('Code entered. Select Verify code to continue.', 'کد وارد شد. برای ادامه «تأیید کد» را بزنید.')
+                : '';
+    }
+
     function submitCompletedOtp(input, count) {
         var form = input.form;
         if (!form || input.value.length !== count) { return; }
@@ -2234,6 +2253,8 @@
         if (!digitsOtpAutoSubmitted.has(form)) {
             digitsOtpAutoSubmitted.add(form);
             button.click();
+        } else {
+            setOtpProgress(form, 'ready');
         }
     }
 
@@ -2284,7 +2305,26 @@
         }
 
         moveInformation();
-        stack.append(help, editor);
+        stack.appendChild(help);
+        var email = input.name === 'email_otp';
+        var source = form?.querySelector(email ? 'input[name="digits_email"], input[name="email"]'
+            : 'input[name="digits_phone"], input[name="phone"]');
+        var supplied = normalizeDigits(source?.value || '').trim();
+        var country = form?.querySelector('input[name="login_digt_countrycode"], input[name="countrycode"]')?.value;
+        var address = email ? (emailDomain(supplied) && supplied) : phonePartsFromValue(supplied, country)?.e164;
+        if (address && form?.closest('.dg-digits-login-shell, .dg-digits-register-shell')) {
+            var recipient = createAuthIdentity(address, email ? 'email' : 'phone', '', email
+                ? authRequestLabel('Your email', 'ایمیل شما')
+                : authRequestLabel('Your phone number', 'شمارهٔ شما'));
+            recipient.classList.add('dg-auth-identity--recipient');
+            recipient.querySelector('bdi').dir = 'ltr';
+            stack.appendChild(recipient);
+        }
+        var progress = document.createElement('p');
+        progress.className = 'dg-otp-progress';
+        progress.setAttribute('role', 'status');
+        progress.setAttribute('aria-atomic', 'true');
+        stack.append(editor, progress);
         var heading = input.form?.querySelector('.digits-form_heading');
         if (heading && !heading.querySelector('.dg-otp-heading')) {
             var title = document.createElement('span');
@@ -2335,6 +2375,7 @@
                 ? cells.map(function (cell) { return cell.value; }).join('') : '';
             if (editor.hasAttribute('aria-invalid')) { form?.querySelector('.dg-otp-feedback')?.remove(); }
             editor.removeAttribute('aria-invalid');
+            if (!input.value) { setOtpProgress(form, ''); }
         }
 
         function focusDigit(index) {
@@ -2714,6 +2755,7 @@
                     } else {
                         if (verifiesCode) {
                             stopDigitsSmsWait(requestForm);
+                            setOtpProgress(requestForm, 'verifying');
                         }
                         var action = document.activeElement;
                         markLoading(action && action.matches && action.matches('.dg-passkey-options .digits-form_passwordless_login')
@@ -2975,6 +3017,7 @@
             return;
         }
 
+        if (otp) { setOtpProgress(form, 'verifying'); }
         if (hasPendingDigitsRecaptcha(form) && !waitForDigitsRecaptcha(form, button)) {
             return;
         }
@@ -3770,9 +3813,9 @@
             if (!actions) {
                 actions = document.createElement('div');
                 actions.className = 'dg-auth-card-actions';
-                var heading = form.querySelector('.digits-form_heading');
-                if (!heading) { return; }
-                heading.after(actions);
+                var step = form.querySelector('.digits-form_login, .digits-form_register');
+                if (!step) { return; }
+                step.appendChild(actions);
             }
             var button = document.createElement('button');
             button.type = 'button';
@@ -3840,7 +3883,7 @@
         var previous;
 
         function currentStep() {
-            if (document.querySelector('.dg-auth-success[open]')) { return 'success'; }
+            if (shell.classList.contains('dg-auth-is-success')) { return 'success'; }
             var call = shell.querySelector('[data-call-unified]')?.dataset.callStep;
             if (call === 'preview' || call === 'code') { return call === 'code' ? 'call-code' : 'call'; }
             var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
@@ -4545,6 +4588,7 @@
         check: 'M5 12l4 4L19 6',
         info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
         edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
+        copy: 'M8 8h12v13H8z M16 5V3H4v14h2',
         clock: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM12 6v6l4 2',
         more: 'M4 7h16 M4 12h16 M4 17h16 M8 5v4 M15 10v4 M10 15v4'
     };
@@ -4564,6 +4608,36 @@
         path.setAttribute('d', authIcons[name]);
         svg.appendChild(path);
         node.prepend(svg);
+    }
+
+    function createAuthIdentity(value, icon, photo, label) {
+        var card = document.createElement('span');
+        card.className = 'dg-auth-identity';
+        var mark = document.createElement('span');
+        mark.className = 'dg-auth-identity-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        putAuthIcon(mark, icon);
+        if (photo) {
+            var image = document.createElement('img');
+            image.alt = '';
+            image.hidden = true;
+            image.addEventListener('load', function () { image.hidden = false; }, { once: true });
+            image.addEventListener('error', function () { image.remove(); }, { once: true });
+            mark.appendChild(image);
+            image.src = photo;
+        }
+        var name = document.createElement('bdi');
+        name.className = 'dg-auth-identity-value';
+        name.textContent = value;
+        card.appendChild(mark);
+        if (label) {
+            var caption = document.createElement('span');
+            caption.className = 'dg-auth-identity-label';
+            caption.textContent = label;
+            card.appendChild(caption);
+        }
+        card.appendChild(name);
+        return card;
     }
 
     function decorateNativeLoginCards() {
@@ -4664,18 +4738,9 @@
         var displayedAccount;
         hint.appendChild(summary);
         function showAccount(node, label, account) {
-            var text = document.createElement('span');
-            text.textContent = label;
-            text.dir = 'auto';
-            node.replaceChildren(text);
-            if (!account?.avatar) {
-                putAuthIcon(node, 'user');
-                return;
-            }
-            var img = document.createElement('img');
-            img.alt = '';
-            img.src = account.avatar;
-            node.prepend(img);
+            var identity = createAuthIdentity(label, 'user', account?.avatar);
+            identity.classList.add('dg-auth-identity--compact');
+            node.replaceChildren(identity);
         }
         function updateSummary(value) {
             var selected = accounts.find(function (account) { return account.login === value; }) || null;
@@ -4719,22 +4784,178 @@
         }
     }
 
-    function prefetchAuthPages() {
-        var seen = new Set();
-        document.querySelectorAll('#nav a[href]').forEach(function (anchor) {
-            var target = new window.URL(anchor.href, window.location.href);
-            var keys = Array.from(target.searchParams.keys());
-            if (target.origin !== window.location.origin || target.pathname !== '/login/' || target.href === window.location.href
-                || keys.some(function (key) { return key !== 'action' && key !== 'wp_lang'; }) || seen.has(target.href)) {
-                return;
+    function prepareAuthAssets() {
+        var loader = document.querySelector('.dg-auth-preloader');
+        if (!loader) { return; }
+
+        var serviceWorker = navigator.serviceWorker;
+        var scope = new URL(config.loginUrl);
+        var controller = serviceWorker?.controller;
+        var workerUrl = new URL('?dg_auth_assets=worker', scope);
+        if (controller?.scriptURL === workerUrl.href) {
+            loader.remove();
+        } else {
+            // Fonts and the shell can settle while the first frame of the loader is visible.
+            Promise.race([document.fonts?.ready, new Promise(function (resolve) { window.setTimeout(resolve, 480); })])
+                .then(function () { window.setTimeout(function () { loader.classList.add('is-ready'); }, 160); });
+        }
+        if (!serviceWorker || window.location.pathname !== scope.pathname) { return; }
+
+        async function warm() {
+            try {
+                var registration = await serviceWorker.register(workerUrl, { scope: scope.pathname });
+                var known = new Set();
+                var timer;
+
+                function collect() {
+                    var urls = new Set(config.loginAssetFontsAndLogos || []);
+                    document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(function (node) {
+                        urls.add(node.src || node.href);
+                    });
+                    document.querySelectorAll('.dg-story-image').forEach(function (image) {
+                        urls.add(image.dataset.lightImage);
+                        urls.add(image.dataset.darkImage);
+                    });
+                    performance.getEntriesByType('resource').forEach(function (entry) {
+                        if (['css', 'script', 'link'].includes(entry.initiatorType) ||
+                            entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/')) {
+                            urls.add(entry.name);
+                        }
+                    });
+                    var fresh = Array.from(urls).filter(function (value) {
+                        if (!value || known.has(value)) { return false; }
+                        var url = new URL(value, window.location.href);
+                        return url.origin === window.location.origin && /\.(?:css|js|woff2?|svg|webp|png|jpe?g|avif)$/i.test(url.pathname);
+                    });
+                    var worker = registration.active;
+                    if (!worker || worker.state !== 'activated' || !fresh.length) { return; }
+                    fresh.forEach(function (url) { known.add(url); });
+                    for (var i = 0; i < fresh.length; i += 100) {
+                        worker.postMessage({ type: 'DIGITALOGIC_PREFETCH_LOGIN_ASSETS', urls: fresh.slice(i, i + 100) });
+                    }
+                }
+
+                function schedule() {
+                    window.clearTimeout(timer);
+                    timer = window.setTimeout(collect, 140);
+                }
+                var pending = registration.installing || registration.waiting || registration.active;
+                pending?.addEventListener('statechange', schedule);
+                serviceWorker.addEventListener('controllerchange', schedule);
+                if (window.PerformanceObserver?.supportedEntryTypes?.includes('resource')) {
+                    new PerformanceObserver(schedule).observe({ type: 'resource' });
+                }
+                schedule();
+            } catch (_error) { /* The network can deliver the same assets when storage is unavailable. */ }
+        }
+        (window.requestIdleCallback || window.setTimeout)(warm);
+    }
+
+    function bindAuthContextMenus() {
+        var card = document.querySelector('body.login #login');
+        if (!card) { return; }
+
+        var editing = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+        var useful = '[data-call-code], [data-call-dial][href^="tel:"], [data-call-preview-dial][href^="tel:"]';
+        var fa = isPersianLocale();
+        var trigger;
+        var menu = document.createElement('div');
+        menu.className = 'dg-auth-context-menu';
+        menu.role = 'menu';
+        menu.setAttribute('aria-label', fa ? 'گزینه‌ها' : 'Actions');
+        menu.hidden = true;
+        var live = document.createElement('div');
+        live.className = 'screen-reader-text';
+        live.setAttribute('role', 'status');
+        card.append(menu, live);
+
+        function close(restoreFocus) {
+            if (menu.hidden) { return; }
+            menu.hidden = true;
+            if (restoreFocus && trigger?.isConnected) { trigger.focus({ preventScroll: true }); }
+        }
+
+        function addItem(text, icon, action) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.role = 'menuitem';
+            item.textContent = text;
+            putAuthIcon(item, icon);
+            item.addEventListener('click', function () {
+                close(true);
+                action();
+            });
+            menu.appendChild(item);
+        }
+
+        function open(target, event) {
+            var dial = target.getAttribute('href');
+            var value = dial ? dial.slice(4) : normalizeDigits(target.textContent).replace(/\s/g, '');
+            if (!value || !navigator.clipboard?.writeText) { return; }
+            event.preventDefault();
+            trigger = target;
+            menu.replaceChildren();
+            if (dial) { addItem(fa ? 'تماس' : 'Call', 'phone', function () { target.click(); }); }
+            var copyLabel = dial ? (fa ? 'کپی شماره تلفن' : 'Copy phone number') : (fa ? 'کپی کد تأیید' : 'Copy verification code');
+            addItem(copyLabel, 'copy', async function () {
+                live.textContent = '';
+                try {
+                    await navigator.clipboard.writeText(value);
+                    live.textContent = fa ? 'کپی شد.' : 'Copied.';
+                } catch (_error) {
+                    live.textContent = fa ? 'کپی انجام نشد. متن را انتخاب و کپی کنید.' : 'Could not copy. Select the text to copy it.';
+                }
+            });
+            menu.hidden = false;
+            var rect = target.getBoundingClientRect();
+            var viewport = window.visualViewport;
+            var left = viewport?.offsetLeft || 0;
+            var top = viewport?.offsetTop || 0;
+            var width = viewport?.width || window.innerWidth;
+            var height = viewport?.height || window.innerHeight;
+            var x = event.clientX || (fa ? rect.right - menu.offsetWidth : rect.left);
+            var y = event.clientY || rect.bottom + 6;
+            menu.style.left = Math.max(left + 8, Math.min(x, left + width - menu.offsetWidth - 8)) + 'px';
+            menu.style.top = Math.max(top + 8, Math.min(y, top + height - menu.offsetHeight - 8)) + 'px';
+            menu.firstElementChild.focus({ preventScroll: true });
+        }
+
+        document.addEventListener('contextmenu', function (event) {
+            var target = event.target.closest(useful);
+            if (target) { open(target, event); }
+            else if (!event.target.closest(editing + ', a[href], [role="alert"], .admin-email__details strong, .dg-auth-selectable')) { event.preventDefault(); }
+        });
+        card.addEventListener('keydown', function (event) {
+            if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) { return; }
+            var target = event.target.closest(useful);
+            if (target) { open(target, event); }
+        });
+        menu.addEventListener('keydown', function (event) {
+            var items = Array.from(menu.children);
+            var index = items.indexOf(document.activeElement);
+            if (event.key === 'Tab') { close(true); return; }
+            if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
+            var next = { ArrowUp: index - 1, ArrowDown: index + 1, Home: 0, End: items.length - 1 }[event.key];
+            if (next === undefined) { return; }
+            event.preventDefault();
+            items[(next + items.length) % items.length].focus();
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (!menu.contains(event.target)) { close(false); }
+        });
+        window.addEventListener('resize', function () { close(true); });
+        document.addEventListener('dragstart', function (event) {
+            var selection = window.getSelection();
+            if (!event.target.closest(editing) && !(event.target.closest(useful) && selection && !selection.isCollapsed)) {
+                event.preventDefault();
             }
-            var action = target.searchParams.get('action');
-            if (action && action !== 'register' && action !== 'lostpassword') { return; }
-            seen.add(target.href);
-            var link = document.createElement('link');
-            link.rel = 'prefetch';
-            link.href = target.href;
-            document.head.appendChild(link);
+        });
+        ['dragover', 'drop'].forEach(function (type) {
+            document.addEventListener(type, function (event) {
+                if (!event.target.closest(editing) || Array.from(event.dataTransfer?.types || []).includes('Files')) {
+                    event.preventDefault();
+                }
+            });
         });
     }
 
@@ -4928,7 +5149,8 @@
         buildLoginStories();
         bindAuthPressFeedback();
         window.addEventListener('pagehide', function () { if (authSocket) { authSocket.close(); } });
-        (window.requestIdleCallback || window.setTimeout)(prefetchAuthPages);
+        prepareAuthAssets();
+        bindAuthContextMenus();
         bindLoginValidation();
         bindDigitsAutoIdentity();
         var routeBrandedAuth = bindBrandedAuthNavigation();
