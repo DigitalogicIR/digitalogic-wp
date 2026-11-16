@@ -146,55 +146,28 @@
         }
 
         async function enableGoogle(provider) {
-            let slot;
-            let refreshing = false;
-
-            function renderGoogleButton(challenge) {
-                google.initialize({
-                    client_id: provider.clientId, nonce: challenge.nonce, auto_select: false, button_auto_select: false,
-                    use_fedcm_for_button: true, itp_support: true,
-                    callback: ({ credential }) => void receiveGoogleCredential(challenge, credential)
-                });
-                if (!slot) {
-                    slot = document.createElement('div');
-                    slot.className = 'dg-gis-button';
-                    methods.insertBefore(slot, feedback);
-                }
-                slot.replaceChildren();
-                google.renderButton(slot, {
-                    type: 'standard', size: 'large', shape: 'pill', text: 'signin_with',
-                    theme: document.body.dataset.dgTheme === 'dark' ? 'filled_black' : 'outline',
-                    locale: persian ? 'fa' : 'en', width: Math.max(180, Math.min(350, Math.floor(methods.clientWidth)))
-                });
-            }
-
-            async function receiveGoogleCredential(challenge, credential) {
-                if (!initialStep() || completing || refreshing || typeof credential !== 'string' || !credential) { return; }
-                if (Date.now() < challenge.expiresAt && await accept(challenge.nonce, credential) !== 'federation_expired') { return; }
-                refreshing = true;
-                try {
-                    const freshChallenge = await browserChallenge(provider);
-                    if (!initialStep()) { return; }
-                    renderGoogleButton(freshChallenge);
-                    tell(renewed);
-                } catch (error) {
-                    tell(unavailable);
-                } finally {
-                    refreshing = false;
-                }
-            }
-
+            if (!provider.oneTap || context.searchParams.has('loggedout')) { return; }
+            const canPrompt = () => initialStep() && !userInteracted
+                && !form.querySelector('input[name="digits_phone"]')?.value && !form.querySelector('input[name="digits_email"]')?.value;
+            if (!canPrompt()) { return; }
             try {
                 google = await loadGoogle();
-                renderGoogleButton(await browserChallenge(provider));
-                if (context.searchParams.has('loggedout')) { google.disableAutoSelect(); }
-                form.querySelector('#digits_google_login')?.setAttribute('aria-label',
-                    text('حساب کاربری گوگل، ورود در پنجره جداگانه', 'Google account, sign in in a separate window'));
-                if (provider.oneTap && initialStep() && !context.searchParams.has('loggedout') && !userInteracted
-                    && !form.querySelector('input[name="digits_phone"]')?.value && !form.querySelector('input[name="digits_email"]')?.value) {
-                    google.prompt();
-                }
-            } catch (error) { /* The existing Google OAuth action is available if GIS cannot initialize. */ }
+                if (!canPrompt()) { return; }
+                const challenge = await browserChallenge(provider);
+                if (!canPrompt()) { return; }
+                // One Tap can run independently of the page's Digits OAuth button.
+                google.initialize({
+                    client_id: provider.clientId, nonce: challenge.nonce, auto_select: false, itp_support: true,
+                    callback: async ({ credential }) => {
+                        if (!canPrompt() || completing || typeof credential !== 'string' || !credential) { return; }
+                        if (Date.now() >= challenge.expiresAt || await accept(challenge.nonce, credential) === 'federation_expired') {
+                            tell(text('مهلت ورود یک‌مرحله‌ای گوگل تمام شد. برای ادامه روی دکمه حساب کاربری گوگل بزنید.',
+                                'Google One Tap expired. Use the Google button to continue.'));
+                        }
+                    }
+                });
+                google.prompt();
+            } catch (error) { /* Digits OAuth is available if One Tap cannot initialize. */ }
         }
 
         function enableProvider(provider) {

@@ -1,6 +1,6 @@
 # Browser-managed sign-in
 
-The branded login uses Google Identity Services for One Tap and the official Google button. Both can use FedCM. The Digits Google OAuth button remains available. The WordPress Google client ID comes from the enabled Digits Google provider or the server's `DIGITALOGIC_GIS_CLIENT_ID` setting. Register the login origin, such as `https://digitalogic.ir`, under Authorized JavaScript origins for that web client in Google Cloud.
+The branded login's Google button starts Digits Google OAuth. Google Identity Services supplies the independent One Tap prompt, which can use FedCM on eligible browsers. The WordPress Google client ID comes from the enabled Digits Google provider or the server's `DIGITALOGIC_GIS_CLIENT_ID` setting. Register the login origin, such as `https://digitalogic.ir`, under Authorized JavaScript origins for that web client in Google Cloud.
 
 The fixed Google signing-key URL uses direct HTTPS because the WordPress-wide proxy can be unavailable for that host. If the instance requires a CONNECT proxy for that URL, set the server-local `DIGITALOGIC_GOOGLE_JWKS_PROXY` constant. TLS certificate and hostname checks remain enabled.
 

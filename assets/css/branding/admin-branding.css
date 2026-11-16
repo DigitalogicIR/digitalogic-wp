@@ -2675,7 +2675,6 @@ body.login .dg-browser-signin[hidden],
 body.login .dg-browser-signin:not(:has(> :not([hidden]))) {
     display: none;
 }
-body.login .dg-gis-button { max-inline-size: 100%; }
 body.login .dg-browser-signin-option {
     min-block-size: 48px;
     inline-size: min(100%, 350px);

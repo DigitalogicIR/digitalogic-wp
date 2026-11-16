@@ -386,12 +386,13 @@ async function checkEmailGate(page, labels) {
 }
 
 async function checkBrowserManagedSignIn(browser) {
-    for (const method of ['google', 'google-retry', 'fedcm', 'fedcm-retry', 'passkey', 'passkey-race']) {
+    for (const method of ['google', 'google-expired', 'fedcm', 'fedcm-retry', 'passkey', 'passkey-race']) {
         const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
         try {
             const google = method.startsWith('google');
             const passkey = method.startsWith('passkey');
             const retry = method.endsWith('-retry');
+            const googleExpired = method === 'google-expired';
             const providers = passkey ? [] : [{
                 key: google ? 'google' : 'partner',
                 label: 'Partner', clientId: 'registered-client', oneTap: true,
@@ -406,7 +407,7 @@ async function checkBrowserManagedSignIn(browser) {
             }));
             await page.route('**/federation/complete', route => {
                 completed.push(route.request().postDataJSON());
-                if (retry && completed.length === 1) {
+                if ((retry || googleExpired) && completed.length === 1) {
                     return route.fulfill({ status: 403, json: { code: 'federation_expired' } });
                 }
                 return route.fulfill({ json: { redirect: '/intended-destination' } });
@@ -457,16 +458,26 @@ async function checkBrowserManagedSignIn(browser) {
                 } });
             });
             await page.addScriptTag({ path: path.join(__dirname, '..', 'assets', 'js', 'branding', 'browser-signin.js') });
-            const button = page.getByRole('button', { name: google ? 'GIS fixture' : 'Sign in in the browser with Partner' });
+            const button = page.getByRole('button', { name: 'Sign in in the browser with Partner' });
             if (google) {
-                await button.waitFor();
+                await page.waitForFunction(() => window.GoogleFixture.prompted);
                 const options = await page.evaluate(() => ({
-                    nonce: window.GoogleFixture.options.nonce, fedcm: window.GoogleFixture.options.use_fedcm_for_button,
-                    auto: window.GoogleFixture.options.auto_select, prompted: window.GoogleFixture.prompted
+                    nonce: window.GoogleFixture.options.nonce, auto: window.GoogleFixture.options.auto_select
                 }));
-                assert.deepEqual(options, { nonce: 'bound-challenge', fedcm: true, auto: false, prompted: true });
-                assert.equal(await page.locator('#digits_google_login').isVisible(), true);
-                await button.click();
+                assert.deepEqual(options, { nonce: 'bound-challenge', auto: false });
+                const oauth = page.locator('#digits_google_login');
+                assert.equal(await oauth.isVisible(), true);
+                assert.equal(await page.getByRole('button', { name: 'GIS fixture' }).count(), 0);
+                await page.evaluate(() => window.GoogleFixture.options.callback({ credential: 'signed-fixture' }));
+                if (googleExpired) {
+                    await page.getByText('Google One Tap expired. Use the Google button to continue.').waitFor();
+                    assert.equal(completed.length, 1);
+                    assert.equal(prepared, 1);
+                    assert.equal(await page.evaluate(() => window.digitalogicBrowserSuccess), 0);
+                    await oauth.click();
+                    assert.equal(await page.evaluate(() => window.GoogleFixture.cancelled), true);
+                    continue;
+                }
             } else if (!passkey) {
                 await button.click();
                 const request = await page.evaluate(() => window.credentialOptions.identity);
