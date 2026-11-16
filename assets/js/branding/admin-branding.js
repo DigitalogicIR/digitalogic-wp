@@ -4807,7 +4807,7 @@
             button.setAttribute('role', 'button');
             button.tabIndex = 0;
             var label = button.querySelector('.digits-social-text');
-            if (label) { label.textContent = isPersianLocale() ? 'ادامه با گوگل' : 'Continue with Google'; }
+            if (label) { label.textContent = isPersianLocale() ? 'حساب کاربری گوگل' : 'Continue with Google'; }
             var divider = button.closest('.digits-social-logins-box').querySelector('.digits-use_social-logins');
             var list = button.closest('.digits-social-logins');
             if (divider && list) { list.before(divider); }
