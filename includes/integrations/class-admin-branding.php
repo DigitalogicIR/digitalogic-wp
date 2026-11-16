@@ -450,9 +450,13 @@ HTML;
             true
         );
 
+        $config = self::client_config($is_login, $is_frontend_auth);
+		if ( $is_login ) {
+			$config['loginAssetFontsAndLogos'] = array_values( array_merge( self::auth_font_urls(), self::logo_urls() ) );
+		}
         wp_add_inline_script(
             self::SCRIPT_HANDLE,
-            'window.DigitalogicBranding = ' . wp_json_encode(self::client_config($is_login, $is_frontend_auth)) . ';',
+            'window.DigitalogicBranding = ' . wp_json_encode($config) . ';',
             'before'
         );
     }
@@ -741,15 +745,27 @@ JS;
         ];
     }
 
-    private static function dynamic_css(): string {
+    private static function auth_font_urls(): array {
         $stylesheet_uri = get_stylesheet_directory_uri();
-        $font_regular = $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum).woff2');
-        $font_medium = $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum)_Medium.woff2');
-        $font_bold = $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum)_Bold.woff2');
-        $yekan_bakh = content_url('/uploads/2025/09/YekanBakh-Regular.woff2');
-        $logos = self::logo_urls();
 
-		$yekan_bakh_fanum = content_url( '/uploads/2026/07/yekanbakh-vf/YekanBakhFaNum-VF.woff2' );
+        return [
+            'font_regular' => $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum).woff2'),
+            'font_medium' => $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum)_Medium.woff2'),
+            'font_bold' => $stylesheet_uri . '/fonts/woff2/' . rawurlencode('IRANSansWeb(FaNum)_Bold.woff2'),
+            'yekan_bakh' => content_url('/uploads/2025/09/YekanBakh-Regular.woff2'),
+            'yekan_bakh_fanum' => content_url('/uploads/2026/07/yekanbakh-vf/YekanBakhFaNum-VF.woff2'),
+        ];
+    }
+
+    private static function dynamic_css(): string {
+        [
+            'font_regular' => $font_regular,
+            'font_medium' => $font_medium,
+            'font_bold' => $font_bold,
+            'yekan_bakh' => $yekan_bakh,
+            'yekan_bakh_fanum' => $yekan_bakh_fanum,
+        ] = self::auth_font_urls();
+        $logos = self::logo_urls();
 
         return <<<CSS
 @font-face {

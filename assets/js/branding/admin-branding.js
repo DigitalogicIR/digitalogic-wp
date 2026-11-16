@@ -3770,9 +3770,9 @@
             if (!actions) {
                 actions = document.createElement('div');
                 actions.className = 'dg-auth-card-actions';
-                var heading = form.querySelector('.digits-form_heading');
-                if (!heading) { return; }
-                heading.after(actions);
+                var step = form.querySelector('.digits-form_login, .digits-form_register');
+                if (!step) { return; }
+                step.appendChild(actions);
             }
             var button = document.createElement('button');
             button.type = 'button';
@@ -4545,6 +4545,7 @@
         check: 'M5 12l4 4L19 6',
         info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
         edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
+        copy: 'M8 8h12v13H8z M16 5V3H4v14h2',
         clock: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM12 6v6l4 2',
         more: 'M4 7h16 M4 12h16 M4 17h16 M8 5v4 M15 10v4 M10 15v4'
     };
@@ -4719,22 +4720,178 @@
         }
     }
 
-    function prefetchAuthPages() {
-        var seen = new Set();
-        document.querySelectorAll('#nav a[href]').forEach(function (anchor) {
-            var target = new window.URL(anchor.href, window.location.href);
-            var keys = Array.from(target.searchParams.keys());
-            if (target.origin !== window.location.origin || target.pathname !== '/login/' || target.href === window.location.href
-                || keys.some(function (key) { return key !== 'action' && key !== 'wp_lang'; }) || seen.has(target.href)) {
-                return;
+    function prepareAuthAssets() {
+        var loader = document.querySelector('.dg-auth-preloader');
+        if (!loader) { return; }
+
+        var serviceWorker = navigator.serviceWorker;
+        var scope = new URL(config.loginUrl);
+        var controller = serviceWorker?.controller;
+        var workerUrl = new URL('?dg_auth_assets=worker', scope);
+        if (controller?.scriptURL === workerUrl.href) {
+            loader.remove();
+        } else {
+            // Fonts and the shell can settle while the first frame of the loader is visible.
+            Promise.race([document.fonts?.ready, new Promise(function (resolve) { window.setTimeout(resolve, 480); })])
+                .then(function () { window.setTimeout(function () { loader.classList.add('is-ready'); }, 160); });
+        }
+        if (!serviceWorker || window.location.pathname !== scope.pathname) { return; }
+
+        async function warm() {
+            try {
+                var registration = await serviceWorker.register(workerUrl, { scope: scope.pathname });
+                var known = new Set();
+                var timer;
+
+                function collect() {
+                    var urls = new Set(config.loginAssetFontsAndLogos || []);
+                    document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(function (node) {
+                        urls.add(node.src || node.href);
+                    });
+                    document.querySelectorAll('.dg-story-image').forEach(function (image) {
+                        urls.add(image.dataset.lightImage);
+                        urls.add(image.dataset.darkImage);
+                    });
+                    performance.getEntriesByType('resource').forEach(function (entry) {
+                        if (['css', 'script', 'link'].includes(entry.initiatorType) ||
+                            entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/')) {
+                            urls.add(entry.name);
+                        }
+                    });
+                    var fresh = Array.from(urls).filter(function (value) {
+                        if (!value || known.has(value)) { return false; }
+                        var url = new URL(value, window.location.href);
+                        return url.origin === window.location.origin && /\.(?:css|js|woff2?|svg|webp|png|jpe?g|avif)$/i.test(url.pathname);
+                    });
+                    var worker = registration.active;
+                    if (!worker || worker.state !== 'activated' || !fresh.length) { return; }
+                    fresh.forEach(function (url) { known.add(url); });
+                    for (var i = 0; i < fresh.length; i += 100) {
+                        worker.postMessage({ type: 'DIGITALOGIC_PREFETCH_LOGIN_ASSETS', urls: fresh.slice(i, i + 100) });
+                    }
+                }
+
+                function schedule() {
+                    window.clearTimeout(timer);
+                    timer = window.setTimeout(collect, 140);
+                }
+                var pending = registration.installing || registration.waiting || registration.active;
+                pending?.addEventListener('statechange', schedule);
+                serviceWorker.addEventListener('controllerchange', schedule);
+                if (window.PerformanceObserver?.supportedEntryTypes?.includes('resource')) {
+                    new PerformanceObserver(schedule).observe({ type: 'resource' });
+                }
+                schedule();
+            } catch (_error) { /* The network can deliver the same assets when storage is unavailable. */ }
+        }
+        (window.requestIdleCallback || window.setTimeout)(warm);
+    }
+
+    function bindAuthContextMenus() {
+        var card = document.querySelector('body.login #login');
+        if (!card) { return; }
+
+        var editing = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+        var useful = '[data-call-code], [data-call-dial][href^="tel:"], [data-call-preview-dial][href^="tel:"]';
+        var fa = isPersianLocale();
+        var trigger;
+        var menu = document.createElement('div');
+        menu.className = 'dg-auth-context-menu';
+        menu.role = 'menu';
+        menu.setAttribute('aria-label', fa ? 'گزینه‌ها' : 'Actions');
+        menu.hidden = true;
+        var live = document.createElement('div');
+        live.className = 'screen-reader-text';
+        live.setAttribute('role', 'status');
+        card.append(menu, live);
+
+        function close(restoreFocus) {
+            if (menu.hidden) { return; }
+            menu.hidden = true;
+            if (restoreFocus && trigger?.isConnected) { trigger.focus({ preventScroll: true }); }
+        }
+
+        function addItem(text, icon, action) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.role = 'menuitem';
+            item.textContent = text;
+            putAuthIcon(item, icon);
+            item.addEventListener('click', function () {
+                close(true);
+                action();
+            });
+            menu.appendChild(item);
+        }
+
+        function open(target, event) {
+            var dial = target.getAttribute('href');
+            var value = dial ? dial.slice(4) : normalizeDigits(target.textContent).replace(/\s/g, '');
+            if (!value || !navigator.clipboard?.writeText) { return; }
+            event.preventDefault();
+            trigger = target;
+            menu.replaceChildren();
+            if (dial) { addItem(fa ? 'تماس' : 'Call', 'phone', function () { target.click(); }); }
+            var copyLabel = dial ? (fa ? 'کپی شماره تلفن' : 'Copy phone number') : (fa ? 'کپی کد تأیید' : 'Copy verification code');
+            addItem(copyLabel, 'copy', async function () {
+                live.textContent = '';
+                try {
+                    await navigator.clipboard.writeText(value);
+                    live.textContent = fa ? 'کپی شد.' : 'Copied.';
+                } catch (_error) {
+                    live.textContent = fa ? 'کپی انجام نشد. متن را انتخاب و کپی کنید.' : 'Could not copy. Select the text to copy it.';
+                }
+            });
+            menu.hidden = false;
+            var rect = target.getBoundingClientRect();
+            var viewport = window.visualViewport;
+            var left = viewport?.offsetLeft || 0;
+            var top = viewport?.offsetTop || 0;
+            var width = viewport?.width || window.innerWidth;
+            var height = viewport?.height || window.innerHeight;
+            var x = event.clientX || (fa ? rect.right - menu.offsetWidth : rect.left);
+            var y = event.clientY || rect.bottom + 6;
+            menu.style.left = Math.max(left + 8, Math.min(x, left + width - menu.offsetWidth - 8)) + 'px';
+            menu.style.top = Math.max(top + 8, Math.min(y, top + height - menu.offsetHeight - 8)) + 'px';
+            menu.firstElementChild.focus({ preventScroll: true });
+        }
+
+        document.addEventListener('contextmenu', function (event) {
+            var target = event.target.closest(useful);
+            if (target) { open(target, event); }
+            else if (!event.target.closest(editing + ', a[href], [role="alert"], .admin-email__details strong, .dg-auth-selectable')) { event.preventDefault(); }
+        });
+        card.addEventListener('keydown', function (event) {
+            if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) { return; }
+            var target = event.target.closest(useful);
+            if (target) { open(target, event); }
+        });
+        menu.addEventListener('keydown', function (event) {
+            var items = Array.from(menu.children);
+            var index = items.indexOf(document.activeElement);
+            if (event.key === 'Tab') { close(true); return; }
+            if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
+            var next = { ArrowUp: index - 1, ArrowDown: index + 1, Home: 0, End: items.length - 1 }[event.key];
+            if (next === undefined) { return; }
+            event.preventDefault();
+            items[(next + items.length) % items.length].focus();
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (!menu.contains(event.target)) { close(false); }
+        });
+        window.addEventListener('resize', function () { close(true); });
+        document.addEventListener('dragstart', function (event) {
+            var selection = window.getSelection();
+            if (!event.target.closest(editing) && !(event.target.closest(useful) && selection && !selection.isCollapsed)) {
+                event.preventDefault();
             }
-            var action = target.searchParams.get('action');
-            if (action && action !== 'register' && action !== 'lostpassword') { return; }
-            seen.add(target.href);
-            var link = document.createElement('link');
-            link.rel = 'prefetch';
-            link.href = target.href;
-            document.head.appendChild(link);
+        });
+        ['dragover', 'drop'].forEach(function (type) {
+            document.addEventListener(type, function (event) {
+                if (!event.target.closest(editing) || Array.from(event.dataTransfer?.types || []).includes('Files')) {
+                    event.preventDefault();
+                }
+            });
         });
     }
 
@@ -4928,7 +5085,8 @@
         buildLoginStories();
         bindAuthPressFeedback();
         window.addEventListener('pagehide', function () { if (authSocket) { authSocket.close(); } });
-        (window.requestIdleCallback || window.setTimeout)(prefetchAuthPages);
+        prepareAuthAssets();
+        bindAuthContextMenus();
         bindLoginValidation();
         bindDigitsAutoIdentity();
         var routeBrandedAuth = bindBrandedAuthNavigation();
