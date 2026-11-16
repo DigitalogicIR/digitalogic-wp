@@ -4607,7 +4607,7 @@
 
     function decorateAuthControls() {
         var selectors = {
-            '.digits-form_heading:not([data-call-code-title])': 'user',
+            '.digits-form_heading:not([data-call-preview-title], [data-call-code-title])': 'user',
             '.dg-passkey-options summary': 'more',
             '.dg-passkey-options .digitalogic-call-toggle, [data-call-start]': 'phone',
             '.dg-otp-resend': 'sms',
