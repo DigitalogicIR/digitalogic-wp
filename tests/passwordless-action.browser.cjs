@@ -565,7 +565,10 @@ async function checkStoryDrawer(browser, direction, labels) {
         await toggle.click();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '1');
-        await page.waitForFunction(() => document.querySelector('.dg-story-drawer')?.clientWidth === 0);
+        await page.waitForFunction(() => {
+            const drawer = document.querySelector('.dg-story-drawer');
+            return drawer?.clientWidth === 0 && getComputedStyle(drawer).visibility === 'hidden';
+        });
         const grip = await toggle.boundingBox();
         const separation = (await shell.boundingBox()).x - grip.x - grip.width;
         assert.ok(grip.x > 0 && separation >= 0 && separation < 16, 'The collapsed button sits beside the left edge');
@@ -577,6 +580,7 @@ async function checkStoryDrawer(browser, direction, labels) {
         await page.mouse.move(x + movement, y, { steps: 12 });
         const moved = await toggle.boundingBox();
         assert.ok(Math.abs(moved.x - grip.x - movement) < 1, 'The button follows the pointer at 1:1 scale');
+        assert.equal(await drawer.evaluate(node => getComputedStyle(node).visibility), 'visible');
         await page.mouse.up();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');

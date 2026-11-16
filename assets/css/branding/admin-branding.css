@@ -398,7 +398,14 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         position: relative;
         min-inline-size: 0;
         overflow: clip;
+        visibility: hidden;
         background: color-mix(in srgb, var(--dg-accent-soft) 70%, var(--dg-panel-strong));
+        transition: visibility 0s var(--dg-story-duration);
+    }
+
+    body.login .dg-has-story-drawer:is([data-drawer-open], [data-drawer-dragging]) > .dg-story-drawer {
+        visibility: visible;
+        transition-delay: 0s;
     }
 
     body.login .dg-story-drawer > .dg-login-stories {
