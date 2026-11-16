@@ -27,24 +27,46 @@ final class MobileCatalogContractTest extends TestCase {
 			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
 		);
 		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
-			/** @var array Captured fixture queries. */
+			/** Captured fixture queries.
+			 *
+			 * @var array
+			 */
 			public $catalog_queries = array();
-			/** @var array Captured bound fixture values. */
-			public $catalog_values  = array();
+			/** Captured bound fixture values.
+			 *
+			 * @var array
+			 */
+			public $catalog_values = array();
 
-			/** {@inheritDoc} */
+			/**
+			 * Escape the synthetic LIKE value.
+			 *
+			 * @param mixed $value Fixture value.
+			 * @return string Escaped value.
+			 */
 			public function esc_like( $value ) {
 				return addcslashes( (string) $value, '_%\\' );
 			}
 
-			/** {@inheritDoc} */
+			/**
+			 * Return an empty synthetic result set.
+			 *
+			 * @param mixed $prepared Prepared fixture query.
+			 * @param mixed $output Requested format.
+			 * @return array No provider rows.
+			 */
 			public function get_results( $prepared, $output = ARRAY_A ) {
 				unset( $prepared, $output );
 
 				return array();
 			}
 
-			/** {@inheritDoc} */
+			/**
+			 * Capture the count query without a database.
+			 *
+			 * @param mixed $prepared Prepared fixture query.
+			 * @return int Synthetic empty count.
+			 */
 			public function get_var( $prepared ) {
 				$this->catalog_queries[] = is_array( $prepared ) ? $prepared['query'] : (string) $prepared;
 				$this->catalog_values[]  = is_array( $prepared ) ? $prepared['args'] : array();
@@ -52,7 +74,12 @@ final class MobileCatalogContractTest extends TestCase {
 				return 0;
 			}
 
-			/** {@inheritDoc} */
+			/**
+			 * Capture product selection without a database.
+			 *
+			 * @param mixed $prepared Prepared fixture query.
+			 * @return array No selected products.
+			 */
 			public function get_col( $prepared ) {
 				$this->catalog_queries[] = is_array( $prepared ) ? $prepared['query'] : (string) $prepared;
 				$this->catalog_values[]  = is_array( $prepared ) ? $prepared['args'] : array();
@@ -92,29 +119,53 @@ final class MobileCatalogContractTest extends TestCase {
 			'search_synonyms' => 'MODEL-001 = legacy model',
 		);
 		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
-			/** @var array Bound values selected by the synthetic catalog query. */
+			/** Bound values selected by the synthetic catalog query.
+			 *
+			 * @var array
+			 */
 			public $select_values = array();
 
-			/** {@inheritDoc} */
+			/**
+			 * Escape the synthetic LIKE value.
+			 *
+			 * @param mixed $value Fixture value.
+			 * @return string Escaped value.
+			 */
 			public function esc_like( $value ) {
 				return addcslashes( (string) $value, '_%\\' );
 			}
 
-			/** {@inheritDoc} */
+			/**
+			 * Return an empty synthetic result set.
+			 *
+			 * @param mixed $prepared Prepared fixture query.
+			 * @param mixed $output Requested format.
+			 * @return array No provider rows.
+			 */
 			public function get_results( $prepared, $output = ARRAY_A ) {
 				unset( $prepared, $output );
 
 				return array();
 			}
 
-			/** {@inheritDoc} */
+			/**
+			 * Return an empty synthetic count.
+			 *
+			 * @param mixed $prepared Prepared fixture query.
+			 * @return int No matching products.
+			 */
 			public function get_var( $prepared ) {
 				unset( $prepared );
 
 				return 0;
 			}
 
-			/** {@inheritDoc} */
+			/**
+			 * Capture product selection without a database.
+			 *
+			 * @param mixed $prepared Prepared fixture query.
+			 * @return array No selected products.
+			 */
 			public function get_col( $prepared ) {
 				$this->select_values = is_array( $prepared ) ? $prepared['args'] : array();
 
