@@ -63,7 +63,7 @@ async function checkIconAndLabel(button, direction) {
     assert.equal(layout.iconOnRight, direction === 'rtl');
 }
 
-async function render(page, direction, labels, native, search = '') {
+async function render(page, direction, labels, native, search = '', accountHints = {}) {
     await page.route('https://digitalogic.test/login/**', route => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: `<!doctype html><html lang="${direction === 'rtl' ? 'fa' : 'en'}" dir="${direction}">
@@ -106,15 +106,16 @@ async function render(page, direction, labels, native, search = '') {
             </form><div class="dg-call-unified" data-call-unified data-call-available="true"><div data-call-instructions hidden><a data-call-dial href="tel:+982112345678">Call</a></div></div></div></div></body></html>`
     }));
     await page.goto('https://digitalogic.test/login/' + search);
-    await page.evaluate(labels => {
+    await page.evaluate(({ labels, accountHints }) => {
         window.DigitalogicBranding = {
             labels,
             otpCursor: 'bar',
             ajaxUrl: '/email-domain',
             emailDomainNonce: 'fixture',
-            rememberedAccounts: [{ login: 'known-user', avatar: '/known-avatar.svg' }]
+            rememberedAccounts: [{ login: 'known-user', avatar: '/known-avatar.svg' }],
+            ...accountHints
         };
-    }, labels);
+    }, { labels, accountHints });
     await page.route('https://digitalogic.test/known-avatar.svg', route => route.fulfill({
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="blue" d="M0 0h32v32H0z"/></svg>'
@@ -132,6 +133,43 @@ async function render(page, direction, labels, native, search = '') {
             });
         });
     }
+}
+
+async function checkAccountPicker(page, direction, labels) {
+    const account = { login: 'known-user', name: 'Known Account', avatar: '/known-avatar.svg', assigned: true };
+    await render(page, direction, labels, false, '', {
+        rememberedAccount: account, forgetAccountNonce: 'fixture', ajaxUrl: '/wp-admin/admin-ajax.php'
+    });
+    await page.route('**/wp-admin/admin-ajax.php', route => {
+        const data = new URLSearchParams(route.request().postData());
+        assert.equal(data.get('action'), 'digitalogic_forget_account_hint');
+        assert.equal(data.get('login'), account.login);
+        assert.equal(data.get('nonce'), 'fixture');
+        return route.fulfill({ json: { success: true } });
+    });
+
+    const input = page.locator('.dg-login-identity-field:visible input[name="digits_phone"]');
+    const field = page.locator('.dg-login-identity-field--picker:visible');
+    const menu = page.getByRole('dialog');
+    assert.equal(await field.count(), 1);
+    assert.equal(await input.inputValue(), account.login);
+    assert.equal(await field.locator('.dg-account-field-title').textContent(), account.name);
+    assert.equal(await input.getAttribute('role'), 'combobox');
+
+    await input.press('ArrowDown');
+    assert.equal(await menu.isVisible(), true);
+    assert.equal(await input.getAttribute('aria-expanded'), 'true');
+    assert.equal(await menu.locator('.dg-account-menu-choice').count(), 1, 'Do not duplicate a saved workstation identity');
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.isVisible(), false);
+    assert.ok(await input.evaluate(node => document.activeElement === node));
+
+    await field.locator('.dg-account-field-toggle').click();
+    await menu.locator('.dg-account-menu-remove').click();
+    await field.waitFor({ state: 'detached' });
+    assert.equal(await input.inputValue(), '');
+    assert.equal(await input.getAttribute('role'), null);
+    assert.ok(await input.evaluate(node => document.activeElement === node));
 }
 
 async function checkEmailGate(page, labels) {
@@ -954,6 +992,9 @@ async function checkLoginSwitchers(browser) {
             await checkCountryPicker(smsAction);
             await checkSmsAction(smsAction, labels);
             await smsAction.close();
+            const accountPicker = await browser.newPage({ viewport: { width, height: 800 } });
+            await checkAccountPicker(accountPicker, direction, labels);
+            await accountPicker.close();
             const location = await browser.newPage({ viewport: { width, height: 800 } });
             await render(location, direction, labels, false);
             await checkStepLocation(location);

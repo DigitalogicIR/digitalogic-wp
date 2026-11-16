@@ -12,6 +12,7 @@
     var digitsOtpStorageKey = 'digitalogic-login-otp-v1';
     var digitsResendTimers = new WeakMap();
     var digitsEmailChecks = new WeakMap();
+    var loginAccountPickers = new WeakMap();
     var digitsSmsSelections = new WeakSet();
     var authRecovery = false;
     var authSocket = null;
@@ -3417,6 +3418,7 @@
             holder.classList.add('dg-auth-input-icon');
             putAuthIcon(holder, nextMode === 'email' ? 'email' : nextMode === 'phone' ? 'phone' : 'user');
         });
+        loginAccountPickers.get(form)?.(visibleMode === 'email' ? emailInput : phoneInput, nextMode);
 
         if (focusInput) {
             var nextInput = visibleMode === 'email' ? emailInput : phoneInput;
@@ -4013,6 +4015,7 @@
         countryCode?.addEventListener('input', updatePhoneChannels);
         countryCode?.addEventListener('change', updatePhoneChannels);
 
+        mountLoginIdentityPicker(phoneInput, emailInput);
         selectDigitsMode(classifyIdentity(phoneInput.value || emailInput.value), false);
         updatePhoneChannels();
         updateEmailFeedback?.(false);
@@ -4806,7 +4809,6 @@
         mountLoginAlternatives();
         decorateAuthControls();
         prepareDigitsTextFields();
-        mountRememberedAccount();
         normalizeDigitsLoginFallback();
         normalizeRecoveryIdentity();
         prepareDigitsRegistrationAutofill();
@@ -4819,6 +4821,9 @@
         sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
         ellipsis: 'M5 12h.01m6.99 0h.01m6.99 0h.01',
         user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+        userPlus: 'M15 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM19 8v6m-3-3h6',
+        chevronDown: 'M6 9l6 6 6-6',
+        trash: 'M4 6h16M9 6V3h6v3m3 0-1 15H7L6 6m4 4v7m4-7v7',
         home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
         email: 'M4 5h16v14H4z M4 6l8 6 8-6',
         eye: 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
@@ -4967,65 +4972,273 @@
         });
     }
 
-    function mountRememberedAccount() {
-        var assigned = config.rememberedAccount;
-        var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
-        var identity = document.querySelector('.dg-digits-login-shell input[name="digits_phone"]');
-        var tabs = identity?.closest('.digits-form_tab_container');
-        if ((!accounts.length && !assigned?.login) || !tabs || document.querySelector('.dg-account-hint')) { return; }
-        if (assigned?.login) {
-            accounts = [assigned].concat(accounts.filter(function (account) { return account.login !== assigned.login; }));
+    function mountLoginIdentityPicker(phone, email) {
+        var form = phone.form;
+        function fieldRow(input) {
+            return input.closest('.digits-form_input_row') || input.parentElement;
         }
-        var persian = isPersianLocale();
-        var hint = document.createElement('details');
-        hint.className = 'dg-account-hint';
-        var summary = document.createElement('summary');
-        var displayedAccount;
-        hint.appendChild(summary);
-        function showAccount(node, label, account) {
-            var identity = createAuthIdentity(label, 'user', account?.avatar);
-            identity.classList.add('dg-auth-identity--compact');
-            node.replaceChildren(identity);
-        }
-        function updateSummary(value) {
-            var selected = accounts.find(function (account) { return account.login === value; }) || null;
-            if (displayedAccount === selected) { return; }
-            displayedAccount = selected;
-            showAccount(summary, selected ? (selected.name || selected.login) : (persian ? 'انتخاب حساب' : 'Choose an account'), selected);
-        }
-        function selectAccount(value) {
-            selectDigitsMode('unknown', false);
-            identity.value = value;
-            identity.dispatchEvent(new Event('input', { bubbles: true }));
-            hint.open = false;
-            identity.closest('form').querySelector('.digits-tab_active input:is([name="digits_phone"], [name="digits_email"])')?.focus();
-        }
-        function addChoice(label, value, account) {
-            var choice = document.createElement('button');
-            choice.type = 'button';
-            showAccount(choice, label, account);
-            choice.addEventListener('click', function () { selectAccount(value); });
-            hint.appendChild(choice);
-        }
-        var heading = document.createElement('p');
-        heading.className = 'dg-account-hint-divider';
-        heading.textContent = persian ? 'حساب‌های خارج‌شده' : 'Signed out';
-        hint.appendChild(heading);
-        accounts.forEach(function (account) {
-            addChoice(account.name || account.login, account.login, account);
+        [phone, email].forEach(function (input) {
+            var row = fieldRow(input);
+            row.classList.add('dg-login-identity-field');
+            row.addEventListener('click', function (event) {
+                if (!event.target.closest('button, input, a, .dg-account-menu, .dg-country-code-control')) {
+                    input.focus({ preventScroll: true });
+                }
+            });
         });
-        addChoice(persian ? 'ورود با حساب دیگر' : 'Use another account', '');
-        tabs.before(hint);
-        tabs.addEventListener('input', function (event) {
-            if (event.target.matches('input[name="digits_phone"], input[name="digits_email"]')) {
-                updateSummary(event.target.value);
+        var assigned = config.rememberedAccount;
+        var saved = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts.filter(account => account?.login) : [];
+        if (!form || (!assigned?.login && !saved.length)) { return; }
+
+        var chooseLabel = authRequestLabel('Choose an account', 'انتخاب حساب');
+        var trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'dg-account-field-toggle';
+        trigger.setAttribute('aria-label', chooseLabel);
+        putAuthIcon(trigger, 'chevronDown');
+        var menu = document.createElement('div');
+        menu.id = 'dg-login-account-menu';
+        menu.className = 'dg-account-menu';
+        menu.dir = document.documentElement.dir || 'ltr';
+        menu.hidden = true;
+        menu.setAttribute('role', 'dialog');
+        menu.setAttribute('aria-label', chooseLabel);
+        var title = document.createElement('div');
+        title.id = 'dg-login-account-title';
+        title.className = 'dg-account-field-title';
+        var titleText = document.createElement('bdi');
+        title.appendChild(titleText);
+        var avatar = document.createElement('img');
+        avatar.alt = '';
+        avatar.className = 'dg-account-field-avatar';
+        avatar.hidden = true;
+        avatar.addEventListener('load', function () { avatar.hidden = false; });
+        avatar.addEventListener('error', function () { avatar.hidden = true; });
+        var error = document.createElement('p');
+        error.className = 'dg-account-menu-error';
+        error.setAttribute('role', 'alert');
+        var activeInput;
+        var currentMode;
+        var forgetting = false;
+
+        function matchingAccount(value) {
+            return [assigned].concat(saved).find(account => account?.login.toLowerCase() === value.toLowerCase());
+        }
+
+        function closeMenu(restoreFocus) {
+            menu.hidden = true;
+            trigger.setAttribute('aria-expanded', 'false');
+            activeInput?.setAttribute('aria-expanded', 'false');
+            if (restoreFocus) { activeInput?.focus({ preventScroll: true }); }
+        }
+
+        function positionMenu() {
+            if (menu.hidden) { return; }
+            var field = fieldRow(activeInput).getBoundingClientRect();
+            var viewport = window.visualViewport;
+            var top = viewport?.offsetTop || 0;
+            var below = top + (viewport?.height || window.innerHeight) - field.bottom - 16;
+            var above = field.top - top - 16;
+            var openAbove = below < menu.scrollHeight && above > below;
+            menu.classList.toggle('dg-account-menu--above', openAbove);
+            menu.style.maxHeight = Math.max(0, openAbove ? above : below) + 'px';
+        }
+
+        function setValue(value) {
+            closeMenu(false);
+            var input = activeInput || phone;
+            if (!activeInput && !value) { return; }
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            (email.disabled ? phone : email).focus({ preventScroll: true });
+        }
+
+        function addGroup(label, accounts) {
+            if (!accounts.length) { return; }
+            var group = document.createElement('div');
+            group.className = 'dg-account-menu-group';
+            group.setAttribute('role', 'group');
+            group.setAttribute('aria-label', label);
+            var heading = document.createElement('p');
+            heading.className = 'dg-account-menu-label';
+            heading.textContent = label;
+            group.appendChild(heading);
+            accounts.forEach(function (account) {
+                var row = document.createElement('div');
+                row.className = 'dg-account-menu-row';
+                var choice = document.createElement('button');
+                choice.type = 'button';
+                choice.className = 'dg-account-menu-choice';
+                var kind = classifyIdentity(account.login);
+                var icon = account.assigned ? 'device' : kind === 'email' ? 'email' : kind === 'phone' ? 'phone' : 'user';
+                var badge = createAuthIdentity(account.name || account.login, icon, account.avatar);
+                var text = document.createElement('span');
+                text.className = 'dg-account-menu-text';
+                text.appendChild(badge.querySelector('.dg-auth-identity-value'));
+                if (account.name && account.name !== account.login) {
+                    var login = document.createElement('bdi');
+                    login.textContent = account.login;
+                    text.appendChild(login);
+                }
+                choice.append(badge.querySelector('.dg-auth-identity-mark'), text);
+                if (matchingAccount(activeInput.value)?.login === account.login) {
+                    choice.setAttribute('aria-current', 'true');
+                }
+                choice.addEventListener('click', function () { setValue(account.login); });
+                row.appendChild(choice);
+                if (config.forgetAccountNonce) {
+                    var remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'dg-account-menu-remove';
+                    remove.title = authRequestLabel('Remove ' + (account.name || account.login), 'حذف ' + (account.name || account.login));
+                    remove.setAttribute('aria-label', remove.title);
+                    putAuthIcon(remove, 'trash');
+                    remove.addEventListener('click', function () { forgetAccount(account, remove); });
+                    row.appendChild(remove);
+                }
+                group.appendChild(row);
+            });
+            menu.appendChild(group);
+        }
+
+        function renderMenu() {
+            menu.replaceChildren();
+            addGroup(authRequestLabel('This workstation', 'این دستگاه'), assigned?.login ? [assigned] : []);
+            addGroup(authRequestLabel('Signed out', 'حساب‌های خارج‌شده'), saved.filter(account => account.login !== assigned?.login));
+            var another = document.createElement('button');
+            another.type = 'button';
+            another.className = 'dg-account-menu-another';
+            another.textContent = authRequestLabel('Use another account', 'ورود با حساب دیگر');
+            putAuthIcon(another, 'userPlus');
+            another.addEventListener('click', function () { setValue(''); });
+            menu.append(another, error);
+        }
+
+        function openMenu(last) {
+            error.textContent = '';
+            renderMenu();
+            menu.hidden = false;
+            trigger.setAttribute('aria-expanded', 'true');
+            activeInput.setAttribute('aria-expanded', 'true');
+            positionMenu();
+            var choices = menu.querySelectorAll('.dg-account-menu-choice, .dg-account-menu-another');
+            var current = menu.querySelector('[aria-current="true"]');
+            (last ? choices[choices.length - 1] : (current || choices[0]))?.focus({ preventScroll: true });
+        }
+
+        async function forgetAccount(account, remove) {
+            if (forgetting) { return; }
+            forgetting = true;
+            remove.disabled = true;
+            error.textContent = '';
+            try {
+                var response = await fetch(config.ajaxUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: new URLSearchParams({ action: 'digitalogic_forget_account_hint', nonce: config.forgetAccountNonce, login: account.login })
+                });
+                if (!response.ok || !(await response.json()).success) { throw new Error('Could not remove account hint'); }
+                var clear = matchingAccount(activeInput?.value || '')?.login === account.login;
+                var wasOpen = !menu.hidden;
+                if (assigned?.login === account.login) { config.rememberedAccount = assigned = null; }
+                config.rememberedAccounts = saved = saved.filter(item => item.login !== account.login);
+                if (clear) {
+                    setValue('');
+                } else {
+                    updateField(activeInput || (email.disabled ? phone : email), currentMode);
+                }
+                if (wasOpen && !clear && activeInput) { openMenu(false); }
+            } catch (_error) {
+                remove.disabled = false;
+                error.textContent = authRequestLabel('Could not remove this account from this browser. Try again.', 'حذف حساب از این مرورگر انجام نشد. دوباره امتحان کنید.');
+                positionMenu();
+            } finally {
+                forgetting = false;
+            }
+        }
+
+        function updateField(input, mode) {
+            var available = (assigned?.login || saved.length) && !form.dataset.dgSmsIdentity && !form.closest('[data-dg-recovery]');
+            var previous = activeInput;
+            if (previous && (!available || previous !== input)) {
+                closeMenu(false);
+                ['role', 'aria-haspopup', 'aria-controls', 'aria-expanded'].forEach(function (attribute) { previous.removeAttribute(attribute); });
+                var descriptions = (previous.getAttribute('aria-describedby') || '').split(' ').filter(id => id && id !== title.id);
+                if (descriptions.length) { previous.setAttribute('aria-describedby', descriptions.join(' ')); }
+                else { previous.removeAttribute('aria-describedby'); }
+                fieldRow(previous).classList.remove('dg-login-identity-field--picker');
+                trigger.remove();
+                title.remove();
+                avatar.remove();
+                menu.remove();
+                activeInput = null;
+            }
+            currentMode = mode;
+            if (!available) { return; }
+            if (activeInput !== input) {
+                activeInput = input;
+                var field = fieldRow(input);
+                field.classList.add('dg-login-identity-field--picker');
+                input.before(title, avatar);
+                field.append(trigger, menu);
+                [input, trigger].forEach(function (control) {
+                    control.setAttribute('aria-haspopup', 'dialog');
+                    control.setAttribute('aria-controls', menu.id);
+                    control.setAttribute('aria-expanded', 'false');
+                });
+                input.setAttribute('role', 'combobox');
+                input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), title.id].filter(Boolean).join(' '));
+            }
+            var account = matchingAccount(input.value);
+            var caption = mode === 'email' ? authRequestLabel('Email', 'ایمیل')
+                : mode === 'phone' ? authRequestLabel('Phone number', 'شماره تلفن')
+                    : authRequestLabel('Username', 'نام کاربری');
+            titleText.textContent = account?.name || (input.value ? caption : chooseLabel);
+            var holder = input.closest('.dg-auth-input-icon');
+            if (holder && account?.assigned && mode === 'username') { putAuthIcon(holder, 'device'); }
+            var photo = (mode !== 'phone' && account?.avatar) || null;
+            if (photo !== avatar.getAttribute('src')) {
+                avatar.hidden = true;
+                if (photo) { avatar.src = photo; }
+                else { avatar.removeAttribute('src'); }
+            }
+        }
+
+        trigger.addEventListener('click', function () { menu.hidden ? openMenu(false) : closeMenu(true); });
+        [phone, email, trigger].forEach(function (control) {
+            control.addEventListener('keydown', function (event) {
+                if (activeInput && ['ArrowDown', 'ArrowUp'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                    event.preventDefault();
+                    openMenu(event.key === 'ArrowUp');
+                }
+            });
+        });
+        menu.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                closeMenu(true);
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                var choices = Array.from(menu.querySelectorAll('.dg-account-menu-choice, .dg-account-menu-another'));
+                var current = choices.findIndex(button => button === event.target || button.parentElement.contains(event.target));
+                var next = choices[(current + (event.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length];
+                next?.focus({ preventScroll: true });
+                next?.scrollIntoView({ block: 'nearest' });
             }
         });
-        if (assigned?.login && !identity.value) {
-            identity.value = assigned.login;
-            identity.dispatchEvent(new Event('input', { bubbles: true }));
-        } else {
-            updateSummary(identity.value);
+        document.addEventListener('pointerdown', function (event) {
+            if (activeInput && !fieldRow(activeInput).contains(event.target)) { closeMenu(false); }
+        });
+        menu.addEventListener('focusout', function (event) {
+            if (event.relatedTarget && !menu.contains(event.relatedTarget) && event.relatedTarget !== trigger) { closeMenu(false); }
+        });
+        window.addEventListener('resize', positionMenu);
+        window.visualViewport?.addEventListener('resize', positionMenu);
+        loginAccountPickers.set(form, updateField);
+        if (assigned?.login && !phone.value && !email.value && !authRecovery) {
+            phone.value = assigned.login;
+            phone.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
 
