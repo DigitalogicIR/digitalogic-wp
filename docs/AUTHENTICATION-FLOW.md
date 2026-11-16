@@ -58,6 +58,8 @@ flowchart TD
 - **Session and passkeys.** The branded password, code, and call sign-in steps offer **Remember me** on the final step. Successful sign-in does not force passkey enrollment. Users can manage passkeys in account settings when the provider supports it.
 - **Related surfaces.** The Woodmart sidebar keeps its own Digits layout. It shares the site's authentication providers, while the diagrams describe the canonical branded page. WooCommerce REST credentials and other machine integrations are separate from customer sign-in.
 
+The desktop and tablet carousel reads the same public slide catalog from the authentication WebSocket and `/wp-json/digitalogic/v1/login-slides`. Set the WordPress option `digitalogic_login_story_cards` to a map of locale keys (`fa_IR` and `en_US`) to ordered slide arrays, or use the filter of the same name. Omitted locales retain their defaults. A slide accepts `image`, theme overrides `image_light` and `image_dark`, `alt`, and optional `title`, `tab`, `description`, `notes`, `link`, and `action`. Use same-site asset and link URLs. A single slide is static. An empty list leaves the compact brand artwork in place. The feed is public and should contain only publishable content.
+
 ## 2. Call verification
 
 ```mermaid

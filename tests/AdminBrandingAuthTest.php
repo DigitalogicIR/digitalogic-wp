@@ -19,6 +19,13 @@ if (!function_exists('admin_url')) {
     }
 }
 
+if (!function_exists('wp_validate_redirect')) {
+    function wp_validate_redirect($target, $fallback = '') {
+        $host = parse_url($target, PHP_URL_HOST);
+        return $host === null || $host === 'digitalogic.test' ? $target : $fallback;
+    }
+}
+
 if (!function_exists('wp_create_nonce')) {
     function wp_create_nonce($action = -1) {
         return 'test-nonce';
@@ -108,6 +115,24 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertTrue($config['showLoginThemeSwitcher']);
     }
 
+    public function test_login_reuses_only_an_existing_session_on_ordinary_entry(): void {
+        $method = new ReflectionMethod(Digitalogic_Plugin_Auth_Routes::class, 'existing_session_destination');
+
+        $this->assertSame('', $method->invoke(null, '/checkout/', []));
+        $GLOBALS['digitalogic_test_current_user_id'] = 17;
+        try {
+            $this->assertSame('/checkout/', $method->invoke(null, '/checkout/', []));
+            $this->assertSame(home_url('/'), $method->invoke(null, '', []));
+            $this->assertSame(home_url('/'), $method->invoke(null, '/login/?wp_lang=fa_IR', []));
+            $this->assertSame(home_url('/'), $method->invoke(null, 'https://other.example/checkout/', []));
+            foreach (['loggedout', 'reauth', 'interim-login', 'recover'] as $flag) {
+                $this->assertSame('', $method->invoke(null, '/checkout/', [$flag => '1']));
+            }
+        } finally {
+            $GLOBALS['digitalogic_test_current_user_id'] = 0;
+        }
+    }
+
     public function test_login_stories_use_the_same_localized_cards_on_each_transport(): void {
         $request = new WP_REST_Request(['locale' => 'fa_IR']);
         $rest = Digitalogic_Plugin_Admin_Branding::login_slides($request);
@@ -115,7 +140,18 @@ final class AdminBrandingAuthTest extends TestCase {
         $socket = $commands['digitalogic_auth_presentation'];
         $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
         $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
+        $this->assertStringEndsWith('/components-aluminum-light.webp', $rest[0]['image_light']);
         $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
+
+        $custom = [['image' => '/custom.webp', 'alt' => 'معرفی']];
+        $GLOBALS['digitalogic_test_options']['digitalogic_login_story_cards'] = ['fa_IR' => $custom];
+        try {
+            $this->assertSame($custom, Digitalogic_Plugin_Admin_Branding::login_slides($request));
+            $this->assertSame($custom, $socket(['locale' => 'fa_IR'])['slides']);
+            $this->assertSame(['components', 'pcb', 'sourcing'], array_column($socket(['locale' => 'en_US'])['slides'], 'id'));
+        } finally {
+            unset($GLOBALS['digitalogic_test_options']['digitalogic_login_story_cards']);
+        }
     }
 
     public function test_recovery_identity_labels_match_the_wordpress_backend(): void {

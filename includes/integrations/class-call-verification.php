@@ -1752,6 +1752,20 @@ final class Digitalogic_Call_Verification {
 		$this->render_branded_login_widget();
 	}
 
+	/**
+	 * Render a read-only summary of the caller on both instruction steps.
+	 *
+	 * @param bool $persian Whether to render the Persian label.
+	 */
+	private static function render_branded_caller_summary( bool $persian ): void {
+		?>
+		<div class="dg-call-caller dg-auth-field" data-call-caller hidden>
+			<span><?php echo esc_html( $persian ? 'شمارهٔ شما' : 'Your phone number' ); ?></span>
+			<bdi dir="ltr" data-call-caller-number></bdi>
+		</div>
+		<?php
+	}
+
 	/** Render call instructions for the shared verification stage. */
 	private function render_branded_login_widget(): void {
 		$persian = str_starts_with( strtolower( determine_locale() ), 'fa' );
@@ -1767,33 +1781,41 @@ final class Digitalogic_Call_Verification {
 			<p class="digitalogic-call-error" data-call-error role="alert" hidden></p>
 			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>
 				<div class="digitalogic-call-instructions" data-call-preview hidden>
-				<h2 class="digits-form_heading" id="digitalogic-call-preview-title" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
-				<ol class="dg-call-steps">
+					<h2 class="digits-form_heading" id="digitalogic-call-preview-title" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
+					<?php self::render_branded_caller_summary( $persian ); ?>
+					<ol class="dg-call-steps">
 						<li>
-							<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
-							<a class="dg-call-number" data-call-preview-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><?php echo esc_html( $dial['display'] ); ?></a>
-							<p data-call-public-note><?php echo esc_html( $persian ? 'از همان شماره‌ای که وارد کردید تماس بگیرید.' : 'Call from the same number you entered.' ); ?></p>
-							<p data-call-lan-note hidden><?php echo esc_html( $persian ? 'با تلفن یا نرم‌افزار تماس شرکت، از داخلی تخصیص‌یافته به حساب خود تماس بگیرید.' : 'Use your assigned extension on the company phone or softphone.' ); ?></p>
+							<div class="dg-call-line">
+								<div class="dg-call-copy">
+									<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
+									<p data-call-public-note><?php echo esc_html( $persian ? 'برای تماس، از همان شماره‌ای استفاده کنید که وارد کردید.' : 'Call from the same number you entered.' ); ?></p>
+									<p data-call-lan-note hidden><?php echo esc_html( $persian ? 'از تلفن یا نرم‌افزار تماس شرکت و داخلی خودتان استفاده کنید.' : 'Use your assigned extension on the company phone or softphone.' ); ?></p>
+								</div>
+								<a class="dg-call-number" data-call-preview-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><span data-call-dial-number><?php echo esc_html( $dial['display'] ); ?></span></a>
+							</div>
 						</li>
 						<li>
 							<strong><?php echo esc_html( $persian ? 'کد تأیید را با صفحه‌کلید تلفن وارد کنید' : 'Enter the verification code on your phone keypad' ); ?></strong>
 							<p><?php echo esc_html( $persian ? 'پس از شنیدن «کاربر گرامی»، کد شش‌رقمی مرحلهٔ بعد را وارد کنید.' : 'After you hear «کاربر گرامی», enter the six-digit code from the next step.' ); ?></p>
 						</li>
 					</ol>
-				<button type="button" class="dg-auth-primary dg-call-next" data-call-confirm><span><?php echo esc_html( $persian ? 'ادامه و دریافت کد' : 'Continue and get code' ); ?></span></button>
-				<?php if ( self::outbound_queue_directory() ) : ?>
-					<button type="button" class="dg-auth-back" data-call-outbound hidden><?php echo esc_html( $persian ? 'با من تماس بگیرید' : 'Call my phone' ); ?></button>
-				<?php endif; ?>
-				<button type="button" class="dg-auth-back" data-call-preview-back><?php echo esc_html( $persian ? 'بازگشت' : 'Back' ); ?></button>
-			</div>
-			<div class="digitalogic-call-instructions" data-call-instructions hidden>
+					<button type="button" class="dg-auth-primary dg-call-next" data-call-confirm><span><?php echo esc_html( $persian ? 'ادامه و دریافت کد' : 'Continue and get code' ); ?></span></button>
+					<?php if ( self::outbound_queue_directory() ) : ?>
+						<button type="button" class="dg-auth-back" data-call-outbound hidden><?php echo esc_html( $persian ? 'با من تماس بگیرید' : 'Call my phone' ); ?></button>
+					<?php endif; ?>
+					<button type="button" class="dg-auth-back" data-call-preview-back><?php echo esc_html( $persian ? 'بازگشت' : 'Back' ); ?></button>
+				</div>
+				<div class="digitalogic-call-instructions" data-call-instructions hidden>
 					<h2 class="digits-form_heading" id="digitalogic-call-code-title" tabindex="-1" data-call-code-title><?php echo esc_html( $persian ? 'کد تأیید' : 'Verification code' ); ?></h2>
-					<p class="dg-call-code-prompt" data-call-code-prompt>
-					<?php echo esc_html( $persian ? 'تماس با' : 'Call' ); ?>
-					<a class="dg-call-number" data-call-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><?php echo esc_html( $dial['display'] ); ?></a>
-					<?php echo esc_html( $persian ? 'و ورود این شش رقم پس از شنیدن «کاربر گرامی».' : 'and enter these six digits after the greeting.' ); ?>
-				</p>
-				<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
+					<?php self::render_branded_caller_summary( $persian ); ?>
+					<div class="dg-call-line dg-call-code-prompt" data-call-code-prompt>
+						<div class="dg-call-copy">
+							<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
+							<p><?php echo esc_html( $persian ? 'وقتی پیام «کاربر گرامی» را شنیدید، کد زیر را با صفحه‌کلید تلفن وارد کنید.' : 'When you hear the greeting, enter the code below on your phone keypad.' ); ?></p>
+						</div>
+						<a class="dg-call-number" data-call-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><span data-call-dial-number><?php echo esc_html( $dial['display'] ); ?></span></a>
+					</div>
+					<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
 					<div class="dg-call-wait" data-call-remember-anchor><p data-call-status role="status"><?php echo esc_html( $persian ? 'در انتظار تماس شما…' : 'Waiting for your call…' ); ?></p><span data-call-countdown role="timer" dir="ltr"></span></div>
 					<button type="button" class="dg-auth-back" data-call-cancel><span><?php echo esc_html( $persian ? 'ویرایش شماره تلفن' : 'Edit phone number' ); ?></span></button>
 					<output data-call-code dir="ltr"></output>

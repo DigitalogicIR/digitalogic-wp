@@ -636,39 +636,96 @@ async function checkOtpEditor(page, channel) {
 async function checkLoginStories(browser) {
     const page = await browser.newPage({ viewport: { width: 390, height: 850 }, reducedMotion: 'reduce' });
     let requests = 0;
+    let single = false;
+    let titles = ['قطعات', 'ساخت برد', 'تأمین'];
     await page.route('https://digitalogic.test/login/', route => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: '<html lang="fa-IR" dir="rtl"><body class="login login-action-login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body></html>'
     }));
     await page.route('https://digitalogic.test/stories?locale=fa_IR', route => {
         requests++;
-        return route.fulfill({ json: ['قطعات', 'ساخت برد', 'تأمین'].map((title, index) => ({
-            image: '/story.webp', tab: title, title, description: 'متن از سرور',
+        return route.fulfill({ json: single ? [{ image: '/story.webp', alt: 'تصویر معرفی' }] : titles.map((title, index) => ({
+            image: '/story.webp', image_light: '/light.webp', tab: title, title, description: 'متن از سرور',
             notes: ['نمونه'], action: 'مشاهده', link: '/product/' + index
         })) });
     });
-    await page.route('https://digitalogic.test/story.webp', route => route.fulfill({
+    await page.route(/https:\/\/digitalogic\.test\/(story|light)\.webp$/, route => route.fulfill({
         contentType: 'image/gif',
         body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
     }));
-    await page.addInitScript(() => { window.DigitalogicBranding = { loginSlidesUrl: '/stories' }; });
-    await page.goto('https://digitalogic.test/login/');
-    await page.addStyleTag({ path: styles });
-    await page.addScriptTag({ path: branding });
-    await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+    await page.addInitScript(() => {
+        window.DigitalogicBranding = { loginSlidesUrl: '/stories', showLoginThemeSwitcher: true };
+    });
+    async function open() {
+        await page.goto('https://digitalogic.test/login/');
+        await page.addStyleTag({ path: styles });
+        await page.addScriptTag({ path: branding });
+        await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+    }
+    await open();
     assert.equal(requests, 0, 'The phone layout does not fetch the presentation');
     await page.setViewportSize({ width: 768, height: 1024 });
     const panel = page.locator('.dg-login-stories');
     await panel.waitFor();
     assert.equal(requests, 1);
+    async function assertSingleRow(visibleLabels) {
+        const controls = panel.locator('.dg-story-controls');
+        const layout = await controls.evaluate(el => {
+            const bounds = el.getBoundingClientRect();
+            return [...el.querySelectorAll('button:not([hidden])')].map(button => {
+                const rect = button.getBoundingClientRect();
+                return {
+                    centeredAt: (rect.top + rect.bottom) / 2,
+                    inside: rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+                };
+            });
+        });
+        assert.ok(layout.length > 1 && layout.every(button => button.inside && Math.abs(button.centeredAt - layout[0].centeredAt) < 1));
+        assert.equal(await controls.locator('.dg-story-label:visible').count(), visibleLabels);
+    }
+    await assertSingleRow(0);
+    await page.setViewportSize({ width: 1280, height: 1024 });
+    await assertSingleRow(3);
+    await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
+    assert.equal(await page.locator('#login > .dg-login-preferences').count(), 1);
+    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/light.webp');
+    const theme = page.locator('.dg-login-preferences .dg-theme-toggle-button');
+    await theme.click();
+    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/story.webp');
     assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
-    await panel.getByRole('button', { name: 'قطعات' }).press('ArrowLeft');
+    await panel.locator('.dg-story-dot').first().press('ArrowLeft');
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
     assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
-    assert.equal(await panel.locator('article[inert]').count(), 2);
+    assert.equal(await panel.locator('article[inert]:not([data-dg-clone])').count(), 2);
+    assert.equal(await panel.locator('.dg-story-dot').count(), 3);
+    await panel.locator('.dg-story-dot').first().click();
+    assert.equal(await panel.locator('.dg-story-dot[aria-pressed="true"]').count(), 1);
+    await panel.getByRole('button', { name: 'اسلاید قبلی' }).click();
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'تأمین');
+    const bounds = await panel.locator('.dg-story-stage').boundingBox();
+    await page.mouse.move(bounds.x + 40, bounds.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + 175, bounds.y + 60, { steps: 6 });
+    assert.ok((await panel.locator('.dg-story-track').getAttribute('style')).includes('--dg-story-drag'));
+    await page.mouse.up();
+    assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
     await page.setViewportSize({ width: 390, height: 850 });
     await panel.waitFor({ state: 'hidden' });
+    titles = Array.from({ length: 8 }, (_, index) => 'عنوان کامل محصول ' + (index + 1));
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.setViewportSize({ width: 720, height: 1024 });
+    await open();
+    await panel.waitFor();
+    await assertSingleRow(0);
+    assert.equal(await panel.locator('.dg-story-dot:visible').count(), 8);
+    assert.equal(await panel.locator('.dg-story-rotation').isVisible(), true);
+    single = true;
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await open();
+    await panel.waitFor();
+    assert.equal(await panel.locator('article img[alt="تصویر معرفی"]').count(), 1);
+    assert.equal(await panel.locator('.dg-story-controls, .dg-story-stage[data-draggable]').count(), 0);
     await page.close();
 }
 

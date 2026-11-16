@@ -366,9 +366,9 @@ final class Digitalogic_Plugin_Auth_Routes {
 		return $send;
 	}
 
-	/** A signed, browser-local account hint; it cannot create a WordPress session. */
+	/** Return the workstation's preselected identity for a signed-out visitor. */
 	public static function remembered_account(): array {
-		if ( 'login' !== ( $GLOBALS['action'] ?? '' ) ) {
+		if ( 'login' !== ( $GLOBALS['action'] ?? '' ) || is_user_logged_in() ) {
 			return array();
 		}
 		$assigned = self::lan_assigned_user();
@@ -471,7 +471,7 @@ final class Digitalogic_Plugin_Auth_Routes {
         }
 
         $args = [];
-        foreach (['action', 'redirect_to', 'reauth', 'wp_lang', 'login'] as $key) {
+        foreach ( array( 'action', 'redirect_to', 'reauth', 'wp_lang', 'login', 'loggedout', 'interim-login', 'recover' ) as $key ) {
             if (isset($_GET[$key]) && $_GET[$key] !== '') {
                 $args[$key] = sanitize_text_field(wp_unslash($_GET[$key]));
             }
@@ -494,10 +494,21 @@ final class Digitalogic_Plugin_Auth_Routes {
             return;
         }
 
-        $redirect_to = isset($_REQUEST['redirect_to']) ? esc_url_raw(wp_unslash($_REQUEST['redirect_to'])) : '';
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- Read-only sign-in entry and notice.
+		$redirect_to = isset( $_REQUEST['redirect_to'] ) && is_string( $_REQUEST['redirect_to'] )
+			? esc_url_raw( wp_unslash( $_REQUEST['redirect_to'] ) )
+			: '';
 
 		nocache_headers();
-		login_header( __( 'Log In' ), '', null );
+		$session_destination = self::existing_session_destination( $redirect_to, $_GET );
+		if ( '' !== $session_destination && wp_safe_redirect( $session_destination ) ) {
+			exit;
+		}
+
+		$logged_out = 'true' === sanitize_key( wp_unslash( $_GET['loggedout'] ?? '' ) ) && ! is_user_logged_in();
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		$messages   = $logged_out ? new WP_Error( 'loggedout', __( 'You are now logged out.' ), 'message' ) : null;
+		login_header( __( 'Log In' ), '', $messages );
 
         if (isset($_GET['login']) && sanitize_key(wp_unslash($_GET['login'])) === 'failed') {
             echo '<div id="login_error" class="notice notice-error"><p>';
@@ -513,6 +524,32 @@ final class Digitalogic_Plugin_Auth_Routes {
         self::render_login_footer();
         exit;
     }
+
+	/**
+	 * Resume a verified WordPress session on an ordinary sign-in GET.
+	 *
+	 * @param string $redirect_to Requested return URL.
+	 * @param array  $query       Query parameters used to recognize explicit sign-in flows.
+	 * @return string Validated destination, or an empty string to show sign-in.
+	 */
+	private static function existing_session_destination( string $redirect_to, array $query ): string {
+		if ( ! is_user_logged_in() ) {
+			return '';
+		}
+		foreach ( array( 'reauth', 'interim-login', 'recover', 'loggedout' ) as $explicit_flow ) {
+			if ( isset( $query[ $explicit_flow ] ) ) {
+				return '';
+			}
+		}
+
+		$fallback    = current_user_can( 'edit_posts' ) ? admin_url() : home_url( '/' );
+		$destination = '' === $redirect_to ? $fallback : wp_validate_redirect( $redirect_to, $fallback );
+		$path        = untrailingslashit( (string) wp_parse_url( $destination, PHP_URL_PATH ) );
+
+		return untrailingslashit( self::CANONICAL_LOGIN_PATH ) === $path || 'wp-login.php' === basename( $path )
+			? $fallback
+			: $destination;
+	}
 
     public static function redirect_failed_login(string $username): void {
         if (wp_doing_ajax()) {
