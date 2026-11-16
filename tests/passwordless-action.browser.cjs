@@ -1264,9 +1264,15 @@ async function checkLoginSwitchers(browser) {
                     await checkIdentityPrompt(page, labels.phonePlaceholder);
                     await identity.fill('');
                     await checkIdentityPrompt(page, labels.identityPlaceholder);
+                    const shell = page.locator('.dg-digits-login-shell');
+                    const cardHeight = (await shell.boundingBox()).height;
                     await page.locator('.dg-passkey-options summary').click();
                     await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction, 10);
-                    await page.locator('input[name="digits_phone"]').fill('fixture-user');
+                    assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Opening other methods must not resize the card');
+                    await identity.fill('09120000000');
+                    await page.locator('.dg-phone-channels').getByRole('radio').last().waitFor();
+                    assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Showing verification choices must not resize the card');
+                    await identity.fill('fixture-user');
                     await page.getByRole('button', { name: labels.continue, exact: true }).click();
                     assert.equal(await remember.count(), 0);
                     await checkAlternatives(page, false);

@@ -4095,7 +4095,7 @@
                 ? getLabel('phoneSms', 'Text message') : getLabel('phoneCall', 'Phone call')));
             channels.appendChild(label);
         });
-        phoneInput.closest('.digits-mobile_wrapper')?.after(channels);
+        phoneInput.closest('.digits-form_tab_wrapper')?.append(channels);
         function updatePhoneChannels() {
             var number = phonePartsFromValue(phoneInput.value, countryCode?.value);
             channels.hidden = shell.dataset.dgIdentity !== 'phone' || !canChoosePhoneChannel(number, shell);
