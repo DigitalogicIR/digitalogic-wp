@@ -139,7 +139,7 @@ async function checkEmailGate(page, labels) {
     const email = page.locator('input[name="digits_email"]');
     const form = page.locator('form.digloginpage');
     const primary = form.locator('.digits-form_login > .digits-form_submit-btn');
-    const status = form.locator('.dg-email-domain-status');
+    const status = form.locator('#dg-email-domain-status');
     const colors = new Set();
     let releaseSlow;
     let serviceCalls = 0;
@@ -158,22 +158,25 @@ async function checkEmailGate(page, labels) {
     });
     async function expectState(state, enabled) {
         await status.and(page.locator(`[data-state="${state}"]`)).waitFor();
-        assert.equal(await primary.isEnabled(), enabled, state);
+        assert.equal(await primary.evaluate(el => el.dataset.dgIdentityBlocked !== 'true'), enabled, state);
         colors.add(await status.evaluate(element => getComputedStyle(element).color));
     }
-    assert.equal(await primary.isDisabled(), true);
+    await primary.click();
+    await form.locator('.dg-auth-message[data-tone="error"] svg').waitFor();
+    assert.equal(await phone.getAttribute('aria-invalid'), 'true');
     await phone.pressSequentially('09');
     assert.equal(await phone.inputValue(), '9', 'The separate +98 prefix replaces the domestic zero as soon as it is unambiguous');
     await phone.pressSequentially('12');
     assert.equal(await phone.inputValue(), '912');
     assert.equal(await phone.evaluate(input => input.selectionStart), 3);
-    assert.equal(await primary.isDisabled(), true);
+    assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
     await phone.pressSequentially('0000000');
     assert.equal(await primary.isEnabled(), true);
     assert.equal(await primary.innerText(), labels.sendSmsCode);
     await phone.fill('۰۲۱');
     assert.equal(await phone.inputValue(), '21', 'Iranian landlines also lose the domestic zero while incomplete');
-    assert.equal(await primary.isDisabled(), true);
+    await primary.click();
+    await form.locator('.dg-auth-message[data-tone="error"] svg').waitFor();
     await phone.fill('');
     await phone.pressSequentially('0044');
     assert.equal(await phone.inputValue(), '0044', 'Keep 00 available for an international number');
@@ -211,10 +214,11 @@ async function checkEmailGate(page, labels) {
     await page.locator('[data-call-unified]').evaluate(widget => { widget.dataset.callAvailable = 'false'; });
     await phone.fill('');
     await phone.fill('+982112345678');
-    assert.equal(await primary.isDisabled(), true, 'A fixed line cannot submit when the call panel is unavailable');
+    assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true', 'A fixed line cannot submit when the call panel is unavailable');
     await page.locator('[data-call-unified]').evaluate(widget => { widget.dataset.callAvailable = 'true'; });
     await phone.fill('preview@');
-    assert.equal(await primary.isDisabled(), true);
+    await primary.click();
+    await status.locator('svg').waitFor();
     await email.blur();
     await expectState('format', false);
     await email.fill('preview@slow.example');
@@ -222,7 +226,8 @@ async function checkEmailGate(page, labels) {
     const slowRequest = page.waitForRequest(request => request.postData()?.includes('slow.example'));
     await email.blur();
     await slowRequest;
-    await form.evaluate(element => element.requestSubmit());
+    await primary.click();
+    assert.equal(await status.getAttribute('data-tone'), 'warning');
     assert.equal(await form.locator('.dg-username-password-step').count(), 0);
     await email.fill('preview@invalid.example');
     await expectState('invalid', false);
@@ -245,7 +250,7 @@ async function checkEmailGate(page, labels) {
     await email.fill('preview');
     assert.equal(await primary.isEnabled(), true);
     await phone.fill('');
-    assert.equal(await primary.isDisabled(), true);
+    assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
 }
 
 async function checkStepLocation(page) {
@@ -307,17 +312,17 @@ async function checkCountryPicker(page) {
 
     await code.fill('+۰');
     assert.equal(await code.inputValue(), '+', 'A country calling code cannot start with zero');
-    assert.equal(await primary.isDisabled(), true);
+    assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
     await code.fill('+999');
     await code.press('Tab');
     assert.equal(await code.getAttribute('aria-invalid'), 'true');
-    assert.ok(await page.locator('.dg-country-code-status').isVisible());
-    assert.equal(await primary.isDisabled(), true);
+    assert.ok(await page.locator('#dg-country-code-status').isVisible());
+    assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
     await code.fill('۰۰۳۵۸');
     await code.press('Tab');
     assert.equal(await code.inputValue(), '+358', 'Normalize Persian digits and the international 00 prefix');
     assert.equal(await code.getAttribute('aria-invalid'), 'false', 'Accept allocated codes beyond the shortcut menu');
-    assert.equal(await page.locator('.dg-country-code-status').isVisible(), false);
+    assert.equal(await page.locator('#dg-country-code-status').isVisible(), false);
 
     await trigger.press('ArrowDown');
     await focusCode('+98');
@@ -799,6 +804,9 @@ async function checkLoginSwitchers(browser) {
             }
             if (showTheme) {
                 await theme.click();
+                assert.equal(await page.locator('[data-dg-theme-choice="auto"]').getAttribute('aria-pressed'), 'true');
+                await page.emulateMedia({ colorScheme: 'dark' });
+                await page.waitForFunction(() => document.documentElement.dataset.dgTheme === 'dark');
                 await page.locator('[data-dg-theme-choice="dark"]').click();
                 assert.equal(await page.locator('html').getAttribute('data-dg-theme'), 'dark');
                 await theme.click();

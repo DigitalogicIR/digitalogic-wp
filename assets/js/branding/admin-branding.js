@@ -229,6 +229,29 @@
         syncToggleLabels(value);
     }
 
+    function setLoginTheme(mode, persist) {
+        var scheme = window.matchMedia('(prefers-color-scheme: dark)');
+        root.setAttribute('data-dg-theme-mode', mode);
+        setTheme(mode === 'auto' ? (scheme.matches ? 'dark' : 'light') : mode, false);
+        if (persist) {
+            try { window.localStorage.setItem(storageKey + ':login', mode); } catch (error) {}
+        }
+    }
+
+    function bindLoginTheme() {
+        var stored;
+        try { stored = window.localStorage.getItem(storageKey + ':login'); } catch (error) {}
+        setLoginTheme(stored === 'light' || stored === 'dark' ? stored : 'auto', false);
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+            if (root.getAttribute('data-dg-theme-mode') === 'auto') { setLoginTheme('auto', false); }
+        });
+        window.addEventListener('storage', function (event) {
+            if (event.key === storageKey + ':login') {
+                setLoginTheme(event.newValue === 'light' || event.newValue === 'dark' ? event.newValue : 'auto', false);
+            }
+        });
+    }
+
     function toggleTheme(event) {
         if (event) {
             event.preventDefault();
@@ -270,7 +293,7 @@
         });
 
         document.querySelectorAll('[data-dg-theme-choice]').forEach(function (node) {
-            node.setAttribute('aria-pressed', String(node.dataset.dgThemeChoice === theme));
+            node.setAttribute('aria-pressed', String(node.dataset.dgThemeChoice === (root.getAttribute('data-dg-theme-mode') || theme)));
         });
     }
 
@@ -372,14 +395,19 @@
         caption.className = 'dg-theme-caption';
         caption.textContent = picker.trigger.textContent;
         picker.panel.appendChild(caption);
-        ['light', 'dark'].forEach(function (theme) {
+        var choices = [
+            ['auto', 'device', fa ? 'خودکار' : 'Auto'],
+            ['light', 'sun', fa ? 'روشن' : 'Light'],
+            ['dark', 'moon', fa ? 'تاریک' : 'Dark']
+        ];
+        choices.forEach(function ([theme, icon, label]) {
             var choice = document.createElement('button');
             choice.type = 'button';
             choice.dataset.dgThemeChoice = theme;
-            choice.textContent = getLabel(theme, theme === 'dark' ? (fa ? 'تاریک' : 'Dark') : (fa ? 'روشن' : 'Light'));
-            putAuthIcon(choice, theme === 'dark' ? 'moon' : 'sun');
+            choice.textContent = getLabel(theme, label);
+            putAuthIcon(choice, icon);
             choice.addEventListener('click', function () {
-                if (theme !== currentTheme()) { setTheme(theme); }
+                setLoginTheme(theme, true);
                 picker.disclosure.open = false;
                 picker.trigger.focus();
             });
@@ -1159,7 +1187,7 @@
         });
 
         document.querySelectorAll('[data-dg-disabled-by-branding="true"]').forEach(function (button) {
-            button.disabled = button.dataset.dgIdentityBlocked === 'true';
+            button.disabled = false;
             delete button.dataset.dgDisabledByBranding;
         });
     }
@@ -1215,7 +1243,7 @@
             button.classList.remove('is-loading');
             button.removeAttribute('aria-busy');
             if (button.matches('#wp-submit') || button.dataset.dgDisabledByBranding === 'true') {
-                button.disabled = button.dataset.dgIdentityBlocked === 'true';
+                button.disabled = false;
             }
         });
     }
@@ -1254,7 +1282,21 @@
         return fallback;
     }
 
-    function showDigitsInlineMessage(form, message, tone) {
+    function renderAuthMessage(box, message, tone, action) {
+        box.classList.add('dg-auth-message');
+        box.dataset.tone = tone;
+        box.replaceChildren();
+        if (!message) { return; }
+        var text = document.createElement('span');
+        text.textContent = message;
+        box.appendChild(text);
+        putAuthIcon(box, tone === 'success' ? 'check' : tone === 'progress' ? 'clock' : 'info');
+        if (action) { box.appendChild(action); }
+    }
+
+    window.DigitalogicAuthFeedback = renderAuthMessage;
+
+    function showDigitsInlineMessage(form, message, tone, anchor) {
         message = cleanText(message, '');
 
         if (!message) {
@@ -1271,7 +1313,9 @@
             box.className = 'dg-digits-inline-message';
             box.setAttribute('role', 'alert');
 
-            if (!otpRow && host && host.parentNode) {
+            if (anchor) {
+                anchor.after(box);
+            } else if (!otpRow && host && host.parentNode) {
                 host.parentNode.insertBefore(box, host.nextSibling);
             } else if (!otpRow) {
                 form.prepend(box);
@@ -1281,9 +1325,8 @@
         if (box) {
             if (otpRow && box.previousElementSibling !== otpRow) { otpRow.after(box); }
             box.classList.toggle('dg-otp-feedback', !!otpRow);
-            box.classList.toggle('dg-digits-inline-message--error', tone !== 'success');
-            box.classList.toggle('dg-digits-inline-message--success', tone === 'success');
-            box.textContent = message;
+            if (anchor && box.previousElementSibling !== anchor) { anchor.after(box); }
+            renderAuthMessage(box, message, tone);
         }
     }
 
@@ -1686,14 +1729,50 @@
         if (text && text.textContent !== label) { text.textContent = label; }
         if (action && !action.enabled) {
             button.dataset.dgIdentityBlocked = 'true';
-            button.disabled = true;
         } else if (button.dataset.dgIdentityBlocked === 'true') {
             delete button.dataset.dgIdentityBlocked;
-            if (form.dataset.dgPending === 'true') {
-                button.dataset.dgDisabledByBranding = 'true';
-            } else {
-                button.disabled = false;
-            }
+        }
+    }
+
+    function reportInvalidDigitsIdentity(form, action) {
+        var mode = form.closest('.dg-digits-login-shell').dataset.dgIdentity;
+        if (mode === 'email') {
+            digitsEmailChecks.get(form).report();
+            return;
+        }
+
+        var input = form.querySelector('input[name="digits_phone"]');
+        var prefix = form.querySelector('[name="login_digt_countrycode"]');
+        var invalidPrefix = mode === 'phone' && prefix && !isCountryCallingCode(prefix.value);
+        var message = invalidPrefix
+            ? authRequestLabel('Select a valid country code.', 'پیش‌شمارهٔ معتبر کشور را انتخاب کنید.')
+            : mode === 'phone'
+                ? getLabel('invalidPhone', 'Enter a valid phone number.')
+                : authRequestLabel('Enter your username, email, or phone number.', 'نام کاربری، ایمیل یا شماره تلفن خود را وارد کنید.');
+        if (form.dataset.dgSmsIdentity === 'true' && mode !== 'phone') {
+            message = getLabel('smsIdentity', 'Enter your email address or phone number to receive a verification code.');
+        }
+        if (action.type === 'call') {
+            message = getLabel('callLoadFailed', 'Phone call verification is currently unavailable.');
+        }
+        var field = invalidPrefix ? prefix : input;
+        var row = field?.closest('.digits-form_input_row') || field?.closest('.digits-mobile_wrapper');
+        var prefixStatus = invalidPrefix && form.querySelector('#dg-country-code-status');
+        if (prefixStatus) {
+            field.focus({ preventScroll: true });
+            field.setAttribute('aria-invalid', 'true');
+            renderAuthMessage(prefixStatus, message, 'error');
+            return;
+        }
+        showDigitsInlineMessage(form, message, 'error', row);
+        if (field) {
+            field.setAttribute('aria-invalid', 'true');
+            field.focus({ preventScroll: true });
+            var reset = function () {
+                field.removeAttribute('aria-invalid');
+                form.querySelector('.dg-digits-inline-message')?.remove();
+            };
+            field.addEventListener('input', reset, { once: true });
         }
     }
 
@@ -2334,11 +2413,12 @@
         var status = form?.querySelector('.dg-otp-progress');
         if (!status || status.dataset.state === state) { return; }
         status.dataset.state = state;
-        status.textContent = state === 'verifying'
+        var message = state === 'verifying'
             ? authRequestLabel('Verifying your code…', 'در حال بررسی کد تأیید…')
             : state === 'ready'
                 ? authRequestLabel('Code entered. Select Verify code to continue.', 'کد وارد شد. برای ادامه «تأیید کد» را بزنید.')
                 : '';
+        renderAuthMessage(status, message, 'progress');
     }
 
     function submitCompletedOtp(input, count) {
@@ -3057,7 +3137,7 @@
         var identityAction = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         if (identityAction) { digitsSmsSelections.delete(form); }
         if (identityAction && !identityAction.enabled) {
-            syncDigitsIdentityButton(form);
+            reportInvalidDigitsIdentity(form, identityAction);
             return;
         }
         var button = digitsSubmitButton(form);
@@ -3310,7 +3390,7 @@
         var row = input.closest('.digits-form_input_row') || input;
         var status = document.createElement('p');
         status.id = 'dg-email-domain-status';
-        status.className = 'dg-email-domain-status';
+        status.className = 'dg-auth-message';
         status.setAttribute('role', 'status');
         row.after(status);
         input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
@@ -3327,30 +3407,27 @@
         var pending;
         var failedDomain;
 
-        function render(state) {
+        function render(state, attempted) {
             input.setAttribute('aria-invalid', String(state === 'invalid' || state === 'format'));
             syncDigitsIdentityButton(form);
-            if (status.dataset.state === state) { return; }
+            var tone = ({ checking: attempted ? 'warning' : 'progress', valid: 'success', invalid: 'error', format: 'error', unavailable: 'warning' })[state];
+            if (status.dataset.state === state && status.dataset.tone === tone) { return; }
             status.dataset.state = state;
-            status.replaceChildren();
-            if (state) {
-                var text = document.createElement('span');
-                text.textContent = labels[state];
-                status.appendChild(text);
-                putAuthIcon(status, state === 'valid' ? 'check' : (state === 'checking' ? 'email' : 'info'));
-                if (state === 'unavailable') {
-                    var retry = document.createElement('button');
-                    retry.type = 'button';
-                    retry.className = 'dg-email-domain-retry';
-                    retry.textContent = persian ? 'تلاش دوباره' : 'Try again';
-                    retry.addEventListener('click', function () {
-                        failedDomain = null;
-                        input.focus();
-                        update(true);
-                    });
-                    status.appendChild(retry);
-                }
+            var retry;
+            if (state === 'unavailable') {
+                retry = document.createElement('button');
+                retry.type = 'button';
+                retry.textContent = persian ? 'تلاش دوباره' : 'Try again';
+                retry.addEventListener('click', function () {
+                    failedDomain = null;
+                    input.focus();
+                    update(true);
+                });
             }
+            var message = state === 'checking' && attempted
+                ? authRequestLabel('Wait for the email check to finish.', 'صبر کنید تا بررسی ایمیل تمام شود.')
+                : labels[state];
+            renderAuthMessage(status, message, tone || '', retry);
         }
 
         async function check(domain) {
@@ -3418,6 +3495,13 @@
         }
 
         digitsEmailChecks.set(form, {
+            report: function () {
+                form.querySelector('.dg-digits-inline-message')?.remove();
+                input.focus({ preventScroll: true });
+                update(true);
+                if (!emailDomain(input.value)) { render('format', true); }
+                else if (status.dataset.state === 'checking') { render('checking', true); }
+            },
             isVerified: function (value) { return cache.get(emailDomain(value)) === true; }
         });
         return update;
@@ -3516,7 +3600,7 @@
 
         var status = document.createElement('p');
         status.id = 'dg-country-code-status';
-        status.className = 'dg-country-code-status';
+        status.className = 'dg-auth-message';
         status.setAttribute('role', 'status');
         wrap.closest('.digits-mobile_wrapper')?.after(status);
         input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
@@ -3569,9 +3653,10 @@
         function showValidation(show) {
             var invalid = show && !isCountryCallingCode(input.value);
             input.setAttribute('aria-invalid', String(invalid));
-            status.textContent = invalid
+            var message = invalid
                 ? (persian ? 'پیش‌شمارهٔ معتبر وارد کنید یا کشوری از فهرست انتخاب کنید.' : 'Enter a valid calling code or choose a country from the list.')
                 : '';
+            if (status.textContent !== message) { renderAuthMessage(status, message, 'error'); }
         }
 
         function syncSelection() {
@@ -3753,7 +3838,7 @@
                 updateLanAction();
             }
             shell.addEventListener('digitalogic:call-error', function (event) {
-                showDigitsInlineMessage(login, event.detail, 'warning');
+                showDigitsInlineMessage(login, event.detail, 'error');
             });
         }
         var channels = document.createElement('fieldset');
@@ -4671,6 +4756,7 @@
     }
 
     var authIcons = {
+        device: 'M4 5h16v11H4z M8 20h8m-4-4v4',
         theme: 'M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 1.5-3.3A1 1 0 0 1 16.3 16H18a3 3 0 0 0 3-3c0-5.5-4-10-9-10Z M7.5 12h.01 M10 7.5h.01 M15 7.8h.01 M17 12h.01',
         moon: 'M20.8 14.1A9 9 0 0 1 9.9 3.2a9 9 0 1 0 10.9 10.9Z',
         sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
@@ -4957,7 +5043,7 @@
         if (!card) { return; }
 
         var editing = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
-        var useful = '[data-call-code], [data-call-dial][href^="tel:"], [data-call-preview-dial][href^="tel:"]';
+        var useful = '[data-call-code], [data-call-dial][href^="tel:"]';
         var fa = isPersianLocale();
         var trigger;
         var menu = document.createElement('div');
@@ -5163,14 +5249,15 @@
         var transition;
 
         function activeStep() {
+            if (shell.classList.contains('dg-auth-is-success')) { return shell.querySelector('.dg-auth-success'); }
             if (shell.classList.contains('dg-call-code-active')) {
-                return shell.querySelector('.dg-call-unified [data-call-instructions]');
+                return shell.querySelector('.dg-call-unified :is([data-call-instructions], [data-call-preview]):not([hidden])');
             }
             var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
             if (!form) { return null; }
             var steps = Array.from(form.querySelectorAll('.digits-form_tab_container')).filter(isVisibleElement);
             var step = steps[steps.length - 1] || form;
-            var code = step.querySelector('.dg-otp-editor');
+            var code = step.querySelector('.dg-otp-stack');
             return code && isVisibleElement(code) ? code : step;
         }
 
@@ -5181,9 +5268,12 @@
             previous = step;
             transition?.cancel();
             if (!step?.animate || motion.matches) { return; }
-            transition = step.animate([{ opacity: 0.58 }, { opacity: 1 }], {
-                duration: 180,
-                easing: 'cubic-bezier(0.2, 0.75, 0.25, 1)'
+            transition = step.animate([
+                { opacity: 0.45, transform: 'translateY(6px)' },
+                { opacity: 1, transform: 'translateY(0)' }
+            ], {
+                duration: step.matches('.dg-auth-success') ? 290 : 220,
+                easing: 'cubic-bezier(0.2, 0.7, 0.25, 1)'
             });
         }).observe(shell, {
             subtree: true,
@@ -5193,6 +5283,44 @@
         });
         motion.addEventListener?.('change', function () {
             if (motion.matches) { transition?.cancel(); }
+        });
+    }
+
+    function observeAuthChallenges() {
+        var shell = document.querySelector('.dg-digits-login-shell');
+        if (!shell) { return; }
+        var selector = '.digits_captcha_row, .cf-turnstile, .g-recaptcha, .h-captcha, iframe[src*="challenges.cloudflare.com"], iframe[src*="hcaptcha.com"], iframe[src*="/recaptcha/"]';
+        var watched = new Set();
+        var sizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+
+        function update() {
+            var widgets = Array.from(shell.querySelectorAll(selector));
+            watched.forEach(function (widget) {
+                if (!widgets.includes(widget)) { sizeObserver?.unobserve(widget); watched.delete(widget); }
+            });
+            widgets.forEach(function (widget) {
+                if (!watched.has(widget)) { sizeObserver?.observe(widget); watched.add(widget); }
+            });
+            var active = widgets.find(function (widget) {
+                if (widget.closest('[hidden], .grecaptcha-badge, [data-size="invisible"]')) { return false; }
+                var bounds = widget.getBoundingClientRect();
+                return bounds.width >= 40 && bounds.height >= 24 && getComputedStyle(widget).visibility === 'visible';
+            });
+            shell.toggleAttribute('data-dg-auth-challenge', Boolean(active));
+            var step = active?.closest('.digits-form_login, .digits-form_register');
+            var container = active;
+            while (step && container.parentElement !== step) { container = container.parentElement; }
+            shell.querySelectorAll('[data-dg-position-challenge]').forEach(function (node) {
+                if (node !== container || !step) { node.removeAttribute('data-dg-position-challenge'); }
+            });
+            if (step && !container.matches('.digits-form_tab_wrapper, .digits-form_rememberme')) {
+                container.toggleAttribute('data-dg-position-challenge', true);
+            }
+        }
+
+        update();
+        new MutationObserver(update).observe(shell, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'style', 'class', 'src']
         });
     }
 
@@ -5239,9 +5367,13 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        setTheme(currentTheme(), false);
-        migrateLegacyStoredTheme();
-        bindThemeStorageSync();
+        if (document.body?.classList.contains('login')) {
+            bindLoginTheme();
+        } else {
+            setTheme(currentTheme(), false);
+            migrateLegacyStoredTheme();
+            bindThemeStorageSync();
+        }
         bindThemeToggles();
         mountLoginFooter();
         buildLanguageSwitcher();
@@ -5259,6 +5391,7 @@
         observeAuthChrome();
         routeBrandedAuth?.();
         animateBrandedAuthSteps();
+        observeAuthChallenges();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();

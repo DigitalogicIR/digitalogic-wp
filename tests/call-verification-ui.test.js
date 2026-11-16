@@ -103,7 +103,7 @@ test('cancel is disabled once verified proof consumption becomes irreversible', 
 	assert.ok(disableCancel > verifiedBranch);
 	assert.ok(consumeCall > disableCancel);
 	assert.ok(retryReset > -1);
-	assert.match(source.slice(disableCancel, consumeCall), /status\.textContent = isBrandedLogin\(\)/);
+	assert.match(source.slice(verifiedBranch, consumeCall), /countdown\.hidden = true/);
 });
 
 test('a lost consume response recovers the server-confirmed return for the same challenge', () => {
