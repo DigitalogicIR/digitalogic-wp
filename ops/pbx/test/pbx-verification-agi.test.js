@@ -192,6 +192,23 @@ test('oversized callback response fails closed without a real network', async ()
 	assert.equal(result, 'protocol');
 });
 
+test('a lost callback reply is recovered on the same PBX event with a fresh nonce', async () => {
+	const config = helper.loadConfig(ENV);
+	const requests = [];
+	const result = await helper.postVerification(config, Buffer.alloc(32, 1), {
+		schema: 'phone-verification.v1',
+		event_id: '123e4567-e89b-42d3-a456-426614174000',
+	}, async (_url, request) => {
+		requests.push(request);
+		if (requests.length === 1) { throw new Error('Lost after commit'); }
+		return new Response('{"verified":true}');
+	});
+	assert.equal(result, 'verified');
+	assert.equal(requests.length, 2);
+	assert.equal(requests[0].body, requests[1].body);
+	assert.notEqual(requests[0].headers['X-PBX-Nonce'], requests[1].headers['X-PBX-Nonce']);
+});
+
 test('runAgi accepts the normal Asterisk STREAM FILE endpos response', async () => {
 	const output = agiOutput();
 	let postedPayload;
@@ -202,6 +219,7 @@ test('runAgi accepts the normal Asterisk STREAM FILE endpos response', async () 
 			`200 result=1 (${ENV.PBX_EXPECTED_DID})`,
 			'200 result=1 (+989123456789)',
 			'200 result=381624',
+			'200 result=0 endpos=1024',
 			'200 result=0 endpos=8192',
 			'200 result=1',
 		]),
@@ -219,6 +237,7 @@ test('runAgi accepts the normal Asterisk STREAM FILE endpos response', async () 
 	assert.equal(exitCode, helper.EXIT.VERIFIED);
 	assert.equal(postedPayload.called_number, ENV.PBX_EXPECTED_DID);
 	assert.equal(postedPayload.caller_number, '+989123456789');
+	assert.match(output.text, /STREAM FILE beep ""/);
 	assert.match(output.text, new RegExp(`STREAM FILE ${ENV.PBX_PROMPT_VERIFIED.replaceAll('/', '\\/')} ""`));
 	assert.match(output.text, /SET VARIABLE PBX_VERIFY_RESULT verified/);
 });
@@ -235,6 +254,7 @@ test('runAgi continues after the invalid-code STREAM FILE endpos response', asyn
 			'200 result=12345',
 			'200 result=0 endpos=1024',
 			'200 result=381624',
+			'200 result=0 endpos=1024',
 			'200 result=0 endpos=2048',
 			'200 result=1',
 		]),
@@ -466,6 +486,7 @@ test('shortcut posts a valid code immediately and marks the call verified', asyn
 			`200 result=1 (${ENV.PBX_EXPECTED_DID})`,
 			'200 result=1 (+989123456789)',
 			...shortcutDtmfResponses('381624'),
+			'200 result=0 endpos=1024',
 			'200 result=0 endpos=4096',
 			'200 result=1',
 		], ENV.PBX_EXPECTED_PENDING_CONTEXT),
@@ -495,8 +516,10 @@ test('shortcut gives a rejected six-digit typo one bounded retry', async () => {
 			`200 result=1 (${ENV.PBX_EXPECTED_DID})`,
 			'200 result=1 (+989123456789)',
 			...shortcutDtmfResponses('111111', 1024),
+			'200 result=0 endpos=512',
 			'200 result=0 endpos=1024',
 			...shortcutDtmfResponses('381624', 2048),
+			'200 result=0 endpos=512',
 			'200 result=0 endpos=2048',
 			'200 result=1',
 		], ENV.PBX_EXPECTED_PENDING_CONTEXT),
@@ -535,6 +558,7 @@ test('outbound keypad verification signs the queued challenge and configured rec
 			'200 result=1 (+989120000000)',
 			`200 result=1 (${challengeId})`,
 			'200 result=381624',
+			'200 result=0 endpos=1024',
 			'200 result=0 endpos=8192',
 			'200 result=1',
 		], 'pbx-call-verification-outbound'),
