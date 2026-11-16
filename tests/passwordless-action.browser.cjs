@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { createServer } = require('node:http');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
@@ -1094,11 +1095,19 @@ async function checkLoginStories(browser) {
     await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
     assert.equal(await page.locator('#login > .dg-login-preferences').count(), 1);
-    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/light.webp');
+    const image = panel.locator('article:not([inert]) img[src^="blob:"]');
+    await image.waitFor();
+    const lightSource = await image.getAttribute('src');
     const theme = page.locator('.dg-login-preferences .dg-theme-toggle-button');
     await theme.click();
-    await page.locator('[data-dg-theme-choice="dark"]').click();
-    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/story.webp');
+    await Promise.all([
+        page.waitForResponse('**/story.webp'),
+        page.locator('[data-dg-theme-choice="dark"]').click()
+    ]);
+    await page.waitForFunction(previous => {
+        const source = document.querySelector('.dg-story-card.is-active img')?.getAttribute('src');
+        return source?.startsWith('blob:') && source !== previous;
+    }, lightSource);
     assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
     await panel.locator('.dg-story-dot').first().press('ArrowLeft');
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
@@ -1145,6 +1154,56 @@ async function checkLoginStories(browser) {
     assert.equal(await panel.locator('article img[alt="تصویر معرفی"]').count(), 1);
     assert.equal(await panel.locator('.dg-story-controls, .dg-story-stage[data-draggable]').count(), 0);
     await page.close();
+}
+
+async function checkStoryAssetProgress(browser) {
+    const frame = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+    const pending = new Map();
+    const server = createServer((request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        if (url.pathname === '/stories') {
+            response.setHeader('Content-Type', 'application/json');
+            response.end(JSON.stringify([
+                { title: 'Known length', image: '/known.gif', thumbnail: '/thumb.gif' },
+                { title: 'Unknown length', image: '/unknown.gif' }
+            ]));
+        } else if (url.pathname.endsWith('.gif')) {
+            response.setHeader('Content-Type', 'image/gif');
+            if (url.pathname !== '/unknown.gif') { response.setHeader('Content-Length', frame.length); }
+            if (url.pathname === '/thumb.gif') { response.end(frame); return; }
+            pending.set(url.pathname, response);
+            response.write(frame.subarray(0, 12));
+        } else {
+            response.setHeader('Content-Type', 'text/html');
+            response.end('<body class="login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body>');
+        }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const page = await browser.newPage({ viewport: { width: 1050, height: 840 }, reducedMotion: 'reduce' });
+    try {
+        await page.addInitScript(() => { window.DigitalogicBranding = { loginSlidesUrl: '/stories' }; });
+        await page.goto('http://127.0.0.1:' + server.address().port);
+        await page.addStyleTag({ path: styles });
+        await page.addScriptTag({ path: branding });
+        await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+        await page.waitForFunction(expected => {
+            const meter = document.querySelector('.dg-story-card.is-active progress');
+            return meter?.value === expected && meter.max > meter.value;
+        }, frame.length + 12);
+        assert.equal(await page.locator('.dg-story-loading').isVisible(), false);
+        const active = page.locator('.dg-story-card.is-active');
+        assert.equal(await active.locator('progress').getAttribute('max'), String(frame.length * 2));
+        await page.locator('.dg-story-dot').nth(1).click();
+        await active.getByText('12 bytes').waitFor();
+        assert.equal(await active.locator('progress').getAttribute('value'), null);
+        for (const response of pending.values()) { response.end(frame.subarray(12)); }
+        await active.locator('.dg-story-transfer').waitFor({ state: 'hidden' });
+        assert.equal(await page.locator('.dg-story-thumb-image[src^="blob:"]:visible').count(), 2);
+    } finally {
+        await page.close();
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+    }
 }
 
 async function checkLoginSwitchers(browser) {
@@ -1230,6 +1289,7 @@ async function checkLoginSwitchers(browser) {
     try {
         await checkLoginSwitchers(browser);
         await checkLoginStories(browser);
+        await checkStoryAssetProgress(browser);
         await checkBrowserManagedSignIn(browser);
         for (const [direction, width, skipPassword, skipPasswordCaption] of [
             ['rtl', 390, 'ورود بدون رمز عبور', 'رمز خود را فراموش کرده اید؟'],

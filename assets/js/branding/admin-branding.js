@@ -4504,12 +4504,15 @@
                 var image = storyUrl(row.image);
                 var lightImage = storyUrl(row.image_light) || image;
                 var darkImage = storyUrl(row.image_dark) || image;
+                var thumbnail = storyUrl(row.thumbnail);
                 var link = storyUrl(row.link);
                 var title = typeof row.title === 'string' ? row.title.trim() : '';
                 if (!lightImage && !darkImage) { return []; }
                 return [{
                     lightImage: lightImage || darkImage,
                     darkImage: darkImage || lightImage,
+                    lightThumb: storyUrl(row.thumbnail_light) || thumbnail || lightImage || darkImage,
+                    darkThumb: storyUrl(row.thumbnail_dark) || thumbnail || darkImage || lightImage,
                     alt: typeof row.alt === 'string' ? row.alt : '',
                     link: link,
                     title: title,
@@ -4536,7 +4539,7 @@
                 if (!cards.length) {
                     var url = new URL(config.loginSlidesUrl, window.location.href);
                     url.searchParams.set('locale', locale);
-                    var fallback = await window.fetch(url, { credentials: 'same-origin' });
+                    var fallback = await window.fetch(url, { credentials: 'same-origin', signal: window.AbortSignal?.timeout?.(10000) });
                     cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
                 if (cards.length && shell.isConnected) {
@@ -4567,8 +4570,11 @@
         panel.inert = true;
         var loader = document.createElement('div');
         loader.className = 'dg-story-loading';
-        loader.setAttribute('aria-hidden', 'true');
-        loader.append(document.createElement('span'));
+        loader.setAttribute('role', 'status');
+        loader.setAttribute('aria-label', fa ? 'در حال دریافت اطلاعات اسلایدها' : 'Loading carousel information');
+        var mark = document.createElement('span');
+        mark.setAttribute('aria-hidden', 'true');
+        loader.append(mark);
         panel.append(loader);
         var toggle = document.createElement('button');
         toggle.className = 'dg-story-drawer-toggle';
@@ -4588,7 +4594,6 @@
         var panelWidth = 0;
         var formWidth = 0;
         var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-        var started = performance.now();
 
         function measure() {
             var width = Math.max(0, layout.clientWidth - 2);
@@ -4697,15 +4702,10 @@
         return {
             panel: panel,
             isOpen: function () { return open && !drag?.active && !drawer.hasAttribute('aria-busy'); },
-            ready: function (image) {
-                var loaded = image?.decode ? image.decode().catch(function () {}) : Promise.resolve();
-                var fade = new Promise(function (resolve) { window.setTimeout(resolve, Math.max(0, 250 - (performance.now() - started))); });
-                var deadline = new Promise(function (resolve) { window.setTimeout(resolve, 1600); });
-                void Promise.race([Promise.all([loaded, fade]), deadline]).then(function () {
-                    loader.hidden = true;
-                    drawer.removeAttribute('aria-busy');
-                    changed();
-                });
+            ready: function () {
+                loader.hidden = true;
+                drawer.removeAttribute('aria-busy');
+                changed();
             },
             remove: function () {
                 resize?.disconnect();
@@ -4720,6 +4720,66 @@
                 ['--dg-story-panel-width', '--dg-story-form-width', '--dg-story-anchor',
                     '--dg-story-reveal'].forEach(function (name) { layout.style.removeProperty(name); });
             }
+        };
+    }
+
+    function createStoryAssetLoader(onChange) {
+        var assets = new Map();
+
+        async function load(url, asset) {
+            var source;
+            try {
+                var response = await window.fetch(url, {
+                    mode: 'same-origin', credentials: 'omit', headers: { Accept: 'image/*' },
+                    signal: window.AbortSignal?.timeout?.(30000)
+                });
+                var type = response.headers.get('Content-Type') || '';
+                if (!response.ok || !/^image\//i.test(type)) { throw new Error('Image response'); }
+                var encoding = response.headers.get('Content-Encoding');
+                var length = Number(response.headers.get('Content-Length'));
+                if ((!encoding || encoding === 'identity') && Number.isSafeInteger(length) && length > 0) {
+                    asset.total = length;
+                }
+                onChange();
+
+                var blob;
+                if (response.body) {
+                    var chunks = [];
+                    var reader = response.body.getReader();
+                    while (true) {
+                        var chunk = await reader.read();
+                        if (chunk.done) { break; }
+                        chunks.push(chunk.value);
+                        asset.bytes += chunk.value.byteLength;
+                        if (asset.total !== null && asset.bytes > asset.total) { asset.total = null; }
+                        onChange();
+                    }
+                    blob = new Blob(chunks, { type: type });
+                } else {
+                    blob = await response.blob();
+                    asset.bytes = blob.size;
+                }
+                asset.total = asset.bytes;
+                source = URL.createObjectURL(blob);
+                var image = new Image();
+                image.src = source;
+                await image.decode();
+                asset.src = source;
+            } catch (_error) {
+                if (source) { URL.revokeObjectURL(source); }
+                asset.failed = true;
+            } finally {
+                onChange();
+            }
+        }
+
+        return function (url) {
+            if (!assets.has(url)) {
+                var asset = { bytes: 0, total: null, src: '', failed: false };
+                assets.set(url, asset);
+                void load(url, asset);
+            }
+            return assets.get(url);
         };
     }
 
@@ -4749,18 +4809,27 @@
         announcement.setAttribute('aria-live', 'polite');
         var articles = [];
         var indicators = [];
+        var previews = [];
+        var percentFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en', { style: 'percent', maximumFractionDigits: 0 });
+        var bytesFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en');
 
         cards.forEach(function (card, index) {
             var article = element('article', 'dg-story-card');
             article.dir = rtl ? 'rtl' : 'ltr';
+            article.dataset.storyIndex = index;
             var figure = element('div', 'dg-story-figure');
             var photo = element('img', 'dg-story-image');
-            photo.dataset.lightImage = card.lightImage;
-            photo.dataset.darkImage = card.darkImage;
             photo.alt = card.alt;
             photo.decoding = 'async';
             photo.draggable = false;
-            figure.append(photo);
+            photo.hidden = true;
+            var transfer = element('div', 'dg-story-transfer');
+            var caption = element('span', 'dg-story-transfer-label', fa ? 'دریافت تصویر' : 'Downloading artwork');
+            var readout = element('span', 'dg-story-transfer-readout');
+            var meter = element('progress', 'dg-story-download');
+            meter.setAttribute('aria-label', caption.textContent);
+            transfer.append(caption, readout, meter);
+            figure.append(photo, transfer);
             card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
             var copy = element('div', 'dg-story-copy');
             if (card.title) { copy.append(element('h2', 'dg-story-title', card.title)); }
@@ -4782,9 +4851,19 @@
                 var dot = element('button', 'dg-story-dot');
                 dot.type = 'button';
                 dot.setAttribute('aria-label', card.tab ? position + ', ' + card.tab : position);
+                var tile = element('span', 'dg-story-thumb');
+                tile.setAttribute('aria-hidden', 'true');
+                var thumb = element('img', 'dg-story-thumb-image');
+                thumb.alt = '';
+                thumb.draggable = false;
+                thumb.hidden = true;
+                var thumbMeter = element('progress', 'dg-story-download');
+                tile.append(thumb, thumbMeter);
+                dot.append(tile);
                 if (card.tab) { dot.append(element('span', 'dg-story-label', card.tab)); }
                 dot.addEventListener('click', function () { select(index, true); });
                 indicators.push(dot);
+                previews.push({ photo: thumb, meter: thumbMeter });
                 dots.append(dot);
             }
         });
@@ -4804,16 +4883,78 @@
             track.append(wrapCopy(ordered[0]));
         }
 
-        var photos = track.querySelectorAll('.dg-story-image');
+        var figures = Array.from(track.querySelectorAll('.dg-story-figure'), function (figure) {
+            return {
+                index: Number(figure.closest('article').dataset.storyIndex),
+                photo: figure.querySelector('.dg-story-image'),
+                transfer: figure.querySelector('.dg-story-transfer'),
+                label: figure.querySelector('.dg-story-transfer-label'),
+                readout: figure.querySelector('.dg-story-transfer-readout'),
+                meter: figure.querySelector('progress')
+            };
+        });
+        var pictures = [];
+        var repaint = 0;
+        var getAsset = createStoryAssetLoader(function () {
+            if (!repaint) { repaint = window.requestAnimationFrame(renderImages); }
+        });
+
         function syncImages() {
-            var theme = document.body.dataset.dgTheme === 'dark' ? 'darkImage' : 'lightImage';
-            photos.forEach(function (photo) {
-                var next = photo.dataset[theme];
-                if (photo.getAttribute('src') !== next) { photo.src = next; }
+            var dark = document.body.dataset.dgTheme === 'dark';
+            pictures = cards.map(function (card) {
+                var preview = getAsset(dark ? card.darkThumb : card.lightThumb);
+                var main = getAsset(dark ? card.darkImage : card.lightImage);
+                return { preview: preview, main: main };
             });
+            if (timer !== undefined) { schedule(); }
+            renderImages();
         }
-        syncImages();
-        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
+
+        function setImage(photo, source) {
+            photo.hidden = !source;
+            if (source && photo.getAttribute('src') !== source) { photo.src = source; }
+        }
+
+        function setDownload(meter, state) {
+            meter.hidden = !state.loading;
+            if (state.loading && state.total > 0) {
+                meter.max = state.total;
+                meter.value = state.bytes;
+            } else {
+                meter.removeAttribute('value');
+            }
+        }
+
+        function renderImages() {
+            repaint = 0;
+            var states = pictures.map(function (picture) {
+                var assets = picture.preview === picture.main ? [picture.main] : [picture.preview, picture.main];
+                return {
+                    loading: assets.some(function (asset) { return !asset.src && !asset.failed; }),
+                    bytes: assets.reduce(function (sum, asset) { return sum + asset.bytes; }, 0),
+                    total: assets.every(function (asset) { return asset.total !== null && !asset.failed; })
+                        ? assets.reduce(function (sum, asset) { return sum + asset.total; }, 0) : null
+                };
+            });
+            figures.forEach(function (figure) {
+                var picture = pictures[figure.index];
+                var state = states[figure.index];
+                setImage(figure.photo, picture.main.src || picture.preview.src);
+                figure.photo.toggleAttribute('data-preview', !picture.main.src && Boolean(picture.preview.src));
+                figure.transfer.hidden = !state.loading && !picture.main.failed;
+                figure.label.textContent = picture.main.failed ? (fa ? 'تصویر باز نشد' : 'Artwork unavailable') :
+                    (fa ? 'دریافت تصویر' : 'Downloading artwork');
+                figure.readout.textContent = state.loading ? (state.total > 0 ? percentFormat.format(Math.floor(state.bytes * 100 / state.total) / 100) :
+                    (state.bytes ? bytesFormat.format(state.bytes) + (fa ? ' بایت' : ' bytes') : '')) : '';
+                setDownload(figure.meter, state);
+            });
+            previews.forEach(function (preview, index) {
+                var picture = pictures[index];
+                setImage(preview.photo, picture.preview.src || picture.main.src);
+                setDownload(preview.meter, states[index]);
+            });
+            if (multiple && timer === undefined) { schedule(); }
+        }
 
         var active = 0;
         var timer;
@@ -4853,7 +4994,8 @@
             var offset = String(remaining / interval);
             progressLine.style.strokeDashoffset = offset;
             var focused = document.activeElement;
-            if ((!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
+            var artwork = pictures[active]?.main;
+            if ((artwork?.src || artwork?.failed) && (!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
                 !document.hidden && !hovering && (focused === rotation || !region.contains(focused))) {
                 startedAt = performance.now();
                 progressAnimation = progressLine.animate?.([{ strokeDashoffset: offset }, { strokeDashoffset: '0' }],
@@ -4993,12 +5135,14 @@
             syncRotation();
         }
 
-        select(0, false);
-        if (drawer) { drawer.ready(articles[0].querySelector('.dg-story-image')); }
+        if (drawer) { drawer.ready(); }
         else {
             shell.prepend(region);
             shell.classList.add('dg-has-login-stories');
         }
+        syncImages();
+        select(0, false);
+        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
     }
 
 
@@ -5676,13 +5820,10 @@
                     document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(function (node) {
                         urls.add(node.src || node.href);
                     });
-                    document.querySelectorAll('.dg-story-image').forEach(function (image) {
-                        urls.add(image.dataset.lightImage);
-                        urls.add(image.dataset.darkImage);
-                    });
                     performance.getEntriesByType('resource').forEach(function (entry) {
                         if (['css', 'script', 'link'].includes(entry.initiatorType) ||
-                            entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/')) {
+                            (entry.initiatorType === 'img' &&
+                                entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/'))) {
                             urls.add(entry.name);
                         }
                     });
