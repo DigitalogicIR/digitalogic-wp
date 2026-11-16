@@ -2059,15 +2059,15 @@ body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-for
     z-index: 0;
     display: block;
     background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.24) 0 10px, rgba(255, 255, 255, 0.06) 10px 20px);
-    animation: dg-loading-stripes-ltr 0.82s linear infinite !important;
+    animation: var(--dg-loading-stripe, dg-loading-stripes-ltr) 0.82s linear infinite !important;
     pointer-events: none;
     visibility: visible !important;
     will-change: transform;
 }
 
-body.rtl.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::before,
-html[dir="rtl"] body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::before {
-    animation-name: dg-loading-stripes-rtl !important;
+body.rtl.login,
+html[dir="rtl"] body.login {
+    --dg-loading-stripe: dg-loading-stripes-rtl;
 }
 
 body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::after {
@@ -2113,7 +2113,9 @@ body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-for
 }
 
 @media (prefers-reduced-motion: reduce) {
-    body.login .dg-auth-primary.is-loading::before,
+    body.login .is-loading {
+        --dg-loading-stripe: none;
+    }
     body.login .dg-auth-primary.is-loading::after {
         animation: none !important;
     }
@@ -2799,6 +2801,10 @@ body.login .dg-call-unified :is(h2, p) {
     margin: 0;
     line-height: 1.65;
 }
+body.login .dg-call-unified [data-call-preview-title] {
+    font-size: clamp(23px, 4.4vw, 34px);
+    text-wrap: balance;
+}
 body.login .dg-call-unified .dg-call-code-slots {
     --dg-otp-count: 6;
 }
@@ -2853,7 +2859,7 @@ body.login .dg-call-caller:not([hidden]) {
 }
 body.login .dg-call-caller bdi {
     color: var(--dg-heading);
-    font: 750 16px/1.4 var(--dg-auth-digits, var(--dg-font, system-ui));
+    font: 750 16px/1.4 var(--dg-font, system-ui);
     font-variant-numeric: tabular-nums;
 }
 body.login .dg-call-line:not([hidden]) {
@@ -2878,7 +2884,7 @@ body.login #login .dg-call-unified a.dg-call-number {
     padding: 3px 9px;
     border-radius: 10px;
     color: #16191d;
-    font: 750 clamp(18px, 2.5vw, 22px)/1.3 var(--dg-auth-digits, var(--dg-font, system-ui));
+    font: 750 clamp(18px, 2.5vw, 22px)/1.3 var(--dg-font, system-ui);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
     text-decoration: none;
