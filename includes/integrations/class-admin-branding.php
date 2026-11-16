@@ -628,12 +628,15 @@ JS;
         $config['labels'] = self::client_labels();
 		if ( $is_login ) {
 			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
-			$config['otpCursor']          = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
-			$config['emailDomainNonce']   = wp_create_nonce( 'digitalogic_email_domain' );
-			$config['loginSlidesUrl']     = rest_url( 'digitalogic/v1/login-slides' );
-			$config['authWebSocket']      = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
-			$config['rememberedAccount'] = Digitalogic_Plugin_Auth_Routes::remembered_account();
-			$config['rememberedAccounts'] = Digitalogic_Plugin_Auth_Routes::remembered_accounts();
+			$config['otpCursor']              = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
+			$config['emailDomainNonce']       = wp_create_nonce( 'digitalogic_email_domain' );
+			$config['loginSlidesUrl']         = rest_url( 'digitalogic/v1/login-slides' );
+			$config['authWebSocket']          = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
+			$config['rememberedAccount']      = Digitalogic_Plugin_Auth_Routes::remembered_account();
+			$config['rememberedAccounts']     = Digitalogic_Plugin_Auth_Routes::remembered_accounts();
+			if ( $config['rememberedAccount'] || $config['rememberedAccounts'] ) {
+				$config['forgetAccountNonce'] = wp_create_nonce( 'digitalogic_forget_account_hint' );
+			}
 			$config['digitsSignupNotice'] = __( 'Please signup before logging in.', 'digits' ); // phpcs:ignore WordPress.WP.I18n.TextDomainMismatch -- Match the native Digits response.
 		}
 

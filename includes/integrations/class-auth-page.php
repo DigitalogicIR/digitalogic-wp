@@ -13,6 +13,7 @@ final class Digitalogic_Plugin_Auth_Routes {
     private const CANONICAL_LOGIN_PATH = '/login/';
 
 	private const ACCOUNT_HINT_COOKIE = 'digitalogic_account_hint';
+	private const ASSIGNED_HINT_COOKIE = 'digitalogic_dismissed_workstation_hint';
 	private const ACCOUNT_HINT_LIMIT  = 5;
 	private static float $email_attempt_started = 0.0;
 
@@ -40,6 +41,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 		add_action( 'wp_ajax_digitalogic_recovery_password', array( self::class, 'save_recovery_password' ) );
 		add_action( 'wp_ajax_nopriv_digitalogic_email_domain', array( self::class, 'check_email_domain' ) );
 		add_action( 'wp_ajax_digitalogic_email_domain', array( self::class, 'check_email_domain' ) );
+		add_action( 'wp_ajax_nopriv_digitalogic_forget_account_hint', array( self::class, 'forget_account_hint' ) );
 		add_action( 'set_logged_in_cookie', array( self::class, 'record_recovery_session' ), 10, 6 );
         add_action('wp_login_failed', [self::class, 'redirect_failed_login'], 99);
         add_filter('register_url', [self::class, 'register_url'], 9999);
@@ -339,23 +341,48 @@ final class Digitalogic_Plugin_Auth_Routes {
 	/**
 	 * Remember an identity only when the browser opts into a persistent login.
 	 *
-	 * @param bool   $send       Whether WordPress will send authentication cookies.
-	 * @param int    $expire     Browser cookie expiration.
-	 * @param int    $expiration WordPress authentication expiration.
-	 * @param int    $user_id    Authenticated user ID.
+	 * @param bool $send       Whether WordPress will send authentication cookies.
+	 * @param int  $expire     Browser cookie expiration.
+	 * @param int  $expiration WordPress authentication expiration.
+	 * @param int  $user_id    Authenticated user ID.
 	 */
 	public static function remember_account( bool $send, int $expire, int $expiration, int $user_id ): bool {
 		if ( ! $send || $user_id < 1 || $expire <= time() || headers_sent() || ! is_ssl() ) {
 			return $send;
 		}
-		$accounts = self::remembered_account_ids();
-		$accounts = array_values( array_diff( $accounts, array( $user_id ) ) );
+		[ $accounts ] = self::read_account_hint_cookie();
+		$accounts     = array_values( array_diff( $accounts, array( $user_id ) ) );
 		array_unshift( $accounts, $user_id );
-		$expires = time() + 30 * DAY_IN_SECONDS;
-		$value   = implode( '-', array_slice( $accounts, 0, self::ACCOUNT_HINT_LIMIT ) ) . '.' . $expires;
-		setcookie(
+		self::write_account_hint_cookie( $accounts, time() + 30 * DAY_IN_SECONDS );
+		return $send;
+	}
+
+	/**
+	 * Store the signed browser list, or expire it when its last entry is removed.
+	 *
+	 * @param array $accounts Remembered user IDs.
+	 * @param int   $expires  Expiry timestamp.
+	 */
+	private static function write_account_hint_cookie( array $accounts, int $expires ): bool {
+		$value = implode( '-', array_slice( $accounts, 0, self::ACCOUNT_HINT_LIMIT ) ) . '.' . $expires;
+		return self::set_hint_cookie(
 			self::ACCOUNT_HINT_COOKIE,
-			$value . '.' . hash_hmac( 'sha256', $value, wp_salt( 'logged_in' ) ),
+			$accounts ? $value . '.' . hash_hmac( 'sha256', $value, wp_salt( 'logged_in' ) ) : '',
+			$accounts ? $expires : time() - DAY_IN_SECONDS
+		);
+	}
+
+	/**
+	 * Set a browser-only account hint.
+	 *
+	 * @param string $name    Hint cookie name.
+	 * @param string $value   Signed hint value.
+	 * @param int    $expires Expiry timestamp.
+	 */
+	private static function set_hint_cookie( string $name, string $value, int $expires ): bool {
+		return setcookie(
+			$name,
+			$value,
 			array(
 				'expires'  => $expires,
 				'path'     => '/',
@@ -364,7 +391,6 @@ final class Digitalogic_Plugin_Auth_Routes {
 				'samesite' => 'Strict',
 			)
 		);
-		return $send;
 	}
 
 	/** Return the workstation's preselected identity for a signed-out visitor. */
@@ -372,8 +398,53 @@ final class Digitalogic_Plugin_Auth_Routes {
 		if ( 'login' !== ( $GLOBALS['action'] ?? '' ) || is_user_logged_in() ) {
 			return array();
 		}
-		$assigned = self::lan_assigned_user();
+		$assigned  = self::lan_assigned_user();
+		$dismissed = isset( $_COOKIE[ self::ASSIGNED_HINT_COOKIE ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ self::ASSIGNED_HINT_COOKIE ] ) ) : '';
+		if ( $assigned && hash_equals( self::assigned_hint_digest( $assigned ), $dismissed ) ) {
+			return array();
+		}
 		return $assigned ? self::account_hint( $assigned, true ) : array();
+	}
+
+	/**
+	 * Bind a dismissal to the assigned account, so a new assignment can still appear.
+	 *
+	 * @param WP_User $user Workstation account.
+	 */
+	private static function assigned_hint_digest( WP_User $user ): string {
+		return hash_hmac( 'sha256', 'workstation-hint:' . $user->ID, wp_salt( 'logged_in' ) );
+	}
+
+	/** Remove a suggestion from this browser using only its verified hints. */
+	public static function forget_account_hint(): void {
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_key( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'post' !== $method || ! is_ssl() || headers_sent()
+			|| ! check_ajax_referer( 'digitalogic_forget_account_hint', 'nonce', false ) ) {
+			wp_send_json_error( null, 403 );
+		}
+		$login = isset( $_POST['login'] ) && is_string( $_POST['login'] ) ? sanitize_text_field( wp_unslash( $_POST['login'] ) ) : '';
+		if ( '' === $login ) {
+			wp_send_json_error( null, 400 );
+		}
+		[ $accounts, $expires ] = self::read_account_hint_cookie();
+		$remaining              = array_values(
+			array_filter(
+				$accounts,
+				static function ( int $id ) use ( $login ): bool {
+					$user = get_user_by( 'id', $id );
+					return ! ( $user instanceof WP_User ) || $login !== $user->user_login;
+				}
+			)
+		);
+		if ( $remaining !== $accounts && ! self::write_account_hint_cookie( $remaining, $expires ) ) {
+			wp_send_json_error( null, 500 );
+		}
+		$assigned = self::lan_assigned_user();
+		if ( $assigned && $login === $assigned->user_login
+			&& ! self::set_hint_cookie( self::ASSIGNED_HINT_COOKIE, self::assigned_hint_digest( $assigned ), time() + 30 * DAY_IN_SECONDS ) ) {
+			wp_send_json_error( null, 500 );
+		}
+		wp_send_json_success();
 	}
 
 	/** Match a workstation using the client address resolved by the web server. */
@@ -394,14 +465,14 @@ final class Digitalogic_Plugin_Auth_Routes {
 	}
 
 	/** Read the signed browser list, including old single-account cookies. */
-	private static function remembered_account_ids(): array {
+	private static function read_account_hint_cookie(): array {
 		$hint = isset( $_COOKIE[ self::ACCOUNT_HINT_COOKIE ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ self::ACCOUNT_HINT_COOKIE ] ) ) : '';
 		if ( ! preg_match( '/\A([1-9][0-9]{0,11}(?:-[1-9][0-9]{0,11}){0,4})\.([0-9]{1,12})\.([a-f0-9]{64})\z/', $hint, $matches )
 			|| (int) $matches[2] <= time()
 			|| ! hash_equals( hash_hmac( 'sha256', $matches[1] . '.' . $matches[2], wp_salt( 'logged_in' ) ), $matches[3] ) ) {
-			return array();
+			return array( array(), 0 );
 		}
-		return array_map( 'intval', explode( '-', $matches[1] ) );
+		return array( array_map( 'intval', explode( '-', $matches[1] ) ), (int) $matches[2] );
 	}
 
 	/** Return signed-out account suggestions for this browser. */
@@ -410,7 +481,8 @@ final class Digitalogic_Plugin_Auth_Routes {
 			return array();
 		}
 		$accounts = array();
-		foreach ( self::remembered_account_ids() as $id ) {
+		[ $ids ]  = self::read_account_hint_cookie();
+		foreach ( $ids as $id ) {
 			$user = get_user_by( 'id', $id );
 			if ( $user instanceof WP_User ) {
 				$accounts[] = self::account_hint( $user, false );
