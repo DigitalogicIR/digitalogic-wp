@@ -2526,7 +2526,7 @@ body.login .dg-digits-login-shell .dg-call-lan-action {
     display: flex;
     inline-size: 100%;
     min-block-size: 52px;
-    margin-block: 10px 0;
+    margin-block: 0;
     padding: 8px 12px;
     border: 1px solid var(--dg-border);
     border-radius: 16px;
@@ -2541,9 +2541,8 @@ body.login .dg-digits-login-shell .dg-call-lan-action .dg-auth-icon {
 body.login .dg-digits-login-shell .dg-call-lan-action:hover {
     background: var(--dg-accent-soft);
 }
-body.login .dg-digits-login-shell .dg-call-lan-action[hidden],
-body.login .dg-digits-login-shell form:is(:not(.digits_form_index_section), .dg-username-step-active) .dg-call-lan-action {
-    display: none;
+body.login .dg-digits-login-shell .dg-call-lan-action[hidden] {
+    display: none !important;
 }
 body.login .dg-digits-login-shell .dg-icon-label-action > .dg-auth-icon {
     position: static;
@@ -5148,7 +5147,7 @@ body.login .dg-digits-login-shell.dg-digits-auto-identity form.dg-username-step-
     transition-property: opacity, visibility;
 }
 
-body.login .dg-digits-login-shell :is(:is(.digits-form_login, .digits-form_register) > .digits-form_submit-btn, .dg-username-login-actions, .dg-call-unified [data-call-confirm], .dg-call-unified [data-call-cancel]) {
+body.login .dg-digits-login-shell :is(:is(.digits-form_login, .digits-form_register) > .digits-form_submit-btn, .dg-call-unified [data-call-confirm], .dg-call-unified [data-call-cancel]) {
     margin-block-start: auto;
 }
 
@@ -5161,16 +5160,12 @@ body.login .dg-digits-login-shell :is(.digits-form_login:not(:has(.dg-username-p
     margin-block-end: var(--dg-action-gap);
 }
 
-body.login .dg-digits-login-shell .dg-username-login-actions {
-    padding-block-start: var(--dg-action-gap);
-}
-
 body.login .dg-digits-login-shell .dg-call-unified :is(.dg-call-steps, .dg-call-wait) {
     margin-block-end: var(--dg-action-gap);
 }
 
 @media (width < 720px) {
-    body.login .dg-mobile-auth-ready:not([data-dg-auth-challenge]) :is(:is(.digits-form_login, .digits-form_register) > .digits-form_submit-btn, .dg-username-login-actions, .dg-call-unified :is([data-call-confirm], [data-call-cancel])) {
+    body.login .dg-mobile-auth-ready:not([data-dg-auth-challenge]) :is(:is(.digits-form_login, .digits-form_register) > .digits-form_submit-btn, .dg-call-unified :is([data-call-confirm], [data-call-cancel])) {
         margin-block-start: 0;
     }
     body.login .dg-mobile-auth-ready:not([data-dg-auth-challenge]) form.dg-username-step-active .digits-form_tab_wrapper {
@@ -5183,7 +5178,7 @@ body.login .dg-digits-login-shell .dg-call-unified :is(.dg-call-steps, .dg-call-
     body.login .dg-mobile-auth-ready :is(.digits-form_login, .digits-form_register):has(> [data-dg-position-challenge]) > .digits-form_submit-btn {
         order: 2;
     }
-    body.login .dg-mobile-auth-ready :is(.digits-form_login, .digits-form_register):has(> [data-dg-position-challenge]) > :is([data-call-lan-action], .digits-form_footer, .dg-auth-card-actions, .digits-social-logins-box, .dg-passkey-options) {
+    body.login .dg-mobile-auth-ready :is(.digits-form_login, .digits-form_register):has(> [data-dg-position-challenge]) > :is(.digits-form_footer, .dg-auth-card-actions, .digits-social-logins-box, .dg-passkey-options) {
         order: 3;
     }
 }
