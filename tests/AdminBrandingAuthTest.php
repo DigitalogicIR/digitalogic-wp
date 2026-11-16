@@ -178,6 +178,8 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
         $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
         $this->assertStringEndsWith('/components-aluminum-light.webp', $rest[0]['image_light']);
+        $this->assertStringEndsWith('/components-aluminum-light-thumb.webp', $rest[0]['thumbnail_light']);
+        $this->assertStringEndsWith('/components-thumb.webp', $rest[0]['thumbnail_dark']);
         $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
 
         $custom = [['image' => '/custom.webp', 'alt' => 'معرفی']];
