@@ -221,9 +221,9 @@ async function checkEmailGate(page, labels) {
     await status.locator('svg').waitFor();
     await email.blur();
     await expectState('format', false);
+    const slowRequest = page.waitForRequest(request => request.postData()?.includes('slow.example'));
     await email.fill('preview@slow.example');
     await expectState('checking', false);
-    const slowRequest = page.waitForRequest(request => request.postData()?.includes('slow.example'));
     await email.blur();
     await slowRequest;
     await primary.click();
