@@ -709,6 +709,7 @@ async function checkLoginStories(browser) {
     assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/light.webp');
     const theme = page.locator('.dg-login-preferences .dg-theme-toggle-button');
     await theme.click();
+    await page.locator('[data-dg-theme-choice="dark"]').click();
     assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/story.webp');
     assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
     await panel.locator('.dg-story-dot').first().press('ArrowLeft');
@@ -798,8 +799,10 @@ async function checkLoginSwitchers(browser) {
             }
             if (showTheme) {
                 await theme.click();
+                await page.locator('[data-dg-theme-choice="dark"]').click();
                 assert.equal(await page.locator('html').getAttribute('data-dg-theme'), 'dark');
                 await theme.click();
+                await page.locator('[data-dg-theme-choice="light"]').click();
                 assert.equal(await page.locator('html').getAttribute('data-dg-theme'), 'light');
             }
             if (showLanguage) {
