@@ -325,7 +325,7 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
 
 @media (min-width: 720px) {
     body.login:is(.login-action-login, .login-action-register) #login:has(.dg-has-login-stories) {
-        width: min(1080px, calc(100vw - 32px)) !important;
+        width: min(1080px, calc(100vw - var(--dg-story-edge-space, 32px))) !important;
         max-width: 1080px !important;
     }
 
@@ -346,6 +346,7 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     }
 
     body.login #login:has(> .dg-has-story-drawer) {
+        --dg-story-edge-space: 44px;
         --dg-story-reveal: 0px;
         --dg-story-duration: 480ms;
     }
@@ -368,8 +369,8 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     body.login .dg-digits-login-shell.dg-has-story-drawer {
         --dg-story-fold: -22deg;
         --dg-story-toggle-inset: clamp(10px, 1.6vw, 18px);
-        --dg-story-toggle-size: 36px;
-        --dg-story-toggle-left: calc(-1 * var(--dg-story-toggle-size) - 10px);
+        --dg-story-toggle-width: 32px;
+        --dg-story-toggle-left: calc(-1 * var(--dg-story-toggle-width) - 10px);
         position: relative;
         grid-template-columns: var(--dg-story-form-width) minmax(0, 1fr);
         gap: 0;
@@ -397,7 +398,14 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         position: relative;
         min-inline-size: 0;
         overflow: clip;
+        visibility: hidden;
         background: color-mix(in srgb, var(--dg-accent-soft) 70%, var(--dg-panel-strong));
+        transition: visibility 0s var(--dg-story-duration);
+    }
+
+    body.login .dg-has-story-drawer:is([data-drawer-open], [data-drawer-dragging]) > .dg-story-drawer {
+        visibility: visible;
+        transition-delay: 0s;
     }
 
     body.login .dg-story-drawer > .dg-login-stories {
@@ -421,35 +429,41 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         display: grid;
         place-items: center;
         box-sizing: border-box;
-        inline-size: var(--dg-story-toggle-size);
-        block-size: var(--dg-story-toggle-size);
-        border: 1px solid var(--dg-border);
-        border-radius: 11px;
+        inline-size: var(--dg-story-toggle-width);
+        block-size: 48px;
+        border: 1px solid var(--dg-border-strong);
+        border-radius: 999px;
         padding: 0;
-        background: color-mix(in srgb, var(--dg-panel-strong) 88%, var(--dg-accent));
+        background: var(--dg-panel-strong);
         color: var(--dg-accent-strong);
+        box-shadow: 0 2px 8px color-mix(in srgb, var(--dg-heading) 14%, transparent);
         font: inherit;
         cursor: ew-resize;
         touch-action: pan-y;
         -webkit-tap-highlight-color: transparent;
-        transition: background-color 160ms ease, color 160ms ease;
+        transition: background-color 160ms ease, border-color 160ms ease;
     }
 
     body.login .dg-has-story-drawer[data-drawer-open] > .dg-story-drawer-toggle {
-        right: var(--dg-story-toggle-inset);
+        top: 50%;
+        right: calc(var(--dg-story-toggle-width) / -2);
         left: auto;
+        translate: 0 -50%;
     }
 
     body.login .dg-has-story-drawer[data-drawer-dragging]:not([data-drawer-open]) > .dg-story-drawer-toggle {
         left: calc(var(--dg-story-toggle-left) + var(--dg-story-reveal));
     }
 
-    body.login .dg-story-drawer .dg-story-header { padding-right: 36px; }
-
     body.login .dg-story-drawer-toggle:disabled { visibility: hidden; }
 
     body.login .dg-story-drawer-toggle:hover {
-        background: color-mix(in srgb, var(--dg-panel-strong) 76%, var(--dg-accent));
+        background: var(--dg-accent-soft);
+        border-color: var(--dg-accent);
+    }
+
+    body.login .dg-story-drawer-toggle:active {
+        background: color-mix(in srgb, var(--dg-accent-soft) 78%, var(--dg-accent));
     }
 
     body.login .dg-story-drawer-toggle:focus-visible {
@@ -458,10 +472,12 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     }
 
     body.login .dg-story-drawer-toggle > .dg-auth-icon {
-        inline-size: 17px;
-        block-size: 17px;
-        stroke-width: 2.1;
+        inline-size: 19px;
+        block-size: 19px;
+        stroke-width: 1.8;
     }
+
+    body.login .dg-story-drawer-toggle[aria-expanded="false"] > .dg-auth-icon { scale: -1 1; }
 
     body.login .dg-story-drawer[aria-busy="true"] .dg-story-loading {
         position: absolute;
