@@ -909,15 +909,31 @@ async function checkLoginSwitchers(browser) {
             const card = await page.locator('.dg-native-auth-card').boundingBox();
             const footerBox = await footer.boundingBox();
             assert.ok(footerBox.y > card.y + card.height);
-            for (const width of [320, 390, 768, 1280]) {
-                await page.setViewportSize({ width, height: 850 });
-                const row = await footer.locator(':is(.dg-auth-home, .dg-theme-toggle-button, .dg-language-trigger)').evaluateAll(elements =>
-                    elements.map(el => {
-                        const rect = el.getBoundingClientRect();
-                        return { center: (rect.top + rect.bottom) / 2, fits: rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44 };
-                    }));
-                assert.equal(row.length, 1 + Number(showTheme) + Number(showLanguage));
-                assert.ok(row.every(control => control.fits && Math.abs(control.center - row[0].center) <= 1), JSON.stringify(row));
+            for (const direction of ['ltr', 'rtl']) {
+                await page.evaluate(dir => { document.documentElement.dir = dir; }, direction);
+                for (const width of [320, 390, 768, 1280]) {
+                    await page.setViewportSize({ width, height: 850 });
+                    const { row, start, end } = await footer.evaluate((element, dir) => {
+                        const rtl = dir === 'rtl';
+                        const footerRect = element.getBoundingClientRect();
+                        const row = Array.from(element.querySelectorAll(':is(.dg-auth-home, .dg-theme-toggle-button, .dg-language-trigger)'), control => {
+                            const rect = control.getBoundingClientRect();
+                            return {
+                                start: rtl ? rect.right : rect.left,
+                                end: rtl ? rect.left : rect.right,
+                                center: (rect.top + rect.bottom) / 2,
+                                fits: rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44
+                            };
+                        });
+                        return { row, start: rtl ? footerRect.right : footerRect.left, end: rtl ? footerRect.left : footerRect.right };
+                    }, direction);
+                    assert.equal(row.length, 1 + Number(showTheme) + Number(showLanguage));
+                    assert.ok(row.every(control => control.fits && Math.abs(control.center - row[0].center) <= 1), JSON.stringify(row));
+                    assert.ok(Math.abs(row[0].start - start) <= 1, 'The exit link belongs at the start of the row');
+                    if (row.length > 1) {
+                        assert.ok(Math.abs(row.at(-1).end - end) <= 1, 'The settings belong at the end of the row');
+                    }
+                }
             }
             if (showTheme) {
                 await theme.click();
