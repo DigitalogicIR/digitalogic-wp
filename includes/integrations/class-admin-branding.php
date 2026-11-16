@@ -631,6 +631,7 @@ JS;
 			$config['otpCursor']              = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
 			$config['emailDomainNonce']       = wp_create_nonce( 'digitalogic_email_domain' );
 			$config['loginSlidesUrl']         = rest_url( 'digitalogic/v1/login-slides' );
+			$config['authEventsUrl']         = rest_url( ltrim( Digitalogic_Auth_Realtime::ROUTE, '/' ) );
 			$config['authWebSocket']          = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
 			$config['rememberedAccount']      = Digitalogic_Plugin_Auth_Routes::remembered_account();
 			$config['rememberedAccounts']     = Digitalogic_Plugin_Auth_Routes::remembered_accounts();

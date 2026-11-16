@@ -745,7 +745,7 @@ function rest_get_url_prefix() {
 function rest_url($path = '') {
     $GLOBALS['digitalogic_test_rest_url_calls']++;
 
-	if ( 'digitalogic/v1/login-slides' === $path ) {
+	if ( in_array( $path, array( 'digitalogic/v1/login-slides', 'digitalogic/v1/auth-events' ), true ) ) {
 		return home_url( '/' . rest_get_url_prefix() . '/' . $path );
 	}
 

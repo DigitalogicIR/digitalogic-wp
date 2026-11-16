@@ -16,6 +16,66 @@ const brandingCss = fs.readFileSync(
     'utf8'
 );
 
+test('call status uses WebSocket first and sends fallback proof only in the SSE request header', async () => {
+    const origin = 'https://digitalogic.test';
+    const sockets = [];
+    const fallback = [];
+    const messages = [];
+    let reply = { success: true, data: { status: 'pending' } };
+    class Socket extends EventTarget {
+        readyState = 0;
+
+        constructor(url) {
+            super();
+            sockets.push(url);
+            queueMicrotask(() => {
+                this.readyState = 1;
+                this.dispatchEvent(new Event('open'));
+            });
+        }
+
+        send(frame) {
+            const command = JSON.parse(frame);
+            messages.push(command);
+            this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: command.id, ...reply }) }));
+        }
+    }
+    const browser = {
+        DigitalogicBranding: {
+            authWebSocket: { enabled: true, url: 'wss://digitalogic.test/wordpress-ws', token: 'public-token' },
+            authEventsUrl: origin + '/wp-json/digitalogic/v1/auth-events'
+        },
+        crypto: { randomUUID: () => 'aabc19e1-2e35-4ee0-88d1-6ef46ab79a6b' },
+        sessionStorage: { getItem: () => null, setItem() {} },
+        location: { href: origin + '/login/', origin, host: 'digitalogic.test', search: '' },
+        URL, WebSocket: Socket, setTimeout, clearTimeout,
+        fetch: async (url, options) => {
+            fallback.push({ url, options });
+            return new Response('event: snapshot\ndata: {"call":{"status":"verified"}}\n\n', {
+                headers: { 'Content-Type': 'text/event-stream' }
+            });
+        }
+    };
+    vm.runInNewContext(brandingSource, {
+        window: browser, document: { documentElement: {}, addEventListener() {} },
+        URL, URLSearchParams, Event, DOMException
+    });
+
+    const realtime = browser.DigitalogicAuthRealtime;
+    assert.equal((await realtime.callStatus('challenge', 'private-proof')).status, 'pending');
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0].searchParams.get('auth'), '1');
+    assert.equal(messages[0].command, 'digitalogic_auth_call_watch');
+    assert.equal(fallback.length, 0);
+
+    reply = { success: false };
+    assert.equal((await realtime.callStatus('challenge', 'private-proof')).status, 'verified');
+    assert.equal(fallback[0].options.headers['X-Digitalogic-CSRF'], 'private-proof');
+    assert.equal(fallback[0].url.searchParams.get('flow'), realtime.flowId());
+    assert.equal(fallback[0].url.href.includes('private-proof'), false);
+    assert.equal(messages.every(command => command.command === 'digitalogic_auth_call_watch'), true);
+});
+
 test('login worker warms only public resources and uses exact asset versions', async () => {
     const origin = 'https://digitalogic.test';
     const stylesheet = origin + '/wp-content/plugins/digitalogic-wp/assets/css/branding/admin-branding.css';
