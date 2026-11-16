@@ -50,7 +50,7 @@ test('the call alternative is disclosure-safe and makes no request until start',
 });
 
 test('server-returned dial number and code populate shortcut instructions without an invented IVR digit', () => {
-	assert.match(source, /dialNumber\.textContent = display/);
+	assert.match(source, /dialNumber\.textContent = displayCallNumber\(display, data\.request_country\)/);
 	assert.match(source, /dial\.setAttribute\('href', `tel:\$\{tel\}`\)/);
 	assert.match(source, /code\.textContent = data\.code/);
 	assert.match(source, /body: JSON\.stringify\([^\n]+\{ phone: phone\.value, purpose \}\)/);
