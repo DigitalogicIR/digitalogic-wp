@@ -2740,6 +2740,7 @@
                 ? authRequestLabel('Your email', 'ایمیل شما')
                 : authRequestLabel('Your phone number', 'شمارهٔ شما'));
             recipient.classList.add('dg-auth-identity--recipient');
+            if (!email) { recipient.classList.add('dg-auth-identity--phone'); }
             recipient.querySelector('bdi').dir = 'ltr';
             stack.appendChild(recipient);
         }

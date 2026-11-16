@@ -1774,7 +1774,38 @@ body.login .dg-auth-identity--recipient .dg-auth-identity-mark > :is(.dg-auth-ic
     block-size: 22px;
 }
 
-body.login .dg-auth-field {
+body.login .dg-auth-identity--phone.dg-auth-identity--recipient:not([hidden]) {
+    grid-template-columns: 30px minmax(0, 1fr) 30px;
+    justify-items: center;
+    column-gap: 6px;
+    row-gap: 2px;
+    inline-size: 100%;
+    padding: 10px clamp(8px, 3vw, 16px);
+    text-align: center;
+}
+
+body.login .dg-auth-identity--phone .dg-auth-identity-mark {
+    inline-size: 30px;
+    block-size: 30px;
+    border-radius: 9px;
+    background: var(--dg-accent-soft);
+    box-shadow: none;
+}
+
+body.login .dg-auth-identity--phone .dg-auth-identity-mark > :is(.dg-auth-icon, .digitalogic-call-icon) {
+    inline-size: 16px;
+    block-size: 16px;
+}
+
+body.login .dg-auth-identity--phone :is(.dg-auth-identity-label, .dg-auth-identity-value) {
+    grid-column: 2;
+}
+
+body.login .dg-auth-identity--phone .dg-auth-identity-value {
+    font: 750 clamp(19px, 4vw, 23px)/1.3 var(--dg-auth-digits, var(--dg-font));
+}
+
+body.login :is(.dg-auth-field, .dg-auth-identity--phone) {
     --dg-field-background: var(--dg-input-bg);
     --dg-field-border: color-mix(in srgb, var(--dg-border-strong) 40%, var(--dg-border));
     --dg-field-focus-border: color-mix(in srgb, var(--dg-accent-strong) 62%, var(--dg-accent));
@@ -3292,11 +3323,15 @@ body.login #login .dg-call-unified a.dg-call-number {
     border-radius: 10px;
     color: #16191d;
     font: 750 clamp(18px, 2.5vw, 22px)/1.3 var(--dg-font, system-ui);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0;
     text-decoration: none;
     white-space: nowrap;
     transition: background-color 160ms ease;
+}
+body.login .dg-auth-identity--phone .dg-auth-identity-value,
+body.login #login .dg-call-unified [data-call-dial-number] {
+    font-variant-numeric: proportional-nums;
+    font-feature-settings: "tnum" 0;
+    letter-spacing: -.025em;
 }
 body.login #login .dg-call-line:dir(rtl) > a.dg-call-number {
     margin: 0 auto 0 0;
