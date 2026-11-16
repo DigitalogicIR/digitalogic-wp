@@ -104,7 +104,7 @@
 		const dialNumber = dial?.querySelector('[data-call-dial-number]') || dial;
 		const previewDial = widget.querySelector('[data-call-preview-dial]');
 		const previewNumber = previewDial?.querySelector('[data-call-dial-number]') || previewDial;
-		const callerSummaries = widget.querySelectorAll('[data-call-caller]');
+		const callerSummary = widget.querySelector('[data-call-caller]');
 		const lanAction = widget.closest('.dg-digits-login-shell')?.querySelector('[data-call-lan-action]');
 		const publicDial = { href: previewDial?.getAttribute('href'), display: previewNumber?.textContent };
 		const entry = widget.querySelector('[data-call-entry]');
@@ -266,6 +266,7 @@
 				cancel.disabled = false;
 			}
 			busyRegion.removeAttribute('aria-busy');
+			status.parentElement?.removeAttribute('data-verifying');
 			showStep(preview ? 'preview' : 'entry');
 			showError(message);
 		}
@@ -336,7 +337,10 @@
 					if (cancel) {
 						cancel.disabled = true;
 					}
-					busyRegion.setAttribute('aria-busy', 'true');
+					status.textContent = isBrandedLogin()
+						? (messages.finishing || 'Code confirmed. Finishing sign-in…')
+						: (messages.verified || 'Phone number verified. Finishing…');
+					status.parentElement?.setAttribute('data-verifying', '');
 					try {
 						await consume(expectedGeneration, expectedChallengeId, expectedCsrfToken);
 					} catch (consumeError) {
@@ -559,6 +563,7 @@
 			addIcon(cancel, 'back');
 			addIcon(previewDial, 'phone');
 			addIcon(dial, 'phone');
+			addIcon(callerSummary?.querySelector('.dg-auth-identity-mark'), 'phone');
 			// The branded auth component supplies the forward arrow and direction.
 			confirm?.addEventListener('click', () => {
 				start.click();
@@ -584,10 +589,10 @@
 					if (!start.disabled) {
 						phone.value = internal ? '' : value;
 						delivery = internal ? 'extension' : 'incoming';
-						callerSummaries.forEach((summary) => {
-							summary.querySelector('[data-call-caller-number]').textContent = phone.value;
-							summary.hidden = !phone.value;
-						});
+						if (callerSummary) {
+							callerSummary.querySelector('[data-call-caller-number]').textContent = phone.value;
+							callerSummary.hidden = !phone.value;
+						}
 						if (previewDial) {
 							previewDial.href = internal ? `tel:${lanAction.dataset.extension}` : publicDial.href;
 							previewNumber.textContent = internal ? lanAction.dataset.extension : publicDial.display;

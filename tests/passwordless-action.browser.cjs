@@ -337,14 +337,19 @@ async function checkCountryPicker(page) {
 
 async function checkSmsAction(page, labels) {
     let attempts = 0;
-    await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => {
+    let releaseFailure;
+    const pendingFailure = new Promise(resolve => { releaseFailure = resolve; });
+    await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', async route => {
         if (route.request().postData().includes('digitalogic_otp_completion')) {
             return route.fulfill({ json: { success: true, data: { pending: true } } });
         }
         if (route.request().postData().includes('name="sms_otp"')) {
             assert.match(route.request().postData(), /name="rememberme"\r\n\r\n1/);
             attempts++;
-            if (attempts === 1) return route.fulfill({ status: 503, body: 'error' });
+            if (attempts === 1) {
+                await pendingFailure;
+                return route.fulfill({ status: 503, body: 'error' });
+            }
             if (attempts === 2) return route.fulfill({ json: { success: false, data: { message: 'Code expired. Request a new code.' } } });
             return route.fulfill({ json: { success: true, data: { redirect: '/complete' } } });
         }
@@ -414,6 +419,8 @@ async function checkSmsAction(page, labels) {
     });
     const verify = page.getByRole('button', { name: labels.verifyCode, exact: true });
     assert.equal(await page.locator('.dg-otp-editor :focus').count(), 0);
+    await page.locator('.dg-otp-progress[data-state="verifying"]').waitFor();
+    releaseFailure();
     const alert = page.locator('.dg-otp-feedback');
     await alert.waitFor();
     assert.match(await alert.innerText(), /HTTP 503/);
@@ -423,13 +430,15 @@ async function checkSmsAction(page, labels) {
     await first.focus();
     await page.keyboard.insertText('۱۲۳۴۵۶');
     assert.equal(attempts, 1, 'Refilling a complete code must wait for explicit submit');
+    await page.locator('.dg-otp-progress[data-state="ready"]').waitFor();
     await verify.click();
     await page.locator('.dg-otp-editor[aria-invalid="true"]').waitFor();
     assert.equal(await alert.innerText(), 'Code expired. Request a new code.');
     assert.equal(await first.evaluate(el => document.activeElement === el), true);
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
     await verify.click();
-    await page.locator('dialog.dg-auth-success[open] .dg-auth-success-icon svg').waitFor();
+    await page.locator('.dg-auth-is-success > section.dg-auth-success .dg-auth-success-icon svg').waitFor();
+    assert.equal(await verify.isVisible(), false);
     assert.match(page.url(), /login/);
     await page.waitForURL('**/complete');
 }
@@ -486,7 +495,7 @@ async function checkOtpContinuity(page, labels, direction) {
     assert.equal(await page.locator('[name="otp_token_key"]').inputValue(), token);
     await cells.first().focus();
     await page.keyboard.insertText('۱۲۳۴۵۶');
-    await page.locator('dialog.dg-auth-success[open]').waitFor();
+    await page.locator('.dg-auth-is-success > section.dg-auth-success').waitFor();
     assert.equal(await page.locator('.dg-otp-feedback').count(), 0);
     await page.waitForURL(destination);
     assert.equal(submits, 1);

@@ -1349,51 +1349,111 @@ body.login .dg-username-password-step {
     width: 100%;
 }
 
-body.login .dg-username-login-summary {
+body.login .dg-auth-identity:not([hidden]) {
     display: grid;
     justify-items: center;
-    gap: 8px;
+    gap: 6px;
+    min-inline-size: 0;
+    color: var(--dg-heading);
+}
+
+body.login .dg-username-login-summary {
     margin-block: 4px 18px;
     padding-block: 4px;
-    color: var(--dg-heading);
     text-align: center;
 }
 
-body.login .dg-username-login-value {
+body.login .dg-auth-identity-value {
     max-inline-size: 100%;
     overflow-wrap: anywhere;
     font: 800 17px/1.5 var(--dg-font, system-ui, sans-serif);
+    -webkit-user-select: text;
+    user-select: text;
 }
 
-body.login .dg-username-login-avatar {
+body.login .dg-auth-identity-mark {
     display: grid;
     place-items: center;
     inline-size: 64px;
     block-size: 64px;
     overflow: hidden;
     border-radius: 50%;
-    background: var(--dg-accent-soft);
+    background: radial-gradient(ellipse at 32% 18%, var(--dg-panel-strong), var(--dg-accent-soft) 76%);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dg-accent) 13%, transparent);
     color: var(--dg-accent-strong);
 }
 
-body.login .dg-username-login-avatar > * {
+body.login .dg-auth-identity-mark > * {
     grid-area: 1 / 1;
 }
 
-body.login .dg-username-login-avatar > img {
+body.login .dg-auth-identity-mark > img {
     inline-size: 100%;
     block-size: 100%;
     object-fit: cover;
 }
 
-body.login .dg-username-login-avatar > img[hidden],
-body.login .dg-username-login-avatar:has(> img:not([hidden])) > svg {
+body.login .dg-auth-identity-mark > img[hidden],
+body.login .dg-auth-identity-mark:has(> img:not([hidden])) > svg {
     display: none;
 }
 
-body.login .dg-username-login-avatar > .dg-auth-icon {
+body.login .dg-auth-identity-mark > :is(.dg-auth-icon, .digitalogic-call-icon) {
+    position: static;
     inline-size: 28px;
     block-size: 28px;
+}
+
+body.login .dg-auth-identity--recipient:not([hidden]) {
+    grid-template-columns: max-content minmax(0, 1fr);
+    justify-items: start;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 0;
+    padding-block: 10px;
+    text-align: start;
+}
+
+body.login .dg-auth-identity--recipient .dg-auth-identity-mark {
+    grid-row: span 2;
+    inline-size: 46px;
+    block-size: 46px;
+}
+
+body.login .dg-auth-identity-label {
+    color: var(--dg-text-soft);
+    font: 600 13px/1.55 var(--dg-font, system-ui, sans-serif);
+}
+
+body.login .dg-auth-identity--recipient .dg-auth-identity-value {
+    font: 750 19px/1.45 var(--dg-auth-digits, var(--dg-font));
+    font-variant-numeric: tabular-nums;
+}
+
+body.login .dg-auth-identity--recipient .dg-auth-identity-mark > :is(.dg-auth-icon, .digitalogic-call-icon) {
+    inline-size: 22px;
+    block-size: 22px;
+}
+
+body.login .dg-auth-identity--compact:not([hidden]) {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+}
+
+body.login .dg-auth-identity--compact .dg-auth-identity-mark {
+    inline-size: 28px;
+    block-size: 28px;
+}
+
+body.login .dg-auth-identity--compact .dg-auth-identity-mark > .dg-auth-icon {
+    inline-size: 17px;
+    block-size: 17px;
+}
+
+body.login .dg-auth-identity--compact .dg-auth-identity-value {
+    font: inherit;
+    user-select: none;
 }
 
 body.login .dg-auth-field {
@@ -2841,21 +2901,6 @@ body.login .dg-call-unified :is(.dg-call-steps, .dg-call-copy) p {
     color: var(--dg-text-soft);
     font-size: 14px;
 }
-body.login .dg-call-caller:not([hidden]) {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 4px 12px;
-    padding: 10px 13px;
-    color: var(--dg-text-soft);
-    font-size: 13px;
-}
-body.login .dg-call-caller bdi {
-    color: var(--dg-heading);
-    font: 750 16px/1.4 var(--dg-font, system-ui);
-    font-variant-numeric: tabular-nums;
-}
 body.login .dg-call-line:not([hidden]) {
     display: flex;
     flex-wrap: wrap;
@@ -2992,8 +3037,9 @@ body.login .dg-account-hint :is(summary, button) {
     cursor: pointer;
 }
 body.login .dg-account-hint button { margin-block-start: 5px; }
-body.login .dg-account-hint summary {
+body.login .dg-account-hint :is(summary, button) {
     justify-content: flex-start;
+    text-align: start;
     gap: 9px;
 }
 body.login .dg-account-hint summary::after {
@@ -4394,20 +4440,21 @@ body.wp-admin .digitalogic-panel-page .button-hero {
 }
 
 
+body.login .dg-auth-is-success > :is(.digits-form_container, .dg-call-unified, form) {
+    display: none !important;
+}
+
 body.login .dg-auth-success {
     box-sizing: border-box;
-    width: min(360px, calc(100vw - 32px));
-    padding: 32px 24px;
-    border: 1px solid var(--dg-border);
-    border-radius: 24px;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    min-block-size: clamp(320px, 53svh, 440px);
+    min-inline-size: 0;
+    padding: clamp(24px, 4vw, 40px);
     color: var(--dg-text);
-    background: var(--dg-panel-strong, #fff);
-    box-shadow: var(--dg-shadow-soft);
     font-family: var(--dg-font, system-ui, sans-serif);
     text-align: center;
-}
-body.login .dg-auth-success::backdrop {
-    background: rgb(15 35 55 / 35%);
 }
 body.login .dg-auth-success-icon {
     display: grid;
@@ -4416,8 +4463,8 @@ body.login .dg-auth-success-icon {
     height: 56px;
     margin: 0 auto 16px;
     border-radius: 50%;
-    color: #087747;
-    background: #d8f7e7;
+    color: light-dark(#087747, #96ebba);
+    background: light-dark(#d8f7e7, #174333);
 }
 body.login .dg-auth-success-icon .dg-auth-icon {
     position: static;
@@ -4427,8 +4474,46 @@ body.login .dg-auth-success-icon .dg-auth-icon {
 }
 body.login .dg-auth-success h2 {
     margin: 0 0 6px;
-    color: inherit;
-    font: 750 20px/1.5 var(--dg-font, system-ui, sans-serif);
+    color: var(--dg-heading);
+    font: 800 clamp(23px, 3vw, 32px)/1.5 var(--dg-font, system-ui, sans-serif);
+}
+body.login .dg-auth-success h2:focus {
+    outline: none;
+}
+
+body.login .dg-otp-progress {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0;
+    min-block-size: 1.6em;
+    color: var(--dg-accent-strong);
+    font: 650 13px/1.6 var(--dg-font, system-ui, sans-serif);
+    text-align: center;
+}
+
+body.login .dg-otp-progress[data-state="verifying"]::before,
+body.login .dg-call-wait[data-verifying] [data-call-status]::before {
+    content: "";
+    display: inline-block;
+    box-sizing: border-box;
+    flex: 0 0 14px;
+    inline-size: 14px;
+    block-size: 14px;
+    margin-inline-end: 3px;
+    vertical-align: middle;
+    border: 2px solid var(--dg-accent-soft);
+    border-inline-end-color: currentColor;
+    border-radius: 50%;
+    animation: dg-fuji-spin 800ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.login .dg-otp-progress[data-state="verifying"]::before,
+    body.login .dg-call-wait[data-verifying] [data-call-status]::before {
+        animation: none;
+    }
 }
 body.login .dg-auth-success p {
     margin: 0;

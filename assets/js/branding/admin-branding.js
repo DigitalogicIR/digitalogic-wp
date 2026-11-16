@@ -1107,6 +1107,12 @@
         window.clearTimeout(loadingFailSafeTimer);
         document.body.classList.remove('dg-login-submitting');
         unlockPendingForms();
+        document.querySelectorAll('.dg-otp-progress[data-state="verifying"]').forEach(function (status) {
+            if (!digitsOtpChecking.has(status.closest('form'))) {
+                status.textContent = '';
+                delete status.dataset.state;
+            }
+        });
         document.querySelectorAll('.digits_form_processing').forEach(function (form) {
             form.classList.remove('digits_form_processing');
         });
@@ -1283,25 +1289,32 @@
     }
 
     function showAuthSuccess(continueSignIn) {
-        if (document.querySelector('.dg-auth-success')) { return; }
+        var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        if (!shell) { continueSignIn(); return; }
+        if (shell.classList.contains('dg-auth-is-success')) { return; }
         clearLoading();
         var persian = isPersianLocale();
-        var dialog = document.createElement('dialog');
-        dialog.className = 'dg-auth-success';
-        dialog.setAttribute('aria-labelledby', 'dg-auth-success-title');
+        var step = document.createElement('section');
+        step.className = 'dg-auth-success';
+        step.setAttribute('aria-labelledby', 'dg-auth-success-title');
+        var previous = Array.from(shell.children).find(function (node) {
+            return node.matches('.digits-form_container, .dg-call-unified, form') && isVisibleElement(node);
+        });
+        if (previous) { step.style.minBlockSize = previous.getBoundingClientRect().height + 'px'; }
         var icon = document.createElement('span');
         icon.className = 'dg-auth-success-icon';
         putAuthIcon(icon, 'check');
         var title = document.createElement('h2');
         title.id = 'dg-auth-success-title';
+        title.tabIndex = -1;
         title.textContent = persian ? 'ورود موفق بود' : 'Signed in successfully';
         var detail = document.createElement('p');
         detail.setAttribute('role', 'status');
         detail.textContent = persian ? 'در حال انتقال…' : 'Redirecting…';
-        dialog.append(icon, title, detail);
-        document.body.append(dialog);
-        dialog.addEventListener('cancel', function (event) { event.preventDefault(); });
-        dialog.showModal();
+        step.append(icon, title, detail);
+        shell.appendChild(step);
+        shell.classList.add('dg-auth-is-success');
+        title.focus({ preventScroll: true });
         window.requestAnimationFrame(function () {
             window.requestAnimationFrame(function () { window.setTimeout(continueSignIn, 650); });
         });
@@ -1723,10 +1736,7 @@
             step.innerHTML = [
                 '<div class="digits-form_body_wrapper">',
                 '<div class="digits-form_tab_body digits-tab_active">',
-                '<div class="dg-username-login-summary">',
-                '<span class="dg-username-login-avatar" aria-hidden="true"></span>',
-                '<bdi class="dg-username-login-value"></bdi>',
-                '</div>',
+                '<div class="dg-username-login-profile"></div>',
                 '<input class="dg-username-password-input" type="password" autocomplete="current-password" required aria-label="' + passwordLabel + '" placeholder="' + passwordLabel + '">',
                 '<div class="dg-username-login-actions">',
                 '<button type="button" class="button dg-username-login-back"><span class="dashicons dashicons-arrow-left-alt" aria-hidden="true"></span><span>' + escapeHtml(backLabel) + '</span></button>',
@@ -1759,23 +1769,17 @@
 
         step.hidden = false;
         step.style.display = '';
-        step.querySelector('.dg-username-login-value').textContent = username;
-        var avatar = step.querySelector('.dg-username-login-avatar');
-        avatar.replaceChildren();
-        putAuthIcon(avatar, 'user');
         var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
         var account = [config.rememberedAccount].concat(accounts).find(function (candidate) {
             return candidate && candidate.login === username;
         });
-        if (account?.avatar) {
-            var photo = document.createElement('img');
-            photo.alt = '';
-            photo.hidden = true;
-            photo.addEventListener('load', function () { photo.hidden = false; }, { once: true });
-            photo.addEventListener('error', function () { photo.remove(); }, { once: true });
-            avatar.appendChild(photo);
-            photo.src = account.avatar;
-        }
+        var photo = account?.avatar;
+        var kind = emailDomain(username) ? 'email' : 'user';
+        var identity = createAuthIdentity(username, kind, photo);
+        identity.classList.add('dg-username-login-summary');
+        identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
+        identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
+        step.querySelector('.dg-username-login-profile').replaceChildren(identity);
         var password = step.querySelector('.dg-username-password-input');
         password.disabled = false;
         password.focus({ preventScroll: true });
@@ -1958,6 +1962,7 @@
         var state = digitsOtpContinuations.get(form);
         if (state) {
             digitsOtpChecking.add(form);
+            setOtpProgress(form, 'verifying');
             try {
                 var response = await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
                     method: 'POST',
@@ -1980,7 +1985,10 @@
                     return;
                 }
             } catch (error) { /* Keep the current challenge available on a failed check. */ }
-            finally { digitsOtpChecking.delete(form); }
+            finally {
+                digitsOtpChecking.delete(form);
+                setOtpProgress(form, '');
+            }
             if (digitsOtpContinuations.get(form) !== state) { return; }
             state.verifying = false;
             if (state.html) { persistDigitsOtpContinuation(state); }
@@ -2225,6 +2233,17 @@
         });
     }
 
+    function setOtpProgress(form, state) {
+        var status = form?.querySelector('.dg-otp-progress');
+        if (!status || status.dataset.state === state) { return; }
+        status.dataset.state = state;
+        status.textContent = state === 'verifying'
+            ? authRequestLabel('Verifying your code…', 'در حال بررسی کد تأیید…')
+            : state === 'ready'
+                ? authRequestLabel('Code entered. Select Verify code to continue.', 'کد وارد شد. برای ادامه «تأیید کد» را بزنید.')
+                : '';
+    }
+
     function submitCompletedOtp(input, count) {
         var form = input.form;
         if (!form || input.value.length !== count) { return; }
@@ -2234,6 +2253,8 @@
         if (!digitsOtpAutoSubmitted.has(form)) {
             digitsOtpAutoSubmitted.add(form);
             button.click();
+        } else {
+            setOtpProgress(form, 'ready');
         }
     }
 
@@ -2284,7 +2305,26 @@
         }
 
         moveInformation();
-        stack.append(help, editor);
+        stack.appendChild(help);
+        var email = input.name === 'email_otp';
+        var source = form?.querySelector(email ? 'input[name="digits_email"], input[name="email"]'
+            : 'input[name="digits_phone"], input[name="phone"]');
+        var supplied = normalizeDigits(source?.value || '').trim();
+        var country = form?.querySelector('input[name="login_digt_countrycode"], input[name="countrycode"]')?.value;
+        var address = email ? (emailDomain(supplied) && supplied) : phonePartsFromValue(supplied, country)?.e164;
+        if (address && form?.closest('.dg-digits-login-shell, .dg-digits-register-shell')) {
+            var recipient = createAuthIdentity(address, email ? 'email' : 'phone', '', email
+                ? authRequestLabel('Your email', 'ایمیل شما')
+                : authRequestLabel('Your phone number', 'شمارهٔ شما'));
+            recipient.classList.add('dg-auth-identity--recipient');
+            recipient.querySelector('bdi').dir = 'ltr';
+            stack.appendChild(recipient);
+        }
+        var progress = document.createElement('p');
+        progress.className = 'dg-otp-progress';
+        progress.setAttribute('role', 'status');
+        progress.setAttribute('aria-atomic', 'true');
+        stack.append(editor, progress);
         var heading = input.form?.querySelector('.digits-form_heading');
         if (heading && !heading.querySelector('.dg-otp-heading')) {
             var title = document.createElement('span');
@@ -2335,6 +2375,7 @@
                 ? cells.map(function (cell) { return cell.value; }).join('') : '';
             if (editor.hasAttribute('aria-invalid')) { form?.querySelector('.dg-otp-feedback')?.remove(); }
             editor.removeAttribute('aria-invalid');
+            if (!input.value) { setOtpProgress(form, ''); }
         }
 
         function focusDigit(index) {
@@ -2714,6 +2755,7 @@
                     } else {
                         if (verifiesCode) {
                             stopDigitsSmsWait(requestForm);
+                            setOtpProgress(requestForm, 'verifying');
                         }
                         var action = document.activeElement;
                         markLoading(action && action.matches && action.matches('.dg-passkey-options .digits-form_passwordless_login')
@@ -2975,6 +3017,7 @@
             return;
         }
 
+        if (otp) { setOtpProgress(form, 'verifying'); }
         if (hasPendingDigitsRecaptcha(form) && !waitForDigitsRecaptcha(form, button)) {
             return;
         }
@@ -3840,7 +3883,7 @@
         var previous;
 
         function currentStep() {
-            if (document.querySelector('.dg-auth-success[open]')) { return 'success'; }
+            if (shell.classList.contains('dg-auth-is-success')) { return 'success'; }
             var call = shell.querySelector('[data-call-unified]')?.dataset.callStep;
             if (call === 'preview' || call === 'code') { return call === 'code' ? 'call-code' : 'call'; }
             var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
@@ -4567,6 +4610,36 @@
         node.prepend(svg);
     }
 
+    function createAuthIdentity(value, icon, photo, label) {
+        var card = document.createElement('span');
+        card.className = 'dg-auth-identity';
+        var mark = document.createElement('span');
+        mark.className = 'dg-auth-identity-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        putAuthIcon(mark, icon);
+        if (photo) {
+            var image = document.createElement('img');
+            image.alt = '';
+            image.hidden = true;
+            image.addEventListener('load', function () { image.hidden = false; }, { once: true });
+            image.addEventListener('error', function () { image.remove(); }, { once: true });
+            mark.appendChild(image);
+            image.src = photo;
+        }
+        var name = document.createElement('bdi');
+        name.className = 'dg-auth-identity-value';
+        name.textContent = value;
+        card.appendChild(mark);
+        if (label) {
+            var caption = document.createElement('span');
+            caption.className = 'dg-auth-identity-label';
+            caption.textContent = label;
+            card.appendChild(caption);
+        }
+        card.appendChild(name);
+        return card;
+    }
+
     function decorateNativeLoginCards() {
         var login = document.querySelector('body.login #login');
         if (!login) { return; }
@@ -4665,18 +4738,9 @@
         var displayedAccount;
         hint.appendChild(summary);
         function showAccount(node, label, account) {
-            var text = document.createElement('span');
-            text.textContent = label;
-            text.dir = 'auto';
-            node.replaceChildren(text);
-            if (!account?.avatar) {
-                putAuthIcon(node, 'user');
-                return;
-            }
-            var img = document.createElement('img');
-            img.alt = '';
-            img.src = account.avatar;
-            node.prepend(img);
+            var identity = createAuthIdentity(label, 'user', account?.avatar);
+            identity.classList.add('dg-auth-identity--compact');
+            node.replaceChildren(identity);
         }
         function updateSummary(value) {
             var selected = accounts.find(function (account) { return account.login === value; }) || null;
