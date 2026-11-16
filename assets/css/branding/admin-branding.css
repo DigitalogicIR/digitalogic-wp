@@ -109,6 +109,17 @@ body.login:has(.dg-digits-login-shell) #login {
     margin-inline: auto !important;
 }
 
+body.login #login:has(> .dg-digits-login-shell) {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    max-block-size: 100dvh;
+}
+
+body.login #login:has(> .dg-digits-login-shell) > :not(.dg-digits-login-shell) {
+    flex-shrink: 0;
+}
+
 body.login::before,
 body.login::after,
 body.wp-admin::before {
@@ -1835,6 +1846,9 @@ body.login .dg-digits-login-shell .dg-skip-password:focus-visible {
 }
 
 body.login .dg-passkey-options {
+    --dg-passkey-action-size: 52px;
+    --dg-passkey-action-gap: 8px;
+    min-block-size: calc(max(44px, 1lh + 16px) + var(--dg-passkey-action-size) + var(--dg-passkey-action-gap));
     margin-block: 14px 0;
     color: var(--dg-text-soft);
     font: 500 14px/1.65 var(--dg-font, system-ui, sans-serif);
@@ -1843,6 +1857,8 @@ body.login .dg-passkey-options {
 
 body.login .dg-passkey-options summary {
     display: list-item;
+    box-sizing: border-box;
+    min-block-size: 44px;
     width: fit-content;
     margin-inline: auto;
     padding: 8px;
@@ -2870,13 +2886,18 @@ body.login .dg-digits-login-shell .dg-sms-identity-help {
     font-size: 13px;
     line-height: 1.7;
 }
-body.login .dg-phone-channels:not([hidden]) {
+body.login .dg-phone-channels:not([hidden]),
+body.login .dg-digits-login-shell:has(> [data-call-unified][data-call-available="true"]) form.digloginpage.digits_form_index_section .dg-phone-channels[hidden] {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     margin: 0 0 12px;
     padding: 0;
     border: 0;
+}
+
+body.login .dg-phone-channels[hidden] {
+    visibility: hidden;
 }
 body.login .dg-phone-channels legend {
     margin-block-end: 5px;
@@ -3189,10 +3210,10 @@ body.login .dg-recovery-dialog .dg-recovery-cancel {
 body.login .dg-passkey-options summary::-webkit-details-marker { display: none; }
 body.login .dg-digits-login-shell .dg-passkey-options > .digits-form_passwordless_login,
 body.login .dg-digits-login-shell .dg-passkey-options .digitalogic-call-toggle {
-    min-block-size: 52px !important;
-    block-size: 52px !important;
+    min-block-size: var(--dg-passkey-action-size) !important;
+    block-size: var(--dg-passkey-action-size) !important;
     padding: 8px 14px !important;
-    margin-block: 8px 0 !important;
+    margin-block: var(--dg-passkey-action-gap) 0 !important;
     line-height: 1.4 !important;
     background: var(--dg-panel-soft);
     white-space: normal;
@@ -5344,6 +5365,41 @@ body.login .dg-digits-login-shell {
 body.login .dg-digits-login-shell > .digits-form_container {
     align-self: stretch;
     min-block-size: clamp(320px, 53svh, 440px);
+}
+
+body.login #login > .dg-digits-login-shell {
+    min-block-size: 0;
+    grid-template-rows: minmax(0, 1fr);
+}
+
+body.login #login > .dg-digits-login-shell > :is(.digits-form_container, form, .dg-call-unified, .dg-auth-success) {
+    min-block-size: 0;
+    overflow-y: auto !important;
+    overscroll-behavior-y: contain;
+    scrollbar-width: thin;
+}
+
+body.login #login > .dg-digits-login-shell > .dg-story-drawer {
+    min-block-size: 0;
+}
+
+body.login #login > .dg-digits-login-shell .dg-story-drawer > .dg-login-stories {
+    min-block-size: 0;
+    justify-content: safe center;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+@media (width < 720px) {
+    body.login #login > .dg-digits-login-shell {
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    body.login #login > .dg-digits-login-shell.dg-mobile-auth-ready {
+        min-block-size: 100dvh;
+    }
 }
 
 body.login .dg-digits-login-shell :is(.digits-form_container, .digits-form_wrapper, form.digloginpage, form.digits_register, .digits-form_login, .digits-form_register, .dg-call-unified, .dg-call-unified .digitalogic-call-panel, .dg-call-unified .digitalogic-call-instructions):not([hidden], [style*="display: none"]) {
