@@ -599,9 +599,9 @@ JS;
             'digitsRecaptchaSiteKey' => (string) get_option('digits_recaptcha_site_key', ''),
             'recaptchaScriptBase' => 'https://www.recaptcha.net/recaptcha/api.js',
             'labels' => [
-                'dark' => 'تیره',
+                'dark' => 'تاریک',
                 'light' => 'روشن',
-                'toggleToDark' => 'تغییر به حالت تیره',
+                'toggleToDark' => 'تغییر به حالت تاریک',
                 'toggleToLight' => 'تغییر به حالت روشن',
                 'runtimeError' => 'یک خطای غیرمنتظره در صفحه رخ داد. بهتر است صفحه را تازه سازی کنید و دوباره ادامه دهید.',
                 'requestError' => 'یک درخواست پس زمینه با خطا روبه رو شد. دوباره تلاش کنید یا صفحه را تازه سازی کنید.',
@@ -632,6 +632,7 @@ JS;
 
         if (!$is_fa) {
             return [
+                'theme'                 => 'Theme',
                 'dark'                  => 'Dark',
                 'light'                 => 'Light',
                 'toggleToDark'          => 'Switch to dark mode',
@@ -689,9 +690,10 @@ JS;
         }
 
         return [
-            'dark'                  => 'تیره',
+            'theme'                 => 'قالب',
+            'dark'                  => 'تاریک',
             'light'                 => 'روشن',
-            'toggleToDark'          => 'تغییر به حالت تیره',
+            'toggleToDark'          => 'تغییر به حالت تاریک',
             'toggleToLight'         => 'تغییر به حالت روشن',
             'runtimeError'          => 'یک خطای غیرمنتظره در صفحه رخ داد. صفحه را تازه‌سازی کنید و دوباره ادامه دهید.',
             'requestError'          => 'درخواست پس‌زمینه با خطا روبه‌رو شد. دوباره تلاش کنید یا صفحه را تازه‌سازی کنید.',

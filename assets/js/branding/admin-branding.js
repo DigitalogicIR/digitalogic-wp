@@ -173,13 +173,6 @@
         return 'light';
     }
 
-    function themeToggleMarkup(theme, label) {
-        var icon = theme === 'dark' ? 'dashicons-lightbulb' : 'dashicons-hidden';
-
-        return '<span class="dashicons ' + icon + '" aria-hidden="true"></span>' +
-            '<span class="dg-toggle-text">' + escapeHtml(label) + '</span>';
-    }
-
     function broadcastTheme(theme) {
         try {
             if (window.localStorage) {
@@ -270,18 +263,14 @@
     function syncToggleLabels(theme) {
         var nextLabel = theme === 'dark'
             ? getLabel('toggleToLight', 'تغییر به حالت روشن')
-            : getLabel('toggleToDark', 'تغییر به حالت تیره');
-        var buttonLabel = theme === 'dark'
-            ? getLabel('light', 'روشن')
-            : getLabel('dark', 'تیره');
+            : getLabel('toggleToDark', 'تغییر به حالت تاریک');
 
         document.querySelectorAll('[data-dg-theme-toggle-label]').forEach(function (node) {
             node.textContent = nextLabel;
         });
 
-        document.querySelectorAll('[data-dg-theme-toggle-button]').forEach(function (node) {
-            node.setAttribute('aria-label', nextLabel);
-            node.innerHTML = themeToggleMarkup(theme, buttonLabel);
+        document.querySelectorAll('[data-dg-theme-choice]').forEach(function (node) {
+            node.setAttribute('aria-pressed', String(node.dataset.dgThemeChoice === theme));
         });
     }
 
@@ -347,6 +336,116 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
+    function createAuthDisclosure(className, triggerClass, label, icon, showLabel) {
+        var disclosure = document.createElement('details');
+        disclosure.className = className;
+        var trigger = document.createElement('summary');
+        trigger.className = triggerClass;
+        trigger.setAttribute('aria-label', label);
+        trigger.title = label;
+        putAuthIcon(trigger, icon);
+        if (showLabel) {
+            var text = document.createElement('span');
+            text.className = 'dg-toggle-text';
+            text.textContent = label;
+            trigger.appendChild(text);
+        }
+        var panel = document.createElement('div');
+        panel.className = 'dg-auth-disclosure-panel';
+        disclosure.append(trigger, panel);
+        disclosure.addEventListener('keydown', function (event) {
+            if (event.key !== 'Escape' || !disclosure.open) { return; }
+            event.preventDefault();
+            disclosure.open = false;
+            trigger.focus();
+        });
+        document.addEventListener('click', function (event) {
+            if (!disclosure.contains(event.target)) { disclosure.open = false; }
+        });
+        return { disclosure: disclosure, trigger: trigger, panel: panel };
+    }
+
+    function createLoginThemePicker() {
+        var fa = isPersianLocale();
+        var picker = createAuthDisclosure('dg-login-theme', 'dg-theme-toggle-button', getLabel('theme', fa ? 'قالب' : 'Theme'), 'theme', true);
+        var caption = document.createElement('span');
+        caption.className = 'dg-theme-caption';
+        caption.textContent = picker.trigger.textContent;
+        picker.panel.appendChild(caption);
+        ['light', 'dark'].forEach(function (theme) {
+            var choice = document.createElement('button');
+            choice.type = 'button';
+            choice.dataset.dgThemeChoice = theme;
+            choice.textContent = getLabel(theme, theme === 'dark' ? (fa ? 'تاریک' : 'Dark') : (fa ? 'روشن' : 'Light'));
+            putAuthIcon(choice, theme === 'dark' ? 'moon' : 'sun');
+            choice.addEventListener('click', function () {
+                if (theme !== currentTheme()) { setTheme(theme); }
+                picker.disclosure.open = false;
+                picker.trigger.focus();
+            });
+            picker.panel.appendChild(choice);
+        });
+        return picker.disclosure;
+    }
+
+    function mountMobileLoginHeader(login, footer, exit, theme, language) {
+        var shell = login.querySelector(':scope > :is(.dg-digits-login-shell, .dg-digits-register-shell)');
+        var logo = login.querySelector(':scope > .wp-login-logo');
+        if (!shell || !logo) { return; }
+
+        var narrow = window.matchMedia('(width < 720px)');
+        var logoPosition = document.createComment('Login logo');
+        logo.before(logoPosition);
+        var header = document.createElement('header');
+        header.className = 'dg-mobile-auth-header';
+        header.hidden = true;
+        var settings = document.createElement('div');
+        settings.className = 'dg-mobile-auth-preferences dg-login-preferences';
+        header.appendChild(settings);
+        shell.prepend(header);
+        var actions = exit ? createAuthDisclosure('dg-mobile-auth-actions', 'dg-mobile-auth-more',
+            isPersianLocale() ? 'گزینه‌های ورود' : 'Sign-in options', 'ellipsis', false) : null;
+
+        function placeActions() {
+            if (!actions || !narrow.matches) { return; }
+            var heading = Array.from(shell.querySelectorAll('div.digits-form_heading')).find(isVisibleElement);
+            var target = heading || header;
+            if (actions.disclosure.parentElement !== target) {
+                actions.disclosure.open = false;
+                target.appendChild(actions.disclosure);
+            }
+        }
+
+        function layout() {
+            if (narrow.matches) {
+                header.prepend(logo);
+                if (theme) { settings.appendChild(theme); }
+                if (language) { settings.appendChild(language); }
+                if (actions) { actions.panel.appendChild(exit); }
+                shell.classList.add('dg-mobile-auth-ready');
+                header.hidden = false;
+                placeActions();
+            } else {
+                if (actions) {
+                    actions.disclosure.open = false;
+                    header.appendChild(actions.disclosure);
+                    footer.appendChild(exit);
+                }
+                logoPosition.after(logo);
+                if (theme) { footer.appendChild(theme); }
+                if (language) { footer.appendChild(language); }
+                header.hidden = true;
+                shell.classList.remove('dg-mobile-auth-ready');
+            }
+        }
+
+        layout();
+        narrow.addEventListener('change', layout);
+        new MutationObserver(placeActions).observe(shell, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'class', 'style']
+        });
+    }
+
     function mountLoginFooter() {
         if (!document.body?.classList.contains('login') || document.querySelector('.dg-login-preferences')) { return; }
         var login = document.getElementById('login');
@@ -379,16 +478,11 @@
             putAuthIcon(exitLink, isBack ? 'back' : 'home');
             controls.append(exit);
         }
-        if (config.showLoginThemeSwitcher) {
-            var button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'dg-theme-toggle-button';
-            button.setAttribute('data-dg-theme-toggle-button', 'true');
-            button.addEventListener('click', toggleTheme);
-            controls.append(button);
-        }
+        var theme = config.showLoginThemeSwitcher ? createLoginThemePicker() : null;
+        if (theme) { controls.append(theme); }
         if (language) { controls.append(language); }
         syncToggleLabels(currentTheme());
+        mountMobileLoginHeader(login, controls, exitLink ? exit : null, theme, language);
     }
 
     function buildLanguageSwitcher() {
@@ -4577,6 +4671,10 @@
     }
 
     var authIcons = {
+        theme: 'M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 1.5-3.3A1 1 0 0 1 16.3 16H18a3 3 0 0 0 3-3c0-5.5-4-10-9-10Z M7.5 12h.01 M10 7.5h.01 M15 7.8h.01 M17 12h.01',
+        moon: 'M20.8 14.1A9 9 0 0 1 9.9 3.2a9 9 0 1 0 10.9 10.9Z',
+        sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+        ellipsis: 'M5 12h.01m6.99 0h.01m6.99 0h.01',
         user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
         home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
         email: 'M4 5h16v14H4z M4 6l8 6 8-6',
@@ -4709,7 +4807,7 @@
             button.setAttribute('role', 'button');
             button.tabIndex = 0;
             var label = button.querySelector('.digits-social-text');
-            if (label) { label.textContent = isPersianLocale() ? 'ادامه با گوگل' : 'Continue with Google'; }
+            if (label) { label.textContent = isPersianLocale() ? 'حساب کاربری گوگل' : 'Continue with Google'; }
             var divider = button.closest('.digits-social-logins-box').querySelector('.digits-use_social-logins');
             var list = button.closest('.digits-social-logins');
             if (divider && list) { list.before(divider); }

@@ -102,7 +102,7 @@ body.login:has(.dg-digits-login-shell, .dg-digits-register-shell, #lostpasswordf
 
 body.login:has(.dg-digits-login-shell, .dg-digits-register-shell, #lostpasswordform, #resetpassform) #login {
     margin-block: auto;
-    padding-block: clamp(16px, 3vh, 32px);
+    padding-block: var(--dg-login-page-padding, clamp(16px, 3vh, 32px));
 }
 body.login:has(.dg-digits-login-shell) #login {
     min-inline-size: 0 !important;
@@ -3335,7 +3335,7 @@ body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-butt
 }
 
 body.login .dg-login-preferences .dg-theme-toggle-button { flex: 0 0 auto; width: auto; box-shadow: none; }
-body.login .dg-login-preferences:has(.dg-language-picker.is-open) { z-index: 80; }
+body.login .dg-login-preferences:has(.dg-language-picker.is-open, .dg-login-theme[open]) { z-index: 80; }
 body.login .dg-login-preferences :is(.dg-language-form, .dg-language-picker) { min-inline-size: 0; }
 body.login .dg-login-preferences .dg-language-trigger { max-inline-size: 100%; }
 body.login .dg-login-preferences :is(.dg-select-text, .dg-login-exit-label) {
@@ -3358,6 +3358,63 @@ body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-butt
     background: var(--dg-accent-soft);
 }
 
+body.login .dg-login-preferences:empty { display: none; }
+
+body.login :is(.dg-login-theme, .dg-mobile-auth-actions) { position: relative; }
+
+body.login :is(.dg-login-theme, .dg-mobile-auth-actions) > summary {
+    list-style: none;
+    cursor: pointer;
+}
+body.login :is(.dg-login-theme, .dg-mobile-auth-actions) > summary::-webkit-details-marker {
+    display: none;
+}
+
+body.login .dg-auth-disclosure-panel {
+    position: absolute;
+    z-index: 30;
+    inset-inline-end: 0;
+    inset-block-end: calc(100% + 8px);
+    display: grid;
+    gap: 4px;
+    inline-size: max-content;
+    min-inline-size: 144px;
+    max-inline-size: min(270px, calc(100vw - 32px));
+    box-sizing: border-box;
+    padding: 6px;
+    border: 1px solid var(--dg-border);
+    border-radius: 14px;
+    background: var(--dg-panel-strong);
+    box-shadow: var(--dg-shadow-soft);
+}
+
+body.login .dg-auth-disclosure-panel > button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-block-size: 44px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--dg-text);
+    font: 650 14px/1.4 var(--dg-font, system-ui);
+    cursor: pointer;
+}
+body.login .dg-auth-disclosure-panel > button:is(:hover, [aria-pressed="true"]) {
+    background: var(--dg-accent-soft);
+    color: var(--dg-heading);
+}
+body.login .dg-theme-caption {
+    padding: 4px 10px 2px;
+    color: var(--dg-text-soft);
+    font: 650 13px/1.4 var(--dg-font, system-ui);
+}
+body.login :is(.dg-theme-toggle-button, .dg-mobile-auth-more, .dg-auth-disclosure-panel > button):focus-visible {
+    outline: 2px solid var(--dg-accent);
+    outline-offset: 2px;
+}
+
 @media (max-width: 480px) {
     body.login .dg-login-preferences { column-gap: 6px; }
     body.login .dg-login-preferences :is(.dg-language-region, .dg-language-trigger .dashicons-translation) { display: none; }
@@ -3368,6 +3425,112 @@ body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-butt
         font-size: 13px;
     }
     body.login #login .dg-login-preferences #backtoblog .dg-auth-home > .dg-auth-icon { padding: 5px; }
+}
+
+body.login .dg-mobile-auth-header[hidden] { display: none; }
+
+@media (width < 720px) {
+    body.login .dg-mobile-auth-ready {
+        --dg-mobile-auth-inset: clamp(16px, 5vw, 24px);
+        gap: 0;
+        padding: 0;
+    }
+    body.login .dg-mobile-auth-ready::before,
+    body.login .dg-mobile-auth-ready > .dg-login-stories {
+        display: none;
+    }
+    body.login .dg-mobile-auth-header:not([hidden]) {
+        position: relative;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-inline-size: 0;
+        padding: 20px var(--dg-mobile-auth-inset) 12px;
+        border-block-end: 1px solid var(--dg-border);
+    }
+    body.login .dg-mobile-auth-ready > :is(.digits-form_container, .dg-call-unified) {
+        isolation: isolate;
+        z-index: 0;
+    }
+    body.login #login .dg-mobile-auth-header > .wp-login-logo {
+        flex: 1 1 auto;
+        min-inline-size: 0;
+        margin: 0;
+    }
+    body.login #login .dg-mobile-auth-header > .wp-login-logo > a {
+        max-inline-size: 158px;
+        block-size: 44px;
+        margin-inline: 0 auto;
+        margin-block: 0;
+        background-position: center;
+        filter: none;
+    }
+    body.login .dg-mobile-auth-preferences {
+        flex: 0 0 auto;
+        gap: 6px;
+        margin: 0;
+    }
+    body.login .dg-mobile-auth-preferences :is(.dg-language-trigger, .dg-theme-toggle-button),
+    body.login .dg-mobile-auth-more {
+        display: inline-flex;
+        box-sizing: border-box;
+        align-items: center;
+        justify-content: center;
+        inline-size: 44px;
+        block-size: 44px;
+        min-inline-size: 44px;
+        min-block-size: 44px;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--dg-border);
+        border-radius: 12px;
+        background: var(--dg-panel-soft);
+        color: var(--dg-text);
+    }
+    body.login .dg-mobile-auth-preferences :is(.dg-toggle-text, .dg-select-text, .dg-language-chevron) { display: none; }
+    body.login .dg-mobile-auth-preferences .dg-language-trigger .dashicons-translation { display: inline-block; }
+    body.login .dg-mobile-auth-preferences #language-switcher.dg-language-form {
+        margin: 0;
+        padding: 0;
+    }
+    body.login .dg-mobile-auth-actions { flex: 0 0 auto; margin-inline-start: auto; }
+    body.login .dg-mobile-auth-more > .dg-auth-icon { stroke-width: 3; }
+    body.login .dg-mobile-auth-ready :is(.dg-language-menu, .dg-auth-disclosure-panel) {
+        inset-block: calc(100% + 8px) auto;
+        transform-origin: top center;
+    }
+    body.login #login .dg-mobile-auth-actions #backtoblog {
+        margin: 0;
+        padding: 0;
+    }
+    body.login #login .dg-mobile-auth-actions #backtoblog .dg-auth-home {
+        justify-content: flex-start;
+        min-block-size: 44px;
+        padding: 4px 8px;
+        text-align: start;
+    }
+    body.login .dg-mobile-auth-ready > .digits-form_container {
+        padding: 20px var(--dg-mobile-auth-inset) 24px;
+    }
+}
+
+@media (max-width: 480px) {
+    body.login #login:has(> .dg-mobile-auth-ready) {
+        --dg-login-page-padding: 0px;
+        box-sizing: border-box;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0;
+    }
+    body.login #login > .dg-mobile-auth-ready {
+        grid-template-rows: auto 1fr;
+        min-block-size: 100svh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+    }
 }
 
 @media (max-width: 375px) {
