@@ -528,8 +528,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 		$logged_out = 'true' === sanitize_key( wp_unslash( $_GET['loggedout'] ?? '' ) ) && ! is_user_logged_in();
 		// phpcs:enable WordPress.Security.NonceVerification.Recommended
-		$messages   = $logged_out ? new WP_Error( 'loggedout', __( 'You are now logged out.' ), 'message' ) : null;
-		login_header( __( 'Log In' ), '', $messages );
+		login_header( __( 'Log In' ) );
 
         if (isset($_GET['login']) && sanitize_key(wp_unslash($_GET['login'])) === 'failed') {
             echo '<div id="login_error" class="notice notice-error"><p>';
@@ -543,7 +542,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 		do_action( 'digitalogic_branded_login_content' );
         echo '</div>';
 
-        self::render_login_footer();
+        self::render_login_footer( $logged_out );
         exit;
     }
 
@@ -679,12 +678,23 @@ final class Digitalogic_Plugin_Auth_Routes {
     }
 
 	/** Keep the core language selector optional and local to this footer render. */
-	private static function render_login_footer(): void {
+	private static function render_login_footer( bool $logged_out = false ): void {
 		$show_language = (bool) apply_filters( 'digitalogic_login_show_language_switcher', true );
 		$hook          = $show_language ? 'login_language_dropdown_args' : 'login_display_language_dropdown';
 		$callback      = $show_language ? self::installed_login_languages( ... ) : '__return_false';
 		add_filter( $hook, $callback, PHP_INT_MAX );
 		add_filter( 'login_site_html_link', array( self::class, 'auth_footer_link' ) );
+
+		if ( $logged_out ) {
+			add_action(
+				'login_footer',
+				static function (): void {
+					echo '<div class="dg-toast-stack"><div class="dg-toast dg-toast--success" data-dg-toast-on-load>';
+					echo '<p class="dg-toast__message" role="status">' . esc_html__( 'You are now logged out.' ) . '</p>';
+					echo '</div></div>';
+				}
+			);
+		}
 
 		try {
 			login_footer( 'user_login' );
