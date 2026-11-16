@@ -140,7 +140,7 @@ final class AdminBrandingAuthTest extends TestCase {
         $socket = $commands['digitalogic_auth_presentation'];
         $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
         $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
-        $this->assertStringEndsWith('/components-light.webp', $rest[0]['image_light']);
+        $this->assertStringEndsWith('/components-aluminum-light.webp', $rest[0]['image_light']);
         $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
 
         $custom = [['image' => '/custom.webp', 'alt' => 'معرفی']];

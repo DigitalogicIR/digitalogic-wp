@@ -126,7 +126,7 @@ HTML;
 			array(
 				'id'          => 'components',
 				'image'       => $images . 'components.webp',
-				'image_light' => $images . 'components-light.webp',
+				'image_light' => $images . 'components-aluminum-light.webp',
 				'tab'         => $fa ? 'قطعات و ماژول‌ها' : 'Components',
 				'title'       => $fa ? 'از ایده تا اولین مدار' : 'From idea to first circuit',
 				'description' => $fa ? 'بردهای توسعه، حسگرها و نمایشگرها را پیدا کنید و مشخصاتشان را برای پروژهٔ بعدی مقایسه کنید.' : 'Find development boards, sensors, and displays. Compare specifications for your next project.',
@@ -136,8 +136,8 @@ HTML;
 			),
 			array(
 				'id'          => 'pcb',
-				'image'       => $images . 'pcb.webp',
-				'image_light' => $images . 'pcb-light.webp',
+				'image'       => $images . 'pcb-branded.webp',
+				'image_light' => $images . 'pcb-branded-light.webp',
 				'tab'         => $fa ? 'ساخت PCB' : 'PCB fabrication',
 				'title'       => $fa ? 'طرح شما، روی برد' : 'Turn your layout into a board',
 				'description' => $fa ? 'فایل Gerber را برای ساخت برد دو یا چهار لایه بفرستید و هزینه و زمان تحویل را بررسی کنید.' : 'Send your Gerber files for two or four layer fabrication and check the cost and lead time.',
@@ -147,8 +147,8 @@ HTML;
 			),
 			array(
 				'id'          => 'sourcing',
-				'image'       => $images . 'sourcing.webp',
-				'image_light' => $images . 'sourcing-light.webp',
+				'image'       => $images . 'sourcing-labelled.webp',
+				'image_light' => $images . 'sourcing-labelled-light.webp',
 				'tab'         => $fa ? 'تأمین قطعه' : 'Sourcing',
 				'title'       => $fa ? 'قطعهٔ خاص، سفارش مستقیم' : 'Source hard-to-find parts',
 				'description' => $fa ? 'برای قطعات کمیاب یا سفارش تعداد بالا، شمارهٔ قطعه یا لینک محصول را برای تأمین مستقیم از چین بفرستید.' : 'Share a part number or product link for direct sourcing from China, including scarce parts and volume orders.',
