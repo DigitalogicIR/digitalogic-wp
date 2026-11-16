@@ -53,7 +53,7 @@ final class MobileStorefrontInfo {
 			$post      = $id ? get_post( $id ) : null;
 			$product   = $post && 'product' === $post->post_type && 'publish' === $post->post_status && '' === $post->post_password ? wc_get_product( $id ) : null;
 			$canonical = $product ? get_permalink( $id ) : '';
-			if ( $product && $product->is_visible() && self::public_path( $canonical, $host ) === $path ) {
+			if ( $product && $product->is_visible() && ( ! class_exists( '\\Digitalogic_Storefront_Catalog' ) || \Digitalogic_Storefront_Catalog::product_has_public_title( $product ) ) && self::public_path( $canonical, $host ) === $path ) {
 				return array(
 					'type'          => 'product',
 					'id'            => (int) $id,

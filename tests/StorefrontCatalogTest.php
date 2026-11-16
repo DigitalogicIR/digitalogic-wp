@@ -17,6 +17,7 @@ if ( ! function_exists( 'get_ancestors' ) ) {
 }
 
 require_once dirname( __DIR__ ) . '/includes/integrations/class-storefront-catalog.php';
+require_once dirname( __DIR__ ) . '/laravel/app/Services/CatalogSearchPolicy.php';
 require_once dirname( __DIR__ ) . '/includes/integrations/class-storefront-product-table.php';
 
 if ( ! function_exists( 'wc_get_product_category_list' ) ) {
@@ -42,6 +43,203 @@ final class StorefrontCatalogTest extends TestCase {
 		$GLOBALS['digitalogic_test_option_cache']       = array();
 		$GLOBALS['digitalogic_test_category_ancestors'] = array();
 		add_filter( 'digitalogic_is_public_storefront_request', static fn() => true );
+	}
+
+	protected function tearDown(): void {
+		$GLOBALS['wpdb'] = new Digitalogic_Test_WPDB();
+		wp_cache_delete( 'invalid-product-titles-v1', 'digitalogic-storefront-catalog' );
+	}
+
+	/** Public title validity must match the native Unicode predicate exactly. */
+	public function test_public_product_title_predicate_rejects_only_blank_dash_and_format_titles(): void {
+		foreach ( array( '', '---', " \t\n", "\u{2013}\u{2014}\u{2212}", "\u{200B}\u{200F}\u{FEFF}", '&mdash;' ) as $invalid ) {
+			$this->assertFalse( Digitalogic_Storefront_Catalog::has_public_product_title( $invalid ), bin2hex( $invalid ) );
+		}
+		foreach ( array( 'ESP32-C3', '-5V', 'نام کالا', 'A', '.', '⚙' ) as $valid ) {
+			$this->assertTrue( Digitalogic_Storefront_Catalog::has_public_product_title( $valid ), $valid );
+		}
+		$this->assertFalse( Digitalogic_Storefront_Catalog::has_public_product_title( "\xC3\x28" ) );
+		$this->assertFalse( Digitalogic_Storefront_Catalog::product_has_public_title( 99999999 ) );
+	}
+
+	/** Public Woo queries exclude invalid records while the stored records stay intact. */
+	public function test_public_product_queries_exclude_invalid_title_ids_without_mutation(): void {
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public function get_results( $query, $output = ARRAY_A ) {
+				unset( $query, $output );
+
+				return array(
+					array( 'ID' => 41, 'post_title' => '---' ),
+					array( 'ID' => 42, 'post_title' => 'ESP32-C3' ),
+				);
+			}
+		};
+		$catalog         = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+		$catalog->clear_public_title_cache();
+
+		$args = $catalog->filter_product_object_query_args( array( 'exclude' => array( 9 ) ) );
+		$this->assertSame( array( 9, 41 ), $args['exclude'] );
+
+		$query = new class() {
+			public $vars = array( 'post_type' => 'product', 'post__not_in' => array( 9 ) );
+			public function get( $key ) {
+				return $this->vars[ $key ] ?? ''; }
+			public function set( $key, $value ) {
+				$this->vars[ $key ] = $value; }
+			public function is_post_type_archive( $type ) {
+				unset( $type ); return false; }
+		};
+		$catalog->filter_public_product_query( $query );
+		$this->assertSame( array( 9, 41 ), $query->vars['post__not_in'] );
+		$clauses = $catalog->filter_public_product_clauses( array( 'where' => ' WHERE 1=1' ), $query );
+		$this->assertStringContainsString( 'wp_posts.ID NOT IN (41)', $clauses['where'] );
+		$this->assertSame( '---', $GLOBALS['wpdb']->get_results( '' )[0]['post_title'] );
+	}
+
+	/** Persistent workers must refresh the local memo after an external repair. */
+	public function test_invalid_title_memo_refreshes_from_shared_cache_after_local_ttl(): void {
+		$GLOBALS['digitalogic_test_object_cache_enabled'] = true;
+		$GLOBALS['digitalogic_test_object_cache']         = array(
+			'digitalogic-storefront-catalog:invalid-product-titles-v1' => array( 41 ),
+		);
+		$GLOBALS['digitalogic_test_cache_gets'] = array();
+		$catalog = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+
+		$this->assertSame( array( 41 ), $catalog->invalid_product_title_ids() );
+		$this->assertSame( array( 'invalid-product-titles-v1', 'digitalogic-storefront-catalog', true ), $GLOBALS['digitalogic_test_cache_gets'][0] );
+		$GLOBALS['digitalogic_test_object_cache']['digitalogic-storefront-catalog:invalid-product-titles-v1'] = array( 42 );
+		$this->assertSame( array( 41 ), $catalog->invalid_product_title_ids() );
+
+		$loaded_at = new ReflectionProperty( $catalog, 'invalid_product_title_ids_loaded_at' );
+		$loaded_at->setValue( $catalog, hrtime( true ) - 2000000000 );
+		$this->assertSame( array( 42 ), $catalog->invalid_product_title_ids() );
+
+		unset( $GLOBALS['digitalogic_test_object_cache_enabled'], $GLOBALS['digitalogic_test_object_cache'], $GLOBALS['digitalogic_test_cache_gets'] );
+	}
+
+	/** Store API direct details must not bypass collection-query visibility. */
+	public function test_store_api_single_product_guard_returns_not_found_for_invalid_title(): void {
+		$GLOBALS['digitalogic_test_posts'][910041] = array(
+			'post_type'     => 'product',
+			'post_status'   => 'publish',
+			'post_title'    => "\u{200B}---",
+			'post_password' => '',
+			'meta'          => array(),
+		);
+		$GLOBALS['digitalogic_test_posts'][910042] = array(
+			'post_type'     => 'product',
+			'post_status'   => 'publish',
+			'post_title'    => 'ESP32-C3',
+			'post_password' => '',
+			'meta'          => array(),
+		);
+		$catalog = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+		$invalid = ( new WP_REST_Request( array( 'id' => 910041 ) ) )->set_route( '/wc/store/v1/products/910041' )->set_method( 'GET' );
+		$valid   = ( new WP_REST_Request( array( 'id' => 910042 ) ) )->set_route( '/wc/store/v1/products/910042' )->set_method( 'GET' );
+
+		$error = $catalog->filter_store_api_single_product( null, array(), $invalid );
+		$this->assertInstanceOf( WP_Error::class, $error );
+		$this->assertSame( 404, $error->get_error_data()['status'] );
+		$this->assertNull( $catalog->filter_store_api_single_product( null, array(), $valid ) );
+		unset( $GLOBALS['digitalogic_test_posts'][910041], $GLOBALS['digitalogic_test_posts'][910042] );
+	}
+
+	/** Store API search must preserve Woo's explicit empty post__in sentinel. */
+	public function test_store_api_search_does_not_resurrect_an_empty_constrained_result(): void {
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public function get_results( $query, $output = ARRAY_A ) {
+				unset( $query, $output );
+
+				return array();
+			}
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function get_col( $query ) {
+				unset( $query );
+
+				return array( 42 );
+			}
+		};
+		$catalog         = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+		$catalog->clear_public_title_cache();
+		$query = new class() {
+			public $vars = array(
+				'post_type' => 'product',
+				'post__in'  => array( 0 ),
+				'search'    => 'Super Mini',
+			);
+			public function get( $key ) {
+				return $this->vars[ $key ] ?? ''; }
+			public function set( $key, $value ) {
+				$this->vars[ $key ] = $value; }
+			public function is_post_type_archive( $type ) {
+				unset( $type ); return false; }
+		};
+
+		$catalog->filter_public_product_query( $query );
+
+		$this->assertSame( array( 0 ), $query->vars['post__in'] );
+		$this->assertSame( '', $query->vars['search'] );
+	}
+
+	/** Woo Store candidate discovery uses the same bidirectional alias group. */
+	public function test_store_api_search_uses_shared_bidirectional_model_aliases(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array(
+			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
+		);
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public $catalog_search_query = '';
+			public $catalog_search_args  = array();
+
+			public function get_results( $query, $output = ARRAY_A ) {
+				unset( $query, $output );
+
+				return array();
+			}
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function prepare( $query, ...$args ) {
+				$this->catalog_search_query = (string) $query;
+				$this->catalog_search_args  = 1 === count( $args ) && is_array( $args[0] ) ? $args[0] : $args;
+
+				return (string) $query;
+			}
+
+			public function get_col( $query ) {
+				unset( $query );
+
+				return array( 41, 42, 43 );
+			}
+		};
+		$catalog      = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+		$catalog->clear_public_title_cache();
+		$method       = new ReflectionMethod( $catalog, 'store_api_search_product_ids' );
+		$spaced       = $method->invoke( $catalog, 'super mini', 300 );
+		$spaced_args  = $GLOBALS['wpdb']->catalog_search_args;
+		$compact      = $method->invoke( $catalog, 'supermini', 300 );
+		$compact_args = $GLOBALS['wpdb']->catalog_search_args;
+
+		$this->assertSame( array( 41, 42, 43 ), $spaced );
+		$this->assertSame( $spaced, $compact );
+		$this->assertSame( $spaced_args, $compact_args );
+		$this->assertContains( '%super mini%', $compact_args );
+		$this->assertContains( '%super-mini%', $compact_args );
+		$this->assertContains( '%supermini%', $compact_args );
+		$this->assertSame( 301, end( $compact_args ) );
+	}
+
+	/** WP-CLI and other authoritative administration reads retain every record. */
+	public function test_authoritative_admin_queries_are_not_filtered(): void {
+		remove_all_filters( 'digitalogic_is_public_storefront_request' );
+		$catalog = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+
+		$this->assertSame( array( 'exclude' => array( 9 ) ), $catalog->filter_product_object_query_args( array( 'exclude' => array( 9 ) ) ) );
 	}
 
 	/** Table cells must retain table formatting; flex belongs to an inner wrapper. */
@@ -242,6 +440,48 @@ final class StorefrontCatalogTest extends TestCase {
 		$this->assertStringContainsString( "variations.post_status = 'publish'", $GLOBALS['wpdb']->catalog_search_query );
 		$this->assertStringContainsString( 'variation_identifiers.meta_value LIKE %s', $GLOBALS['wpdb']->catalog_search_query );
 		$this->assertSame( array_fill( 0, 4, '%113004011%' ), $GLOBALS['wpdb']->catalog_search_args );
+	}
+
+	/** The table reuses canonical aliases and never emits duplicate variation cards. */
+	public function test_table_search_uses_shared_bidirectional_model_aliases(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array(
+			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
+		);
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public $catalog_search_query = '';
+			public $catalog_search_args  = array();
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function prepare( $query, ...$args ) {
+				$this->catalog_search_query = (string) $query;
+				$this->catalog_search_args  = $args;
+
+				return (string) $query;
+			}
+
+			public function get_col( $query ) {
+				unset( $query );
+
+				return array( 41, 42, 43 );
+			}
+		};
+		$table        = ( new ReflectionClass( Digitalogic_Storefront_Product_Table::class ) )->newInstanceWithoutConstructor();
+		$method       = new ReflectionMethod( $table, 'search_product_ids' );
+		$spaced       = $method->invoke( $table, 'super mini' );
+		$spaced_args  = $GLOBALS['wpdb']->catalog_search_args;
+		$compact      = $method->invoke( $table, 'supermini' );
+		$compact_args = $GLOBALS['wpdb']->catalog_search_args;
+
+		$this->assertSame( array( 41, 42, 43 ), $spaced );
+		$this->assertSame( $spaced, $compact );
+		$this->assertSame( $spaced_args, $compact_args );
+		$this->assertContains( '%super mini%', $compact_args );
+		$this->assertContains( '%super-mini%', $compact_args );
+		$this->assertContains( '%supermini%', $compact_args );
+		$this->assertCount( 12, $compact_args );
 	}
 
 	/** Ensure legacy child references cannot masquerade as quick-add choices. */

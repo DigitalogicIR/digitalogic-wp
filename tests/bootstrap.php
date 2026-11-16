@@ -894,7 +894,7 @@ function wp_cache_delete($key, $group = '') {
  * @return mixed
  */
 function wp_cache_get( $key, $group = '', $force = false, &$found = null ) { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- WordPress test double.
-	unset( $force );
+	$GLOBALS['digitalogic_test_cache_gets'][] = array( $key, $group, (bool) $force );
 	if ( empty( $GLOBALS['digitalogic_test_object_cache_enabled'] ) ) {
 		$found = false;
 		return false;
@@ -1137,6 +1137,13 @@ function get_post($post_id) {
         ),
         $GLOBALS['digitalogic_test_posts'][$post_id]
     );
+}
+
+function get_post_field( $field, $post_id, $context = 'display' ) {
+	unset( $context );
+	$post = get_post( $post_id );
+
+	return $post && isset( $post->{$field} ) ? $post->{$field} : '';
 }
 
 function get_the_title($post_id = 0) {
