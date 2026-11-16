@@ -556,7 +556,8 @@ async function checkStoryDrawer(browser, direction, labels) {
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '1');
         await page.waitForFunction(() => document.querySelector('.dg-story-drawer')?.clientWidth === 0);
         const grip = await toggle.boundingBox();
-        assert.ok(grip.x - (await shell.boundingBox()).x < 20, 'The collapsed button sits at the left edge');
+        const separation = (await shell.boundingBox()).x - grip.x - grip.width;
+        assert.ok(grip.x > 0 && separation >= 0 && separation < 16, 'The collapsed button sits beside the left edge');
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
         const movement = 96;

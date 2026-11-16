@@ -368,6 +368,8 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     body.login .dg-digits-login-shell.dg-has-story-drawer {
         --dg-story-fold: -22deg;
         --dg-story-toggle-inset: clamp(10px, 1.6vw, 18px);
+        --dg-story-toggle-size: 36px;
+        --dg-story-toggle-left: calc(-1 * var(--dg-story-toggle-size) - 10px);
         position: relative;
         grid-template-columns: var(--dg-story-form-width) minmax(0, 1fr);
         gap: 0;
@@ -415,12 +417,12 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         position: absolute;
         z-index: 2;
         top: var(--dg-story-toggle-inset);
-        left: var(--dg-story-toggle-inset);
+        left: var(--dg-story-toggle-left);
         display: grid;
         place-items: center;
         box-sizing: border-box;
-        inline-size: 36px;
-        block-size: 36px;
+        inline-size: var(--dg-story-toggle-size);
+        block-size: var(--dg-story-toggle-size);
         border: 1px solid var(--dg-border);
         border-radius: 11px;
         padding: 0;
@@ -439,11 +441,7 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     }
 
     body.login .dg-has-story-drawer[data-drawer-dragging]:not([data-drawer-open]) > .dg-story-drawer-toggle {
-        left: calc(var(--dg-story-toggle-inset) + var(--dg-story-reveal));
-    }
-
-    body.login .dg-has-story-drawer:dir(ltr):not([data-drawer-open]) .digits-form_heading {
-        padding-left: 34px;
+        left: calc(var(--dg-story-toggle-left) + var(--dg-story-reveal));
     }
 
     body.login .dg-story-drawer .dg-story-header { padding-right: 36px; }
