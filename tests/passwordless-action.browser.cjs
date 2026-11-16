@@ -739,7 +739,9 @@ async function checkLoginSwitchers(browser) {
                 '<input type="submit" value="Change"></form></div>';
             await page.route('https://digitalogic.test/login/**', route => route.fulfill({
                 contentType: 'text/html; charset=utf-8',
-                body: '<html lang="fa" dir="rtl"><body class="login"><div id="login"></div>' +
+                body: '<html lang="fa" dir="rtl"><body class="login"><div id="login">' +
+                    '<div class="dg-native-auth-card">Sign in</div><p id="backtoblog">' +
+                    '<a class="dg-auth-home" data-dg-exit-icon="back" href="/shop/">بازگشت به صفحهٔ قبلی</a></p></div>' +
                     (showLanguage ? language : '') + '</body></html>'
             }));
             await page.goto('https://digitalogic.test/login/');
@@ -749,8 +751,24 @@ async function checkLoginSwitchers(browser) {
             await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
             const theme = page.locator('.dg-theme-toggle-button');
             const picker = page.locator('.dg-language-trigger');
+            const footer = page.locator('#login > .dg-login-preferences');
             assert.equal(await theme.count(), Number(showTheme));
             assert.equal(await picker.count(), Number(showLanguage));
+            assert.equal(await footer.locator('#backtoblog a').getAttribute('href'), '/shop/');
+            assert.equal(await footer.locator('.dg-auth-icon--back').count(), 1);
+            const card = await page.locator('.dg-native-auth-card').boundingBox();
+            const footerBox = await footer.boundingBox();
+            assert.ok(footerBox.y > card.y + card.height);
+            for (const width of [320, 390, 768, 1280]) {
+                await page.setViewportSize({ width, height: 850 });
+                const row = await footer.locator(':is(.dg-auth-home, .dg-theme-toggle-button, .dg-language-trigger)').evaluateAll(elements =>
+                    elements.map(el => {
+                        const rect = el.getBoundingClientRect();
+                        return { center: (rect.top + rect.bottom) / 2, fits: rect.left >= 0 && rect.right <= innerWidth && rect.height >= 44 };
+                    }));
+                assert.equal(row.length, 1 + Number(showTheme) + Number(showLanguage));
+                assert.ok(row.every(control => control.fits && Math.abs(control.center - row[0].center) <= 1), JSON.stringify(row));
+            }
             if (showTheme) {
                 await theme.click();
                 assert.equal(await page.locator('html').getAttribute('data-dg-theme'), 'dark');
