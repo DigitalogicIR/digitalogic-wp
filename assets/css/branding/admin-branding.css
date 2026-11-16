@@ -439,9 +439,9 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         --dg-story-grip-opacity: 1;
         --dg-story-chevron-opacity: 0;
         position: absolute;
-        z-index: 10; /* Above the Digits form grid item at the shared edge. */
+        z-index: 10;
         top: 50%;
-        left: var(--dg-story-toggle-offset);
+        right: var(--dg-story-toggle-offset);
         translate: 0 -50%;
         display: grid;
         place-items: center;
@@ -459,15 +459,6 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         touch-action: pan-y;
         -webkit-tap-highlight-color: transparent;
         transition: background-color 160ms ease, border-color 160ms ease;
-    }
-
-    body.login .dg-has-story-drawer[data-drawer-open] > .dg-story-drawer-toggle {
-        right: var(--dg-story-toggle-offset);
-        left: auto;
-    }
-
-    body.login .dg-has-story-drawer[data-drawer-dragging]:not([data-drawer-open]) > .dg-story-drawer-toggle {
-        left: calc(var(--dg-story-toggle-offset) + var(--dg-story-reveal));
     }
 
     body.login .dg-story-drawer-toggle:disabled { visibility: hidden; }
