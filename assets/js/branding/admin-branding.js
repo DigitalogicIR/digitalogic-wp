@@ -313,15 +313,56 @@
 
         var toast = document.createElement('div');
         toast.className = 'dg-toast dg-toast--' + (tone || 'warning');
-        toast.textContent = message;
+        var text = document.createElement('p');
+        text.className = 'dg-toast__message';
+        text.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+        toast.appendChild(text);
         container.appendChild(toast);
+        text.textContent = message;
+        enhanceToast(toast);
+    }
 
-        window.setTimeout(function () {
+    function enhanceToast(toast) {
+        var icon = document.createElement('span');
+        icon.className = 'dg-toast__icon';
+        putAuthIcon(icon, toast.classList.contains('dg-toast--success') ? 'check' : 'info');
+        toast.prepend(icon);
+
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'dg-toast__close';
+        close.setAttribute('aria-label', authRequestLabel('Dismiss notification', 'بستن اعلان'));
+        putAuthIcon(close, 'close');
+        toast.appendChild(close);
+
+        var timer;
+        function dismiss() {
+            window.clearTimeout(timer);
+            if (toast.classList.contains('is-leaving')) { return; }
             toast.classList.add('is-leaving');
             window.setTimeout(function () {
+                var stack = toast.parentElement;
                 toast.remove();
-            }, 220);
-        }, 5200);
+                if (stack && !stack.firstElementChild) { stack.remove(); }
+            }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200);
+        }
+
+        function scheduleDismissal() {
+            window.clearTimeout(timer);
+            if (!toast.matches(':hover, :focus-within')) {
+                timer = window.setTimeout(dismiss, 6500);
+            }
+        }
+
+        close.addEventListener('click', dismiss);
+        close.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') { dismiss(); }
+        });
+        toast.addEventListener('pointerenter', scheduleDismissal);
+        toast.addEventListener('pointerleave', scheduleDismissal);
+        toast.addEventListener('focusin', scheduleDismissal);
+        toast.addEventListener('focusout', function () { queueMicrotask(scheduleDismissal); });
+        scheduleDismissal();
     }
 
     function observeInlineMessages() {
@@ -4789,6 +4830,7 @@
         arrow: 'M5 12h14m-6-6 6 6-6 6',
         back: 'M19 12H5m6-6-6 6 6 6',
         check: 'M5 12l4 4L19 6',
+        close: 'M6 6l12 12M18 6 6 18',
         info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
         edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
         copy: 'M8 8h12v13H8z M16 5V3H4v14h2',
@@ -5412,6 +5454,7 @@
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();
+        document.querySelectorAll('[data-dg-toast-on-load]').forEach(enhanceToast);
         observeInlineMessages();
         if (!document.body.classList.contains('login')) { enableRipples(); }
     });
