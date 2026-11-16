@@ -175,6 +175,8 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-topology-guard.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-variation-selector.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-auth-realtime.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-oidc-token.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-federated-login.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-auth-page.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-telegram-account-link.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-checkout-date-compatibility.php';
@@ -265,6 +267,7 @@ final class Digitalogic {
         Digitalogic_Variation_Selector::init();
         Digitalogic_Plugin_Admin_Branding::init();
         Digitalogic_Plugin_Auth_Routes::init();
+        Digitalogic_Federated_Login::init();
         Digitalogic_Checkout_Date_Compatibility::init();
 		Digitalogic_Persian_Time_Formatter::init();
 		Digitalogic_Checkout_Experience::init();

@@ -643,7 +643,8 @@ final class Digitalogic_Plugin_Auth_Routes {
 			: '';
 
 		nocache_headers();
-		$session_destination = self::existing_session_destination( $redirect_to, $_GET );
+		$federated_resume    = class_exists( Digitalogic_Federated_Login::class ) && Digitalogic_Federated_Login::resume_after_redirect();
+		$session_destination = $federated_resume ? '' : self::existing_session_destination( $redirect_to, $_GET );
 		if ( '' !== $session_destination && wp_safe_redirect( $session_destination ) ) {
 			exit;
 		}

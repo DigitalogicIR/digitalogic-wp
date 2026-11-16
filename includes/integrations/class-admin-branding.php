@@ -467,6 +467,11 @@ HTML;
         $config = self::client_config($is_login, $is_frontend_auth);
 		if ( $is_login ) {
 			$config['loginAssetFontsAndLogos'] = array_values( array_merge( self::auth_font_urls(), self::logo_urls() ) );
+			if ( class_exists( Digitalogic_Federated_Login::class ) && function_exists( 'df_digits_form_login' ) ) {
+				$browser_signin           = 'assets/js/branding/browser-signin.js';
+				$config['federatedLogin'] = Digitalogic_Federated_Login::client_config();
+				wp_enqueue_script( 'digitalogic-browser-signin', DIGITALOGIC_PLUGIN_URL . $browser_signin, array( self::SCRIPT_HANDLE ), (string) filemtime( DIGITALOGIC_PLUGIN_DIR . $browser_signin ), true );
+			}
 		}
         wp_add_inline_script(
             self::SCRIPT_HANDLE,
