@@ -16,11 +16,15 @@ require_once dirname( __DIR__ ) . '/laravel/app/Http/Controllers/MobileCatalogCo
 final class MobileCatalogContractTest extends TestCase {
 	protected function tearDown(): void {
 		$GLOBALS['wpdb'] = new Digitalogic_Test_WPDB();
+		unset( $GLOBALS['digitalogic_test_options']['xts-woodmart-options'], $GLOBALS['digitalogic_test_option_cache']['xts-woodmart-options'] );
 		wp_cache_delete( 'invalid-product-titles-v1', 'digitalogic-storefront-catalog' );
 	}
 
 	/** Search queries select one canonical parent and match exact child models. */
 	public function test_mobile_search_uses_separator_variants_and_variation_parent_discovery(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array(
+			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
+		);
 		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
 			public $catalog_queries = array();
 			public $catalog_values  = array();
@@ -50,19 +54,74 @@ final class MobileCatalogContractTest extends TestCase {
 			}
 		};
 		Digitalogic_Storefront_Catalog::instance()->clear_public_title_cache();
-		$controller = new MobileCatalogController();
-		$method     = new ReflectionMethod( $controller, 'productsData' );
-		$result     = $method->invoke( $controller, MobileCatalogController::normalizeQuery( array( 'search' => 'Super Mini' ) ) );
-		$sql        = implode( "\n", $GLOBALS['wpdb']->catalog_queries );
-		$values     = array_merge( ...array_map( static fn( $args ) => isset( $args[0] ) && is_array( $args[0] ) ? $args[0] : $args, $GLOBALS['wpdb']->catalog_values ) );
+		$controller    = new MobileCatalogController();
+		$method        = new ReflectionMethod( $controller, 'productsData' );
+		$spaced_query  = MobileCatalogController::normalizeQuery( array( 'search' => 'Super Mini' ) );
+		$compact_query = MobileCatalogController::normalizeQuery( array( 'search' => 'SuperMini' ) );
+		$result        = $method->invoke( $controller, $spaced_query );
+		$sql           = implode( "\n", $GLOBALS['wpdb']->catalog_queries );
+		$values        = array_merge( ...array_map( static fn( $args ) => isset( $args[0] ) && is_array( $args[0] ) ? $args[0] : $args, $GLOBALS['wpdb']->catalog_values ) );
+		$spaced_candidates = $GLOBALS['wpdb']->catalog_values[0];
+		$GLOBALS['wpdb']->catalog_queries = array();
+		$GLOBALS['wpdb']->catalog_values  = array();
+		$compact_result     = $method->invoke( $controller, $compact_query );
+		$compact_candidates = $GLOBALS['wpdb']->catalog_values[0];
 
 		self::assertSame( 0, $result['pagination']['total'] );
 		self::assertSame( array(), $result['items'] );
+		self::assertSame( $result['pagination'], $compact_result['pagination'] );
+		self::assertSame( $spaced_query['search_terms'], $compact_query['search_terms'] );
+		self::assertSame( $spaced_candidates, $compact_candidates );
 		self::assertStringContainsString( "p.post_type='product'", $sql );
 		self::assertStringContainsString( 'variations.post_parent=p.ID', $sql );
 		self::assertStringContainsString( "variations.post_type='product_variation'", $sql );
 		self::assertStringNotContainsString( "p.post_type='product_variation'", $sql );
 		self::assertContains( '%supermini%', $values );
+	}
+
+	/** Alias expansion widens candidates but the literal query keeps exact-SKU rank zero. */
+	public function test_mobile_exact_sku_ranking_uses_the_original_query(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array(
+			'search_synonyms' => 'MODEL-001 = legacy model',
+		);
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public $select_values = array();
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function get_results( $prepared, $output = ARRAY_A ) {
+				unset( $prepared, $output );
+
+				return array();
+			}
+
+			public function get_var( $prepared ) {
+				unset( $prepared );
+
+				return 0;
+			}
+
+			public function get_col( $prepared ) {
+				$this->select_values = is_array( $prepared ) ? $prepared['args'] : array();
+
+				return array();
+			}
+		};
+		Digitalogic_Storefront_Catalog::instance()->clear_public_title_cache();
+		$query      = MobileCatalogController::normalizeQuery( array( 'search' => 'MODEL-001' ) );
+		$controller = new MobileCatalogController();
+		$method     = new ReflectionMethod( $controller, 'productsData' );
+		$method->invoke( $controller, $query );
+		$values = isset( $GLOBALS['wpdb']->select_values[0] ) && is_array( $GLOBALS['wpdb']->select_values[0] )
+			? $GLOBALS['wpdb']->select_values[0]
+			: $GLOBALS['wpdb']->select_values;
+		$where_count = 1 + ( 4 * count( $query['search_terms'] ) );
+
+		self::assertContains( 'legacy model', $query['search_terms'] );
+		self::assertSame( 'model-001', $query['search'] );
+		self::assertSame( 'model-001', $values[ $where_count ] );
 	}
 	/**
 	 * Verify public entry cannot dispatch internal routes or unbounded ids.

@@ -53,7 +53,14 @@ class SearchTheme {
     public function get_blog_suggestions() { return array(); }
     public function build_suggestions($main, $categories, $blog) { return $main; }
 }
+class SearchPolicyStub {
+	public static $terms_revision = 'aliases-one';
+	public static $config_revision = 'config-one';
+	public static function terms( $query ) { return array( $query, self::$terms_revision ); }
+	public static function revision() { return hash( 'sha256', self::$config_revision ); }
+}
 class_alias(SearchTheme::class, 'XTS\\Modules\\Search\\Ajax_Search');
+class_alias(SearchPolicyStub::class, 'Digitalogic\\Laravel\\Services\\CatalogSearchPolicy');
 require __DIR__ . '/../includes/integrations/class-frontend-search.php';
 $_COOKIE = array();
 $_REQUEST = array('query' => 'TEC1-12704');
@@ -85,4 +92,12 @@ Digitalogic_Report_Engine::$generation = new WP_Error();
 verify(search_response()->status === 503, 'unavailable generation fails closed');
 Digitalogic_Report_Engine::$generation = 'four'; SearchTheme::$race = false; SearchTheme::$omit_price = true; SearchProduct::$in_stock = true;
 verify(search_response()->result['suggestions'][0]['price'] === '506000', 'price-less theme product remains identified and refreshed');
-echo "Search cache regression: 9 boundaries passed\n";
+$queries_before_alias_change = SearchTheme::$queries;
+SearchPolicyStub::$terms_revision = 'aliases-two';
+$alias_changed = search_response()->result;
+verify(!$alias_changed['dg_cache']['hit'] && SearchTheme::$queries === $queries_before_alias_change + 1, 'alias configuration changes fence old search cache entries');
+$queries_before_theme_change = SearchTheme::$queries;
+SearchPolicyStub::$config_revision = 'config-two';
+$theme_alias_changed = search_response()->result;
+verify(!$theme_alias_changed['dg_cache']['hit'] && SearchTheme::$queries === $queries_before_theme_change + 1, 'raw administrator alias changes fence old search cache entries');
+echo "Search cache regression: 11 boundaries passed\n";

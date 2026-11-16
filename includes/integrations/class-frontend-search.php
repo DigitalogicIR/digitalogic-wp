@@ -31,6 +31,9 @@ class Digitalogic_Frontend_Search {
 		add_filter( 'digitalogic_websocket_ajax_action_allowed', array( $this, 'allow_public_ajax_search_action' ), 10, 4 );
 		add_action( 'wp_ajax_woodmart_ajax_search', array( $this, 'serve_search' ), 1 );
 		add_action( 'wp_ajax_nopriv_woodmart_ajax_search', array( $this, 'serve_search' ), 1 );
+		add_filter( 'woodmart_option', array( $this, 'compile_search_aliases_for_woodmart' ), 20, 2 );
+		add_filter( 'gettext_woodmart', array( $this, 'clarify_search_alias_admin_help' ), 20, 3 );
+		add_action( 'update_option_xts-woodmart-options', array( $this, 'search_aliases_updated' ), 10, 3 );
 		add_action( 'admin_menu', array( $this, 'cache_menu' ), 99 );
 		add_action( 'admin_init', array( $this, 'register_cache_settings' ) );
 		add_action( 'digitalogic_report_projection_invalidated', array( $this, 'queue_invalidation' ) );
@@ -41,6 +44,67 @@ class Digitalogic_Frontend_Search {
 	/** Coalesce committed changes into one public invalidation per request. */
 	public function queue_invalidation() {
 		$this->invalidation_pending = true;
+	}
+
+	/**
+	 * Give WoodMart a symmetric request-local view of its one-way synonym syntax.
+	 *
+	 * The administrator continues to edit the concise raw setting. Admin screens
+	 * and WP-CLI therefore receive the saved value, while customer searches and
+	 * WoodMart AJAX receive the shared normalized directional projection.
+	 *
+	 * @param mixed  $value Option value.
+	 * @param string $slug WoodMart option key.
+	 * @return mixed
+	 */
+	public function compile_search_aliases_for_woodmart( $value, $slug ) {
+		if ( 'search_synonyms' !== $slug || ! is_scalar( $value ) ) {
+			return $value;
+		}
+		$admin = function_exists( 'is_admin' ) && is_admin();
+		$ajax  = function_exists( 'wp_doing_ajax' ) && wp_doing_ajax();
+		if ( ( $admin && ! $ajax ) || ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+			return $value;
+		}
+		$policy = '\\Digitalogic\\Laravel\\Services\\CatalogSearchPolicy';
+		return class_exists( $policy ) && is_callable( array( $policy, 'woodmartConfig' ) )
+			? $policy::woodmartConfig( (string) $value )
+			: $value;
+	}
+
+	/**
+	 * Fence server/browser caches and notify connected storefronts after an edit.
+	 *
+	 * @param mixed  $old_value Previous WoodMart options.
+	 * @param mixed  $new_value New WoodMart options.
+	 * @param string $option Option name.
+	 * @return void
+	 */
+	public function search_aliases_updated( $old_value, $new_value, $option = '' ) {
+		unset( $option );
+		$old_aliases = is_array( $old_value ) && is_scalar( $old_value['search_synonyms'] ?? null ) ? (string) $old_value['search_synonyms'] : '';
+		$new_aliases = is_array( $new_value ) && is_scalar( $new_value['search_synonyms'] ?? null ) ? (string) $new_value['search_synonyms'] : '';
+		if ( ! hash_equals( hash( 'sha256', $old_aliases ), hash( 'sha256', $new_aliases ) ) ) {
+			$this->queue_invalidation();
+		}
+	}
+
+	/**
+	 * Describe Digitalogic's two-way semantics in WoodMart's existing field.
+	 *
+	 * @param string $translation Current translation.
+	 * @param string $text Source text.
+	 * @param string $domain Text domain.
+	 * @return string
+	 */
+	public function clarify_search_alias_admin_help( $translation, $text, $domain ) {
+		if ( 'woodmart' !== $domain || false === strpos( (string) $text, 'Synonyms are one-way' ) ) {
+			return $translation;
+		}
+
+		return function_exists( 'is_rtl' ) && is_rtl()
+			? 'هر خط یک گروه دوطرفه است: «عبارت اصلی = جایگزین ۱، جایگزین ۲». دیجیتالاجیک فاصله، خط تیره و شکل چسبیده را برای همهٔ عبارت‌ها یکسان‌سازی می‌کند؛ نیازی به ثبت خط معکوس نیست.'
+			: 'Each line is one two-way group: “canonical term = alternate 1, alternate 2”. Digitalogic normalizes spaced, hyphenated, and compact forms for every term; reciprocal rows are not required.';
 	}
 
 	/** Publish after all product saves in the request have completed. */
@@ -196,8 +260,12 @@ class Digitalogic_Frontend_Search {
 			return;
 		}
 		// User/cookie context is hashed, never exposed or shared across sessions.
-		$key  = 'dg_search_' . hash( 'sha256', wp_json_encode( array( $generation, $query, $settings, get_current_user_id(), $_COOKIE, get_locale(), get_woocommerce_currency() ) ) );
-		$data = false;
+		// Expanded terms and the raw administrator-owned revision both fence alias edits.
+		$policy         = '\\Digitalogic\\Laravel\\Services\\CatalogSearchPolicy';
+		$query_terms    = class_exists( $policy ) ? $policy::terms( $query['query'] ) : array( $query['query'] );
+		$alias_revision = class_exists( $policy ) && is_callable( array( $policy, 'revision' ) ) ? $policy::revision() : hash( 'sha256', '' );
+		$key            = 'dg_search_' . hash( 'sha256', wp_json_encode( array( $generation, $query, $query_terms, $alias_revision, $settings, get_current_user_id(), $_COOKIE, get_locale(), get_woocommerce_currency() ) ) );
+		$data           = false;
 		if ( 'object' === $settings['server'] ) {
 			$data = wp_cache_get( $key, 'digitalogic_search' );
 		} elseif ( 'transient' === $settings['server'] ) {

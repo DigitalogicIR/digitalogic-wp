@@ -17,6 +17,7 @@ if ( ! function_exists( 'get_ancestors' ) ) {
 }
 
 require_once dirname( __DIR__ ) . '/includes/integrations/class-storefront-catalog.php';
+require_once dirname( __DIR__ ) . '/laravel/app/Services/CatalogSearchPolicy.php';
 require_once dirname( __DIR__ ) . '/includes/integrations/class-storefront-product-table.php';
 
 if ( ! function_exists( 'wc_get_product_category_list' ) ) {
@@ -161,6 +162,55 @@ final class StorefrontCatalogTest extends TestCase {
 
 		$this->assertSame( array( 0 ), $query->vars['post__in'] );
 		$this->assertSame( '', $query->vars['search'] );
+	}
+
+	/** Woo Store candidate discovery uses the same bidirectional alias group. */
+	public function test_store_api_search_uses_shared_bidirectional_model_aliases(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array(
+			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
+		);
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public $catalog_search_query = '';
+			public $catalog_search_args  = array();
+
+			public function get_results( $query, $output = ARRAY_A ) {
+				unset( $query, $output );
+
+				return array();
+			}
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function prepare( $query, ...$args ) {
+				$this->catalog_search_query = (string) $query;
+				$this->catalog_search_args  = 1 === count( $args ) && is_array( $args[0] ) ? $args[0] : $args;
+
+				return (string) $query;
+			}
+
+			public function get_col( $query ) {
+				unset( $query );
+
+				return array( 41, 42, 43 );
+			}
+		};
+		$catalog      = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+		$catalog->clear_public_title_cache();
+		$method       = new ReflectionMethod( $catalog, 'store_api_search_product_ids' );
+		$spaced       = $method->invoke( $catalog, 'super mini', 300 );
+		$spaced_args  = $GLOBALS['wpdb']->catalog_search_args;
+		$compact      = $method->invoke( $catalog, 'supermini', 300 );
+		$compact_args = $GLOBALS['wpdb']->catalog_search_args;
+
+		$this->assertSame( array( 41, 42, 43 ), $spaced );
+		$this->assertSame( $spaced, $compact );
+		$this->assertSame( $spaced_args, $compact_args );
+		$this->assertContains( '%super mini%', $compact_args );
+		$this->assertContains( '%super-mini%', $compact_args );
+		$this->assertContains( '%supermini%', $compact_args );
+		$this->assertSame( 301, end( $compact_args ) );
 	}
 
 	/** WP-CLI and other authoritative administration reads retain every record. */
@@ -369,6 +419,48 @@ final class StorefrontCatalogTest extends TestCase {
 		$this->assertStringContainsString( "variations.post_status = 'publish'", $GLOBALS['wpdb']->catalog_search_query );
 		$this->assertStringContainsString( 'variation_identifiers.meta_value LIKE %s', $GLOBALS['wpdb']->catalog_search_query );
 		$this->assertSame( array_fill( 0, 4, '%113004011%' ), $GLOBALS['wpdb']->catalog_search_args );
+	}
+
+	/** The table reuses canonical aliases and never emits duplicate variation cards. */
+	public function test_table_search_uses_shared_bidirectional_model_aliases(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array(
+			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
+		);
+		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			public $catalog_search_query = '';
+			public $catalog_search_args  = array();
+
+			public function esc_like( $value ) {
+				return addcslashes( (string) $value, '_%\\' );
+			}
+
+			public function prepare( $query, ...$args ) {
+				$this->catalog_search_query = (string) $query;
+				$this->catalog_search_args  = $args;
+
+				return (string) $query;
+			}
+
+			public function get_col( $query ) {
+				unset( $query );
+
+				return array( 41, 42, 43 );
+			}
+		};
+		$table        = ( new ReflectionClass( Digitalogic_Storefront_Product_Table::class ) )->newInstanceWithoutConstructor();
+		$method       = new ReflectionMethod( $table, 'search_product_ids' );
+		$spaced       = $method->invoke( $table, 'super mini' );
+		$spaced_args  = $GLOBALS['wpdb']->catalog_search_args;
+		$compact      = $method->invoke( $table, 'supermini' );
+		$compact_args = $GLOBALS['wpdb']->catalog_search_args;
+
+		$this->assertSame( array( 41, 42, 43 ), $spaced );
+		$this->assertSame( $spaced, $compact );
+		$this->assertSame( $spaced_args, $compact_args );
+		$this->assertContains( '%super mini%', $compact_args );
+		$this->assertContains( '%super-mini%', $compact_args );
+		$this->assertContains( '%supermini%', $compact_args );
+		$this->assertCount( 12, $compact_args );
 	}
 
 	/** Ensure legacy child references cannot masquerade as quick-add choices. */

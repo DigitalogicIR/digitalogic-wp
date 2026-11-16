@@ -25,7 +25,7 @@ final class CatalogSearchPolicyTest extends TestCase {
 
 	/** Existing theme syntax is the sole configurable alias registry. */
 	public function test_canonical_theme_setting_expands_symmetrically(): void {
-		$groups = Policy::groups( "arduino = آردوینو,اردوینو\nesp32 = esp 32\nignored line" );
+		$groups = Policy::groups( "arduino = آردوینو,اردوینو\nesp32 = esp 32" );
 		self::assertCount( 2, $groups );
 		$english = Policy::terms( 'Arduino UNO', $groups );
 		self::assertSame( $english, Policy::terms( 'آردوینو UNO', $groups ) );
@@ -55,6 +55,96 @@ final class CatalogSearchPolicyTest extends TestCase {
 		self::assertSame( array( '-5v' ), Policy::terms( '-5V', array() ) );
 		self::assertContains( 'esp32-c3', Policy::terms( 'ESP32-C3', array() ) );
 		self::assertLessThanOrEqual( 12, count( $terms ) );
+	}
+
+	/** One saved group makes every normalized separator form bidirectional. */
+	public function test_one_model_alias_group_is_bidirectional_without_reciprocal_rows(): void {
+		$groups  = Policy::groups( 'Super Mini =' );
+		$spaced  = Policy::terms( 'Super Mini', $groups );
+		$compact = Policy::terms( 'SuperMini', $groups );
+		$hyphen  = Policy::terms( 'Super-Mini', $groups );
+
+		self::assertSame( array( 'super mini', 'super-mini', 'supermini' ), $spaced );
+		self::assertSame( $spaced, $compact );
+		self::assertSame( $spaced, $hyphen );
+		self::assertNotContains( 'super miniature', $compact );
+	}
+
+	/** Administrators can add, edit and remove independent groups without code changes. */
+	public function test_independent_groups_follow_only_the_saved_configuration(): void {
+		$added = Policy::groups( "Super Mini =\nNode MCU = nodemcu" );
+		self::assertSame( Policy::terms( 'supermini', $added ), Policy::terms( 'Super Mini', $added ) );
+		self::assertContains( 'node mcu', Policy::terms( 'NodeMCU', $added ) );
+		self::assertNotContains( 'node mcu', Policy::terms( 'supermini', $added ) );
+
+		$edited = Policy::groups( "Super Mini =\nController Board = control-board" );
+		self::assertSame( array( 'nodemcu' ), Policy::terms( 'NodeMCU', $edited ) );
+		self::assertContains( 'controller board', Policy::terms( 'control-board', $edited ) );
+		self::assertSame( Policy::terms( 'supermini', $added ), Policy::terms( 'supermini', $edited ) );
+
+		$removed = Policy::groups( 'Super Mini =' );
+		self::assertNotContains( 'controller board', Policy::terms( 'control-board', $removed ) );
+		self::assertSame( Policy::terms( 'supermini', $added ), Policy::terms( 'supermini', $removed ) );
+	}
+
+	/** WoodMart receives a runtime directional view while the saved group stays concise. */
+	public function test_woodmart_projection_contains_each_normalized_lookup_direction(): void {
+		$config = Policy::woodmartConfig( "Super Mini =\nNode MCU = nodemcu" );
+		self::assertStringContainsString( 'super mini = super-mini,supermini', $config );
+		self::assertStringContainsString( 'supermini = super mini,super-mini', $config );
+		self::assertStringContainsString( 'node mcu = node-mcu,nodemcu', $config );
+		self::assertStringContainsString( 'nodemcu = node mcu,node-mcu', $config );
+		self::assertSame( hash( 'sha256', 'Super Mini =' ), Policy::revision( 'Super Mini =' ) );
+	}
+
+	/** Shared aliases form one deterministic group on every consumer. */
+	public function test_overlapping_groups_compile_to_one_woodmart_key_and_one_policy_component(): void {
+		$groups = Policy::groups( "alpha = shared\nshared = gamma" );
+		self::assertSame( Policy::terms( 'alpha', $groups ), Policy::terms( 'gamma', $groups ) );
+
+		$config = Policy::woodmartConfig( "alpha = shared\nshared = gamma" );
+		self::assertSame( 1, preg_match_all( '/^shared = /m', $config ) );
+		self::assertSame( 1, preg_match( '/^shared = ([^\r\n]+)/m', $config, $match ) );
+		$replacements = explode( ',', $match[1] );
+		sort( $replacements, SORT_STRING );
+		self::assertSame( array( 'alpha', 'gamma' ), $replacements );
+	}
+
+	/** The generated view matches WoodMart's installed associative-key parser. */
+	public function test_generated_config_is_bidirectional_under_woodmart_parser_shape(): void {
+		$config = Policy::woodmartConfig( 'Super Mini =' );
+		$parsed = array();
+		foreach ( explode( PHP_EOL, $config ) as $line ) {
+			$parts = explode( '=', $line, 2 );
+			self::assertCount( 2, $parts );
+			$key            = str_replace( ' ', '_', trim( strtolower( $parts[0] ) ) );
+			$parsed[ $key ] = array_map( 'trim', explode( ',', $parts[1] ) );
+		}
+
+		self::assertContains( 'super mini', $parsed['supermini'] );
+		self::assertContains( 'supermini', $parsed['super_mini'] );
+		self::assertContains( 'super mini', $parsed['super-mini'] );
+	}
+
+	/** Configuration and generated runtime work stay hard bounded and UTF-8 safe. */
+	public function test_large_and_multibyte_configuration_is_safely_bounded(): void {
+		$prefix     = "Super Mini =\n";
+		$multibyte  = $prefix . str_repeat( 'a', 65534 - strlen( $prefix ) ) . 'ی';
+		$utf_groups = Policy::groups( $multibyte );
+		self::assertNotEmpty( $utf_groups );
+		self::assertSame( array( 'Super Mini' ), $utf_groups[0] );
+
+		$lines = array();
+		for ( $group = 0; $group < 30; ++$group ) {
+			$aliases = array();
+			for ( $alias = 0; $alias < 30; ++$alias ) {
+				$aliases[] = 'alias' . $group . 'x' . $alias;
+			}
+			$lines[] = 'group' . $group . ' = ' . implode( ',', $aliases );
+		}
+		$config = Policy::woodmartConfig( implode( "\n", $lines ) );
+		self::assertLessThanOrEqual( 240, count( explode( PHP_EOL, $config ) ) );
+		self::assertLessThanOrEqual( 524288, strlen( $config ) );
 	}
 
 	/** Prior app builds can keep sending date; new normal search selects relevance. */

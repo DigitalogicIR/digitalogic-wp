@@ -544,8 +544,22 @@ final class Digitalogic_Storefront_Product_Table {
 	private function search_product_ids( $search ) {
 		global $wpdb;
 
-		$like = '%' . $wpdb->esc_like( $search ) . '%';
-		$sql  = $wpdb->prepare(
+		$policy = '\\Digitalogic\\Laravel\\Services\\CatalogSearchPolicy';
+		$terms  = class_exists( $policy ) ? $policy::terms( (string) $search ) : array( trim( (string) $search ) );
+		$terms  = array_values( array_filter( array_unique( array_map( 'strval', $terms ) ) ) );
+		if ( empty( $terms ) ) {
+			return array( 0 );
+		}
+
+		$matches = array();
+		$values  = array();
+		foreach ( $terms as $term ) {
+			$like      = '%' . $wpdb->esc_like( $term ) . '%';
+			$matches[] = '(products.post_title LIKE %s OR identifiers.meta_value LIKE %s OR variations.post_title LIKE %s OR variation_identifiers.meta_value LIKE %s)';
+			$values    = array_merge( $values, array_fill( 0, 4, $like ) );
+		}
+
+		$sql = $wpdb->prepare(
 			"SELECT DISTINCT products.ID
 			FROM {$wpdb->posts} AS products
 			LEFT JOIN {$wpdb->postmeta} AS identifiers
@@ -560,19 +574,11 @@ final class Digitalogic_Storefront_Product_Table {
 				AND variation_identifiers.meta_key IN ('_sku', '_digitalogic_patris_product_code')
 			WHERE products.post_type = 'product'
 				AND products.post_status = 'publish'
-				AND (
-					products.post_title LIKE %s
-					OR identifiers.meta_value LIKE %s
-					OR variations.post_title LIKE %s
-					OR variation_identifiers.meta_value LIKE %s
-				)
+				AND (" . implode( ' OR ', $matches ) . ")
 			LIMIT 3000",
-			$like,
-			$like,
-			$like,
-			$like
+			...$values
 		);
-		$ids  = array_map( 'absint', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$ids = array_map( 'absint', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		if ( class_exists( 'Digitalogic_Storefront_Catalog' ) ) {
 			$ids = array_values( array_diff( $ids, Digitalogic_Storefront_Catalog::instance()->invalid_product_title_ids() ) );
 		}
