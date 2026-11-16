@@ -4619,9 +4619,10 @@
         toggle.addEventListener('pointerdown', function (event) {
             if (toggle.disabled || event.button !== 0 || !event.isPrimary) { return; }
             ignoreClick = false;
-            var offset = shell.getBoundingClientRect().left - layout.getBoundingClientRect().left;
+            var left = shell.getBoundingClientRect().left;
+            var offset = left - layout.getBoundingClientRect().left;
             drag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, offset: offset,
-                width: drawer.getBoundingClientRect().width, active: false, detent: false };
+                left: left, width: drawer.getBoundingClientRect().width, active: false, detent: false };
             toggle.setPointerCapture(event.pointerId);
         });
         toggle.addEventListener('pointermove', function (event) {
@@ -4636,7 +4637,7 @@
                 changed();
             }
             var rail = toggle.getBoundingClientRect().width;
-            var limit = Math.min(panelWidth, layout.clientWidth - formWidth - drag.offset - 2);
+            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - 14);
             var width = Math.max(rail, Math.min(limit, drag.width + delta));
             layout.style.setProperty('--dg-story-reveal', width + 'px');
             shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');

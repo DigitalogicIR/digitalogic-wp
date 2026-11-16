@@ -434,11 +434,12 @@ async function checkStoryDrawer(browser, direction, labels) {
         const grip = await toggle.boundingBox();
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
+        const movement = 96;
         await page.mouse.move(x, y);
         await page.mouse.down();
-        await page.mouse.move(x + 105, y, { steps: 12 });
+        await page.mouse.move(x + movement, y, { steps: 12 });
         const moved = await toggle.boundingBox();
-        assert.ok(Math.abs(moved.x - grip.x - 105) < 1, 'The rail follows the pointer at 1:1 scale');
+        assert.ok(Math.abs(moved.x - grip.x - movement) < 1, 'The rail follows the pointer at 1:1 scale');
         await page.mouse.up();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
