@@ -4574,6 +4574,7 @@
         toggle.className = 'dg-story-drawer-toggle';
         toggle.type = 'button';
         toggle.setAttribute('aria-controls', panel.id);
+        putAuthIcon(toggle, 'collapsePanel');
         drawer.append(panel);
         shell.prepend(toggle, drawer);
         shell.classList.add('dg-has-login-stories', 'dg-has-story-drawer');
@@ -4608,7 +4609,6 @@
                 (fa ? 'باز کردن پنل محصولات' : 'Expand product panel');
             toggle.setAttribute('aria-label', label);
             toggle.title = label;
-            putAuthIcon(toggle, open ? 'back' : 'arrow');
             if (userAction) {
                 manual = true;
                 try { window.localStorage.setItem(storageKey, open ? '0' : '1'); } catch (error) { /* Storage is optional. */ }
@@ -4648,7 +4648,8 @@
                 haptic(event, 7);
                 changed();
             }
-            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - 14);
+            var edgeInset = toggle.offsetWidth / 2 + 2;
+            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - edgeInset);
             var width = Math.max(0, Math.min(limit, drag.width + delta));
             layout.style.setProperty('--dg-story-reveal', width + 'px');
             shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');
@@ -5225,6 +5226,7 @@
         user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
         userPlus: 'M15 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM19 8v6m-3-3h6',
         chevronDown: 'M6 9l6 6 6-6',
+        collapsePanel: 'M12 7l-5 5 5 5 M17 6v12',
         trash: 'M4 6h16M9 6V3h6v3m3 0-1 15H7L6 6m4 4v7m4-7v7',
         home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
         email: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z M3 7l9 6 9-6',

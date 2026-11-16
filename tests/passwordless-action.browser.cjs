@@ -542,9 +542,9 @@ async function checkStoryDrawer(browser, direction, labels) {
         const expanded = await toggle.boundingBox();
         const drawer = shell.locator('.dg-story-drawer');
         const panel = await drawer.boundingBox();
-        assert.equal(expanded.width, 36);
-        assert.equal(expanded.height, 36);
-        assert.ok(panel.x + panel.width - expanded.x - expanded.width < 20 && expanded.x > panel.x);
+        assert.ok(expanded.height > expanded.width && expanded.height < 56, 'The handle has a compact vertical shape');
+        assert.ok(Math.abs(expanded.x + expanded.width / 2 - panel.x - panel.width) <= 1, 'The handle straddles the right border');
+        assert.ok(Math.abs(expanded.y + expanded.height / 2 - panel.y - panel.height / 2) <= 1, 'The handle is vertically centered');
         const track = shell.locator('.dg-story-track');
         const gap = await track.evaluate(element => {
             const [a, b] = element.children;
