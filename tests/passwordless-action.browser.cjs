@@ -637,13 +637,14 @@ async function checkLoginStories(browser) {
     const page = await browser.newPage({ viewport: { width: 390, height: 850 }, reducedMotion: 'reduce' });
     let requests = 0;
     let single = false;
+    let titles = ['قطعات', 'ساخت برد', 'تأمین'];
     await page.route('https://digitalogic.test/login/', route => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: '<html lang="fa-IR" dir="rtl"><body class="login login-action-login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body></html>'
     }));
     await page.route('https://digitalogic.test/stories?locale=fa_IR', route => {
         requests++;
-        return route.fulfill({ json: single ? [{ image: '/story.webp', alt: 'تصویر معرفی' }] : ['قطعات', 'ساخت برد', 'تأمین'].map((title, index) => ({
+        return route.fulfill({ json: single ? [{ image: '/story.webp', alt: 'تصویر معرفی' }] : titles.map((title, index) => ({
             image: '/story.webp', image_light: '/light.webp', tab: title, title, description: 'متن از سرور',
             notes: ['نمونه'], action: 'مشاهده', link: '/product/' + index
         })) });
@@ -667,6 +668,25 @@ async function checkLoginStories(browser) {
     const panel = page.locator('.dg-login-stories');
     await panel.waitFor();
     assert.equal(requests, 1);
+    async function assertSingleRow(visibleLabels) {
+        const controls = panel.locator('.dg-story-controls');
+        const layout = await controls.evaluate(el => {
+            const bounds = el.getBoundingClientRect();
+            return [...el.querySelectorAll('button:not([hidden])')].map(button => {
+                const rect = button.getBoundingClientRect();
+                return {
+                    centeredAt: (rect.top + rect.bottom) / 2,
+                    inside: rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+                };
+            });
+        });
+        assert.ok(layout.length > 1 && layout.every(button => button.inside && Math.abs(button.centeredAt - layout[0].centeredAt) < 1));
+        assert.equal(await controls.locator('.dg-story-label:visible').count(), visibleLabels);
+    }
+    await assertSingleRow(0);
+    await page.setViewportSize({ width: 1280, height: 1024 });
+    await assertSingleRow(3);
+    await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
     assert.equal(await page.locator('#login > .dg-login-preferences').count(), 1);
     assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/light.webp');
@@ -674,7 +694,7 @@ async function checkLoginStories(browser) {
     await theme.click();
     assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/story.webp');
     assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
-    await panel.getByRole('button', { name: 'قطعات', exact: true }).press('ArrowLeft');
+    await panel.locator('.dg-story-dot').first().press('ArrowLeft');
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
     assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
     assert.equal(await panel.locator('article[inert]:not([data-dg-clone])').count(), 2);
@@ -692,6 +712,14 @@ async function checkLoginStories(browser) {
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
     await page.setViewportSize({ width: 390, height: 850 });
     await panel.waitFor({ state: 'hidden' });
+    titles = Array.from({ length: 8 }, (_, index) => 'عنوان کامل محصول ' + (index + 1));
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.setViewportSize({ width: 720, height: 1024 });
+    await open();
+    await panel.waitFor();
+    await assertSingleRow(0);
+    assert.equal(await panel.locator('.dg-story-dot:visible').count(), 8);
+    assert.equal(await panel.locator('.dg-story-rotation').isVisible(), true);
     single = true;
     await page.setViewportSize({ width: 768, height: 1024 });
     await open();
