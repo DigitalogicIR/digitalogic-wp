@@ -4529,13 +4529,37 @@
         var assigned = config.rememberedAccount;
         var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
         var identity = document.querySelector('.dg-digits-login-shell input[name="digits_phone"]');
-        if ((!accounts.length && !(assigned && assigned.login)) || !identity || document.querySelector('.dg-account-hint')) { return; }
+        var tabs = identity?.closest('.digits-form_tab_container');
+        if ((!accounts.length && !assigned?.login) || !tabs || document.querySelector('.dg-account-hint')) { return; }
+        if (assigned?.login) {
+            accounts = [assigned].concat(accounts.filter(function (account) { return account.login !== assigned.login; }));
+        }
+        var persian = isPersianLocale();
         var hint = document.createElement('details');
         hint.className = 'dg-account-hint';
         var summary = document.createElement('summary');
-        summary.textContent = isPersianLocale() ? 'انتخاب حساب' : 'Choose an account';
-        putAuthIcon(summary, 'user');
+        var displayedAccount;
         hint.appendChild(summary);
+        function showAccount(node, label, account) {
+            var text = document.createElement('span');
+            text.textContent = label;
+            text.dir = 'auto';
+            node.replaceChildren(text);
+            if (!account?.avatar) {
+                putAuthIcon(node, 'user');
+                return;
+            }
+            var img = document.createElement('img');
+            img.alt = '';
+            img.src = account.avatar;
+            node.prepend(img);
+        }
+        function updateSummary(value) {
+            var selected = accounts.find(function (account) { return account.login === value; }) || null;
+            if (displayedAccount === selected) { return; }
+            displayedAccount = selected;
+            showAccount(summary, selected ? (selected.name || selected.login) : (persian ? 'انتخاب حساب' : 'Choose an account'), selected);
+        }
         function selectAccount(value) {
             selectDigitsMode('unknown', false);
             identity.value = value;
@@ -4546,36 +4570,30 @@
         function addChoice(label, value, account) {
             var choice = document.createElement('button');
             choice.type = 'button';
-            choice.textContent = label;
-            if (account && account.avatar) {
-                var img = document.createElement('img');
-                img.alt = '';
-                img.src = account.avatar;
-                choice.prepend(img);
-            } else {
-                putAuthIcon(choice, 'user');
-            }
+            showAccount(choice, label, account);
             choice.addEventListener('click', function () { selectAccount(value); });
             hint.appendChild(choice);
         }
-        if (assigned && assigned.login) {
-            addChoice(assigned.name || assigned.login, assigned.login, assigned);
-            if (!identity.value) {
-                identity.value = assigned.login;
-                identity.dispatchEvent(new Event('input', { bubbles: true }));
+        var heading = document.createElement('p');
+        heading.className = 'dg-account-hint-divider';
+        heading.textContent = persian ? 'حساب‌های خارج‌شده' : 'Signed out';
+        hint.appendChild(heading);
+        accounts.forEach(function (account) {
+            addChoice(account.name || account.login, account.login, account);
+        });
+        addChoice(persian ? 'ورود با حساب دیگر' : 'Use another account', '');
+        tabs.before(hint);
+        tabs.addEventListener('input', function (event) {
+            if (event.target.matches('input[name="digits_phone"], input[name="digits_email"]')) {
+                updateSummary(event.target.value);
             }
+        });
+        if (assigned?.login && !identity.value) {
+            identity.value = assigned.login;
+            identity.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+            updateSummary(identity.value);
         }
-        if (accounts.length) {
-            var heading = document.createElement('p');
-            heading.className = 'dg-account-hint-divider';
-            heading.textContent = isPersianLocale() ? 'حساب‌های خارج‌شده' : 'Signed out';
-            hint.appendChild(heading);
-            accounts.forEach(function (account) {
-                addChoice(account.name || account.login, account.login, account);
-            });
-        }
-        addChoice(isPersianLocale() ? 'ورود با حساب دیگر' : 'Use another account', '');
-        identity.closest('.digits-form_tab_container')?.before(hint);
     }
 
     function prefetchAuthPages() {
