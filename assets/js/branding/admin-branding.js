@@ -4468,10 +4468,10 @@
         var isReset = body.matches('.login-action-rp, .login-action-resetpass') && !login.querySelector('#resetpassform');
         if (!isCheckEmail && !isConfirmed && !isReset) { return; }
         var heading = body.querySelector(':scope > h1.screen-reader-text');
-        var notice = login.querySelector(isReset
-            ? ':scope > .message.reset-pass'
-            : ':scope > .message:not(.notice-error)');
+        var notice = isConfirmed && login.querySelector(':scope > p.success');
+        notice = notice || login.querySelector(isReset ? ':scope > .message.reset-pass' : ':scope > .message:not(.notice-error)');
         if (!heading || !notice) { return; }
+        var followup = isConfirmed && notice.matches('p.success') && notice.nextElementSibling;
 
         var card = document.createElement('section');
         card.className = 'dg-native-auth-card' + (isCheckEmail ? '' : ' dg-native-auth-card--success');
@@ -4480,6 +4480,7 @@
         putAuthIcon(heading, isCheckEmail ? 'email' : 'check');
         notice.before(card);
         card.append(heading, notice);
+        if (followup && followup.matches('p:not([id], [class])')) { card.append(followup); }
         if (preferences?.classList.contains('dg-login-preferences')) { login.append(preferences); }
     }
 

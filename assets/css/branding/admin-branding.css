@@ -4267,7 +4267,7 @@ body.login #login .dg-native-auth-card--success .dg-native-card-heading > .dg-au
 }
 
 body.login #login .admin-email-confirm-form > .admin-email__details,
-body.login #login .dg-native-auth-card :is(.message, .message p) {
+body.login #login .dg-native-auth-card :is(.message, p) {
     margin: 0;
     color: var(--dg-text);
     font-size: 15px;
@@ -4281,7 +4281,7 @@ body.login #login .dg-native-auth-card .message {
     box-shadow: none;
 }
 
-body.login #login .dg-native-auth-card .message p + p {
+body.login #login .dg-native-auth-card p + p {
     margin-block-start: 10px;
 }
 
