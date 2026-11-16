@@ -16,6 +16,8 @@ use Digitalogic\Laravel\Http\Controllers\MobileMergeController;
 use Digitalogic\Laravel\Http\Controllers\MobileDeviceReportController;
 use Digitalogic\Laravel\Http\Controllers\MobileBrowserController;
 
+Route::match( array( 'GET', 'POST' ), '/mobile/account/recently-viewed', array( \Digitalogic\Laravel\Http\Controllers\MobileActivityController::class, 'history' ) );
+Route::get( '/mobile/account/events', array( \Digitalogic\Laravel\Http\Controllers\MobileActivityController::class, 'events' ) );
 Route::get( '/mobile/auth/browser/session', array( MobileBrowserController::class, 'session' ) );
 Route::post( '/mobile/auth/browser/google/challenge', array( MobileBrowserController::class, 'googleChallenge' ) );
 

@@ -131,6 +131,8 @@ jobs:
         "$browser_tools/node_modules/.bin/playwright-core" install --with-deps chromium
         NODE_PATH="$browser_tools/node_modules" node tests/passwordless-action.browser.cjs
         NODE_PATH="$browser_tools/node_modules" node --test tests/woodmart-search.browser.cjs
+        NODE_PATH="$browser_tools/node_modules" node --test tests/storefront-account-activity.test.cjs
+        NODE_PATH="$browser_tools/node_modules" node tests/storefront-account-activity.browser.cjs
 
     - name: Reject non-synthetic mobile fixtures
       run: |

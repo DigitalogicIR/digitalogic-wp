@@ -89,6 +89,8 @@ final class MobileCatalogController {
 						'device_report'            => home_url( '/app-api/account/device-report' ),
 						'native_orders'            => home_url( '/app-api/account/orders' ),
 						'native_favorites'         => home_url( '/app-api/account/favorites' ),
+						'recently_viewed'          => home_url( '/app-api/account/recently-viewed' ),
+						'account_events'           => home_url( '/app-api/account/events' ),
 						'native_sessions'          => home_url( '/app-api/auth/sessions' ),
 						'native_logout'            => home_url( '/app-api/auth/logout' ),
 						'events'                   => rest_url( 'digitalogic/v1/events/stream' ),
@@ -118,6 +120,8 @@ final class MobileCatalogController {
 						'android_sms_retriever'     => MobileIdentityController::otpEnabled() && \Digitalogic\Laravel\Services\MobileOtpSmsFormat::available(),
 						'telemetry'                 => \Digitalogic\Laravel\Services\MobileDeviceReport::enabled(),
 						'cloud_favorites'           => \Digitalogic\Laravel\Services\MobileWishlist::enabled(),
+						'recently_viewed'           => MobileIdentityController::enabled() && \Digitalogic\Laravel\Services\MobileRecentViews::enabled(),
+						'account_events'            => \Digitalogic\Laravel\Services\MobileAccountEvents::enabled(),
 						'native_forms'              => MobileRequestController::enabled(),
 						'push_notifications'        => false,
 						'websocket'                 => (bool) get_option( 'digitalogic_mobile_websocket', false ),
@@ -464,6 +468,17 @@ final class MobileCatalogController {
 	}
 
 	/**
+	 * Validate a public identity without building a full catalog payload.
+	 *
+	 * @param int $id Exact product or variation ID.
+	 * @return bool Whether current visibility permits a public reference.
+	 */
+	public function isPublicProductId( int $id ): bool {
+		$product = wc_get_product( $id );
+		return $product && $this->isPublic( $product );
+	}
+
+	/**
 	 * Values are decimal strings in the store's currency minor unit, never inferred.
 	 *
 	 * @param mixed $value Value.
@@ -703,7 +718,7 @@ final class MobileCatalogController {
 	private function cached( Request $request, string $route, array $query, callable $build ): Response {
 		$generation = class_exists( 'Digitalogic_Report_Engine' ) ? \Digitalogic_Report_Engine::instance()->current_projection_generation() : '';
 		$generation = is_wp_error( $generation ) ? '' : $generation;
-		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
+		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), get_option( 'digitalogic_mobile_account_activity', false ), 'account-activity-1', 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
 		$private    = get_current_user_id() > 0;
 		$data       = $private ? false : wp_cache_get( $key, 'digitalogic-mobile' );
 		$hit        = is_array( $data );

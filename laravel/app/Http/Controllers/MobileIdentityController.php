@@ -772,7 +772,7 @@ final class MobileIdentityController {
 			if ( null === $items || ! is_string( $base ) || ! preg_match( '/\A[a-f0-9]{64}\z/D', $base ) || array_diff( array_keys( $input ), array( 'items', 'base_revision' ) ) ) {
 				return $this->error( 'invalid_favorites', 'فهرست علاقه‌مندی‌ها معتبر نیست.', 400 );}
 		}
-		$result = \Digitalogic\Laravel\Services\MobileWishlist::sync( (int) $session['user_id'], $items, $base );
+		$result = \Digitalogic\Laravel\Services\MobileWishlist::sync( (int) $session['user_id'], $items, $base, static fn() => Store::sessionIsCurrent( $session['id'], (int) $session['user_id'] ) );
 		if ( is_wp_error( $result ) ) {
 			$data = $result->get_error_data();
 			return $this->json(

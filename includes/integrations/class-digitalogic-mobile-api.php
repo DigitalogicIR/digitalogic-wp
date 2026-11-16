@@ -50,6 +50,9 @@ final class Digitalogic_Mobile_API {
 			add_action( $event, array( self::class, 'cart_changed' ), 90, 0 );}
 		// Woo session persistence runs at shutdown priority20. Notify after the website's save.
 		add_action( 'shutdown', array( self::class, 'flush_cart_changes' ), 40 );
+		\Digitalogic\Laravel\Services\MobileWebsiteActivity::register();
+		add_action( 'init', array( \Digitalogic\Laravel\Services\MobileRecentViews::class, 'schedule' ), 96 );
+		add_action( \Digitalogic\Laravel\Services\MobileRecentViews::CLEANUP_HOOK, array( \Digitalogic\Laravel\Services\MobileRecentViews::class, 'cleanup' ) );
 		foreach ( array( 'fluent_support/ticket_created', 'fluent_support/ticket_closed', 'fluent_support/ticket_reopen' ) as $event ) {
 			add_action( $event, array( self::class, 'ticket_changed' ), 90, 1 );
 		}
@@ -274,7 +277,7 @@ final class Digitalogic_Mobile_API {
 		if ( preg_match( '~^/app-api/(account/merge(?:/plan|/operations/[0-9a-fA-F-]{36})?)/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/' . $matches[1];
 		}
-		if ( preg_match( '~^/app-api/(bootstrap|categories|links/resolve|forms|checkout(?:/quote|/operations/[A-Za-z0-9-]{16,64})?|cart(?:/claim)?|uploads(?:/[a-f0-9]{32})?|requests(?:/[A-Za-z0-9-]{16,64})?|products(?:/[1-9][0-9]{0,9})?|auth/(?:otp/request|otp/verify|google(?:/challenge)?|register|sessions|logout)|account/(?:profile|orders|favorites|requests|messages(?:/schema|/operations/[A-Za-z0-9-]{16,64}|/[1-9][0-9]{0,9}(?:/messages|/close|/reopen)?)?|phone/request|phone/verify|phone/eligibility|phone/resolution|reauth/google(?:/challenge)?))/?$~D', $path, $matches ) ) {
+		if ( preg_match( '~^/app-api/(bootstrap|categories|links/resolve|forms|checkout(?:/quote|/operations/[A-Za-z0-9-]{16,64})?|cart(?:/claim)?|uploads(?:/[a-f0-9]{32})?|requests(?:/[A-Za-z0-9-]{16,64})?|products(?:/[1-9][0-9]{0,9})?|auth/(?:otp/request|otp/verify|google(?:/challenge)?|register|sessions|logout)|account/(?:profile|orders|favorites|recently-viewed|events|requests|messages(?:/schema|/operations/[A-Za-z0-9-]{16,64}|/[1-9][0-9]{0,9}(?:/messages|/close|/reopen)?)?|phone/request|phone/verify|phone/eligibility|phone/resolution|reauth/google(?:/challenge)?))/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/' . $matches[1];
 		}
 		return null;
@@ -292,6 +295,12 @@ final class Digitalogic_Mobile_API {
 		}
 		if ( str_ends_with( $route, '/auth/browser/google/challenge' ) ) {
 			return array( 'POST' );
+		}
+		if ( str_ends_with( $route, '/account/recently-viewed' ) ) {
+			return array( 'GET', 'HEAD', 'POST' );
+		}
+		if ( str_ends_with( $route, '/account/events' ) ) {
+			return array( 'GET' );
 		}
 		if ( str_ends_with( $route, '/account/device-report' ) ) {
 			return array( 'POST' );

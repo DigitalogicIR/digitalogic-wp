@@ -166,6 +166,7 @@ final class MobileAccountMerge {
 			throw new \RuntimeException( 'Wishlist inventory unavailable.' );
 		}
 		$favorite_ids = array_map( 'intval', $favorite_rows );
+		$recently_viewed = MobileRecentViews::read( $id );
 		$count_sql    = static function ( $query ) use ( $wpdb ): int {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Every caller passes a closed, prepared provider count query.
 			$value = $wpdb->get_var( $query );
@@ -184,6 +185,7 @@ final class MobileAccountMerge {
 		$counts       = array(
 			'orders'    => $count( $prefix . 'wc_orders', 'customer_id', $id ),
 			'favorites' => count( $favorite_ids ),
+			'recently_viewed' => count( $recently_viewed ),
 			'requests'  => $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_author=%d AND post_type='digitalogic_request'", $id ) ),
 			'tickets'   => $count_sql( $wpdb->prepare( 'SELECT COUNT(*) FROM %i t JOIN %i p ON p.id=t.customer_id WHERE p.user_id=%d', $prefix . 'fs_tickets', $prefix . 'fs_persons', $id ) ),
 			'drafts'    => $count( $prefix . 'digitalogic_mobile_drafts', 'user_id', $id ),
@@ -230,6 +232,7 @@ final class MobileAccountMerge {
 			'shipping'             => $customer->get_shipping(),
 			'address_locations'    => MobileAddresses::locations( $customer ),
 			'favorites'            => $favorite_ids,
+			'recently_viewed'      => $recently_viewed,
 			'counts'               => $counts,
 			'pending'              => $pending,
 			'unsupported_history'  => array_filter( $unsupported ),
@@ -443,6 +446,7 @@ final class MobileAccountMerge {
 		}
 		$source_id   = $context['source'];
 		$target_id   = $context['target'];
+		MobileRecentViews::save( $target_id, MobileRecentViews::combine( $target['recently_viewed'], $source['recently_viewed'], time() ) );
 		$source_cart = MobileCartStore::create( $source_id );
 		$target_cart = MobileCartStore::create( $target_id );
 		$wanted      = array();
@@ -499,6 +503,9 @@ final class MobileAccountMerge {
 			sort( $actual, SORT_NUMERIC );
 			if ( $actual !== $expected ) {
 				throw new \RuntimeException( 'wishlist_merge_readback_failed' );
+			}
+			if ( array_diff( $source['favorites'], $target['favorites'] ) ) {
+				MobileRecentViews::emit( $target_id, 'favorites', 'favorites' );
 			}
 		}
 		$customer = new \WC_Customer( $target_id );

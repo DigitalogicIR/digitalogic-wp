@@ -777,6 +777,14 @@ class Digitalogic_WebSocket_Server {
 				),
 			);
 		}
+		if ( $user_id > 0 && in_array( $name, array( 'mobile.favorites.updated', 'mobile.history.updated' ), true ) && (int) ( $data['user_id'] ?? 0 ) === $user_id ) {
+			return array(
+				'id' => absint( $event['id'] ?? 0 ),
+				'name' => substr( $name, 7 ),
+				'time' => $event['time'] ?? '',
+				'data' => array( 'scope' => 'mobile.history.updated' === $name ? 'recently_viewed' : 'favorites' ),
+			);
+		}
 		if ( $user_id > 0 && 'mobile.cart.updated' === $name && (int) ( $data['user_id'] ?? 0 ) === $user_id ) {
 			return array(
 				'id'   => absint( $event['id'] ?? 0 ),

@@ -75,25 +75,36 @@ final class MobileWishlist {
 	 * @param int         $user_id Verified WordPress owner.
 	 * @param array|null  $desired Desired.
 	 * @param string|null $base Base.
+	 * @param callable|null $authority Recheck the initiating session after owner-lock acquisition.
 	 * @return mixed Native adapter result.
 	 * @throws \InvalidArgumentException When the authoritative operation cannot be completed safely.
 	 * @throws \RuntimeException When the authoritative operation cannot be completed safely.
 	 */
-	public static function sync( int $user_id, ?array $desired = null, ?string $base = null ) {
+	public static function sync( int $user_id, ?array $desired = null, ?string $base = null, ?callable $authority = null ) {
 		if ( ! self::available() ) {
 			return new \WP_Error( 'favorites_unavailable', 'علاقه‌مندی‌ها موقتاً در دسترس نیست.', array( 'status' => 503 ) );}
 		global $wpdb;
 		$lock     = 'dgl-wishlist-' . $user_id;
 		$old_user = get_current_user_id();
 		$table    = MobileIdentityStore::table( 'favorites' );
+		$owner_lock = 'dgl-link-user-' . $user_id;
+		if ( 1 !== (int) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s,1)', $owner_lock ) ) ) {
+			return new \WP_Error( 'favorites_busy', 'کمی بعد همگام‌سازی را ادامه دهید.', array( 'status' => 409 ) );
+		}
 		if ( (int) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s,1)', $lock ) ) !== 1 ) {
+			$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $owner_lock ) );
 			return new \WP_Error( 'favorites_busy', 'کمی بعد همگام‌سازی را ادامه دهید.', array( 'status' => 409 ) );}
 		try {
+			wp_cache_delete( $user_id, 'user_meta' );
+			if ( get_user_meta( $user_id, '_digitalogic_merged_into', true ) || ( $authority && ! $authority() ) ) {
+				return new \WP_Error( 'unauthorized', 'دوباره وارد حساب شوید.', array( 'status' => 401 ) );
+			}
 			wp_set_current_user( $user_id );
 			$wpdb->query( 'START TRANSACTION' );
 			$wishlist = new \XTS\WC_Wishlist\Wishlist( false, $user_id, false );
 			if ( ! $wishlist->get_id() ) {
 				throw new \RuntimeException( 'Canonical wishlist unavailable.' );}
+			$initial = self::snapshot( $wishlist->get_all() );
 			if ( ! get_user_meta( $user_id, '_digitalogic_native_favorites_imported', true ) ) {
 				$legacy  = $wpdb->get_var( $wpdb->prepare( 'SELECT items FROM %i WHERE user_id=%d FOR UPDATE', $table, $user_id ) );
 				$legacy  = self::normalize( json_decode( $legacy ?? '[]', true ) ) ?? array();
@@ -148,13 +159,18 @@ final class MobileWishlist {
 			);
 			if ( $wpdb->query( 'COMMIT' ) === false ) {
 				throw new \RuntimeException( 'Wishlist commit uncertain.' );
-			}return $current;
+			}
+			if ( $initial['revision'] !== $current['revision'] ) {
+				MobileRecentViews::emit( $user_id, 'favorites', 'favorites' );
+			}
+			return $current;
 		} catch ( \Throwable $error ) {
 			$wpdb->query( 'ROLLBACK' );
 			wp_cache_delete( $user_id, 'user_meta' );
 			return new \WP_Error( $error instanceof \InvalidArgumentException ? 'invalid_product' : 'favorites_write_uncertain', 'علاقه‌مندی‌ها ذخیره نشد؛ وضعیت را دوباره بررسی کنید.', array( 'status' => $error instanceof \InvalidArgumentException ? 422 : 503 ) );
 		} finally {
 			wp_set_current_user( $old_user );
-			$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock ) );}
+			$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock ) );
+			$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $owner_lock ) );}
 	}
 }
