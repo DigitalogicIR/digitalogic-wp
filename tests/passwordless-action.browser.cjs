@@ -930,6 +930,9 @@ async function checkLoginStories(browser) {
     await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     assert.equal(requests, 1);
     async function assertSingleRow(visibleLabels) {
+        await panel.evaluate(node => Promise.all(node.getAnimations()
+            .filter(animation => animation.transitionProperty === 'transform')
+            .map(animation => animation.finished.catch(() => {}))));
         const controls = panel.locator('.dg-story-controls');
         const layout = await controls.evaluate(el => {
             const bounds = el.getBoundingClientRect();
