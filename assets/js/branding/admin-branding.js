@@ -4230,6 +4230,22 @@
         });
     }
 
+    function fitAdminToolbar() {
+        var toolbar = document.querySelector('body.wp-admin #wpadminbar');
+        if (!toolbar) { return; }
+        var root = document.documentElement;
+        function updateHeight() {
+            var height = Math.ceil(toolbar.getBoundingClientRect().height);
+            var property = '--wp-admin--admin-bar--height';
+            if (height && root.style.getPropertyValue(property) !== height + 'px') {
+                root.style.setProperty(property, height + 'px');
+            }
+        }
+        updateHeight();
+        if (window.ResizeObserver) { new ResizeObserver(updateHeight).observe(toolbar); }
+        else { window.addEventListener('resize', updateHeight); }
+    }
+
     function buildLoginStories() {
         var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
         if (!shell || !config.loginSlidesUrl || !document.body.classList.contains('login')) { return; }
@@ -5375,6 +5391,7 @@
             bindThemeStorageSync();
         }
         bindThemeToggles();
+        fitAdminToolbar();
         mountLoginFooter();
         buildLanguageSwitcher();
         injectLateLoginOverrides();

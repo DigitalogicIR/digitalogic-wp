@@ -3666,19 +3666,75 @@ body.wp-admin #wpbody-content {
 }
 
 body.wp-admin #wpadminbar {
+    --dg-toolbar-row: 32px;
+    --dg-toolbar-icon: var(--dg-text-soft);
+    box-sizing: border-box;
+    min-inline-size: 0;
+    block-size: auto;
+    min-block-size: calc(var(--dg-toolbar-row) + 1px);
+    color: var(--dg-text);
     background: color-mix(in srgb, var(--dg-bg-strong) 88%, transparent);
     backdrop-filter: blur(18px);
     border-bottom: 1px solid var(--dg-border);
 }
 
+body.wp-admin #wpadminbar > #wp-toolbar,
+body.wp-admin #wpadminbar > #wp-toolbar > ul {
+    display: flex;
+    align-items: flex-start;
+}
+
+body.wp-admin #wpadminbar > #wp-toolbar > ul {
+    flex-wrap: wrap;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+}
+
+body.wp-admin #wpadminbar > #wp-toolbar > ul > .menupop:is(:hover, .hover, :focus-within) {
+    z-index: 100000;
+}
+
+body.wp-admin #wpadminbar > #wp-toolbar > #wp-admin-bar-root-default {
+    flex: 1 1 0;
+}
+
+body.wp-admin #wpadminbar > #wp-toolbar > #wp-admin-bar-top-secondary {
+    justify-content: flex-end;
+}
+
+body.wp-admin #wpadminbar #wp-admin-bar-my-account > .ab-item {
+    display: block;
+}
+
 body.wp-admin #wpadminbar .ab-item,
-body.wp-admin #wpadminbar a.ab-item,
 body.wp-admin #wpadminbar > #wp-toolbar span.ab-label,
 body.wp-admin #wpadminbar > #wp-toolbar span.noticon {
     color: var(--dg-text);
 }
 
-body.wp-admin #wpadminbar .dashicons,
+body.wp-admin #wpadminbar > #wp-toolbar :is(.ab-icon, .ab-item, .noticon)::before,
+body.wp-admin #wpadminbar > #wp-toolbar .ab-icon {
+    color: var(--dg-toolbar-icon);
+}
+
+body.wp-admin #wpadminbar #wp-admin-bar-rank-math .rank-math-icon svg path {
+    fill: var(--dg-toolbar-icon);
+}
+
+body.wp-admin #wpadminbar .menupop .ab-sub-wrapper {
+    background: var(--dg-panel-strong);
+}
+
+body.wp-admin #wpadminbar .ab-sub-wrapper .ab-sub-secondary,
+body.wp-admin #wpadminbar > #wp-toolbar li:is(:hover, .hover, :focus-within) > .ab-item {
+    background: var(--dg-panel-soft);
+}
+
+body.wp-admin #wpadminbar > #wp-toolbar .ab-item:focus-visible {
+    outline: 2px solid var(--dg-accent);
+    outline-offset: -2px;
+}
+
 body.wp-admin .dashicons,
 body.login .dashicons,
 body.wp-admin .dashicons-before::before,
@@ -3709,11 +3765,24 @@ body.wp-admin #wp-admin-bar-digitalogic-brand > a.ab-item {
     color: var(--dg-accent-strong);
 }
 
+body.wp-admin #wpadminbar > #wp-toolbar #wp-admin-bar-digitalogic > .ab-item > .ab-icon {
+    block-size: 20px;
+    padding: 0;
+    margin: 0;
+}
+
+body.wp-admin #wpadminbar > #wp-toolbar #wp-admin-bar-digitalogic > .ab-item > .ab-icon::before {
+    top: auto;
+    margin: 0;
+    padding: 0;
+}
+
 body.wp-admin #wpadminbar #wp-admin-bar-digitalogic-theme-toggle > .ab-item {
-    display: inline-flex;
+    box-sizing: border-box;
+    display: flex;
     align-items: center;
     gap: 7px;
-    min-width: 38px;
+    min-inline-size: 42px;
     padding-inline: 10px;
 }
 
@@ -3728,6 +3797,23 @@ body.wp-admin #wpadminbar #wp-admin-bar-digitalogic-theme-toggle > .ab-item {
     height: 18px;
     font-size: 18px;
     color: var(--dg-accent-strong);
+}
+
+@media (783px <= width <= 1360px) {
+    body.wp-admin #wpadminbar .dg-adminbar-theme-toggle .dg-toggle-text {
+        position: absolute;
+        clip-path: inset(50%);
+        inline-size: 1px;
+        block-size: 1px;
+        overflow: hidden;
+        white-space: nowrap;
+    }
+}
+
+@media (max-width: 782px) {
+    body.wp-admin #wpadminbar {
+        --dg-toolbar-row: 46px;
+    }
 }
 
 body.wp-admin #adminmenuwrap,
