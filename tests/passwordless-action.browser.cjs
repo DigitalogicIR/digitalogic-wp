@@ -1060,7 +1060,7 @@ async function checkLoginStories(browser) {
         body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
     }));
     await page.addInitScript(() => {
-        window.DigitalogicBranding = { loginSlidesUrl: '/stories', showLoginThemeSwitcher: true };
+        window.DigitalogicBranding = { loginSlidesUrl: '/stories', showLoginThemeSwitcher: true, loginStoryNavThumbs: false };
     });
     async function open() {
         await page.goto('https://digitalogic.test/login/');
@@ -1101,7 +1101,7 @@ async function checkLoginStories(browser) {
     await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
     assert.equal(await page.locator('#login > .dg-login-preferences').count(), 1);
-    const image = panel.locator('article:not([inert]) img[src^="blob:"]');
+    const image = panel.locator('article:not([inert]) .dg-story-image[src^="blob:"]');
     await image.waitFor();
     const lightSource = await image.getAttribute('src');
     const theme = page.locator('.dg-login-preferences .dg-theme-toggle-button');
@@ -1111,7 +1111,7 @@ async function checkLoginStories(browser) {
         page.locator('[data-dg-theme-choice="dark"]').click()
     ]);
     await page.waitForFunction(previous => {
-        const source = document.querySelector('.dg-story-card.is-active img')?.getAttribute('src');
+        const source = document.querySelector('.dg-story-card.is-active .dg-story-image')?.getAttribute('src');
         return source?.startsWith('blob:') && source !== previous;
     }, lightSource);
     assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
@@ -1120,6 +1120,7 @@ async function checkLoginStories(browser) {
     assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
     assert.equal(await panel.locator('article[inert]:not([data-dg-clone])').count(), 2);
     assert.equal(await panel.locator('.dg-story-dot').count(), 3);
+    assert.equal(await panel.locator('.dg-story-thumb').count(), 0);
     await panel.locator('.dg-story-dot').first().click();
     assert.equal(await panel.locator('.dg-story-dot[aria-pressed="true"]').count(), 1);
     await panel.getByRole('button', { name: 'اسلاید قبلی' }).click();
@@ -1185,9 +1186,11 @@ async function checkStoryAssetProgress(browser) {
         }
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const page = await browser.newPage({ viewport: { width: 1050, height: 840 }, reducedMotion: 'reduce' });
+    const page = await browser.newPage({ viewport: { width: 1050, height: 840 }, reducedMotion: 'no-preference' });
     try {
-        await page.addInitScript(() => { window.DigitalogicBranding = { loginSlidesUrl: '/stories' }; });
+        await page.addInitScript(() => {
+            window.DigitalogicBranding = { loginSlidesUrl: '/stories', loginStoryNavThumbs: true };
+        });
         await page.goto('http://127.0.0.1:' + server.address().port);
         await page.addStyleTag({ path: styles });
         await page.addScriptTag({ path: branding });
@@ -1198,12 +1201,28 @@ async function checkStoryAssetProgress(browser) {
         }, frame.length + 12);
         assert.equal(await page.locator('.dg-story-loading').isVisible(), false);
         const active = page.locator('.dg-story-card.is-active');
+        const preview = active.locator('.dg-story-preview[src^="blob:"]');
+        const photo = active.locator('.dg-story-image');
+        await preview.waitFor();
+        assert.equal(await preview.evaluate(node => getComputedStyle(node).filter), 'blur(4px)');
+        assert.equal(await photo.evaluate(node => getComputedStyle(node).opacity), '0');
         assert.equal(await active.locator('progress').getAttribute('max'), String(frame.length * 2));
         await page.locator('.dg-story-dot').nth(1).click();
         await active.getByText('12 bytes').waitFor();
         assert.equal(await active.locator('progress').getAttribute('value'), null);
+        await page.locator('.dg-story-dot').first().click();
+        await photo.evaluate(node => {
+            node.addEventListener('transitionrun', event => {
+                if (event.propertyName === 'opacity') {
+                    node.dataset.fadingOverPreview = getComputedStyle(node.previousElementSibling).visibility;
+                }
+            }, { once: true });
+        });
         for (const response of pending.values()) { response.end(frame.subarray(12)); }
         await active.locator('.dg-story-transfer').waitFor({ state: 'hidden' });
+        await preview.waitFor({ state: 'hidden' });
+        assert.equal(await photo.getAttribute('data-fading-over-preview'), 'visible');
+        assert.equal(await photo.evaluate(node => getComputedStyle(node).opacity), '1');
         assert.equal(await page.locator('.dg-story-thumb-image[src^="blob:"]:visible').count(), 2);
     } finally {
         await page.close();

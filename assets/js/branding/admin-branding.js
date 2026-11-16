@@ -4800,6 +4800,7 @@
         var region = drawer?.panel || element('aside', 'dg-login-stories');
         var rtl = getComputedStyle(shell).direction === 'rtl';
         var multiple = cards.length > 1;
+        var showThumbnails = config.loginStoryNavThumbs !== false;
         region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
         if (multiple) { region.setAttribute('aria-roledescription', fa ? 'نمایش اسلاید' : 'carousel'); }
         var header = element('div', 'dg-story-header');
@@ -4824,18 +4825,22 @@
             article.dir = rtl ? 'rtl' : 'ltr';
             article.dataset.storyIndex = index;
             var figure = element('div', 'dg-story-figure');
+            var previewImage = element('img', 'dg-story-preview');
+            previewImage.alt = '';
+            previewImage.draggable = false;
+            previewImage.hidden = true;
             var photo = element('img', 'dg-story-image');
             photo.alt = card.alt;
             photo.decoding = 'async';
             photo.draggable = false;
-            photo.hidden = true;
+            photo.setAttribute('aria-hidden', 'true');
             var transfer = element('div', 'dg-story-transfer');
             var caption = element('span', 'dg-story-transfer-label', fa ? 'دریافت تصویر' : 'Downloading artwork');
             var readout = element('span', 'dg-story-transfer-readout');
             var meter = element('progress', 'dg-story-download');
             meter.setAttribute('aria-label', caption.textContent);
             transfer.append(caption, readout, meter);
-            figure.append(photo, transfer);
+            figure.append(previewImage, photo, transfer);
             card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
             var copy = element('div', 'dg-story-copy');
             if (card.title) { copy.append(element('h2', 'dg-story-title', card.title)); }
@@ -4857,19 +4862,21 @@
                 var dot = element('button', 'dg-story-dot');
                 dot.type = 'button';
                 dot.setAttribute('aria-label', card.tab ? position + ', ' + card.tab : position);
-                var tile = element('span', 'dg-story-thumb');
-                tile.setAttribute('aria-hidden', 'true');
-                var thumb = element('img', 'dg-story-thumb-image');
-                thumb.alt = '';
-                thumb.draggable = false;
-                thumb.hidden = true;
-                var thumbMeter = element('progress', 'dg-story-download');
-                tile.append(thumb, thumbMeter);
-                dot.append(tile);
+                if (showThumbnails) {
+                    var tile = element('span', 'dg-story-thumb');
+                    tile.setAttribute('aria-hidden', 'true');
+                    var thumb = element('img', 'dg-story-thumb-image');
+                    thumb.alt = '';
+                    thumb.draggable = false;
+                    thumb.hidden = true;
+                    var thumbMeter = element('progress', 'dg-story-download');
+                    tile.append(thumb, thumbMeter);
+                    dot.append(tile);
+                    previews.push({ photo: thumb, meter: thumbMeter });
+                }
                 if (card.tab) { dot.append(element('span', 'dg-story-label', card.tab)); }
                 dot.addEventListener('click', function () { select(index, true); });
                 indicators.push(dot);
-                previews.push({ photo: thumb, meter: thumbMeter });
                 dots.append(dot);
             }
         });
@@ -4892,6 +4899,8 @@
         var figures = Array.from(track.querySelectorAll('.dg-story-figure'), function (figure) {
             return {
                 index: Number(figure.closest('article').dataset.storyIndex),
+                root: figure,
+                preview: figure.querySelector('.dg-story-preview'),
                 photo: figure.querySelector('.dg-story-image'),
                 transfer: figure.querySelector('.dg-story-transfer'),
                 label: figure.querySelector('.dg-story-transfer-label'),
@@ -4945,8 +4954,11 @@
             figures.forEach(function (figure) {
                 var picture = pictures[figure.index];
                 var state = states[figure.index];
-                setImage(figure.photo, picture.main.src || picture.preview.src);
-                figure.photo.toggleAttribute('data-preview', !picture.main.src && Boolean(picture.preview.src));
+                setImage(figure.preview, picture.preview === picture.main ? '' : picture.preview.src);
+                var source = picture.main.src;
+                if (source && figure.photo.getAttribute('src') !== source) { figure.photo.src = source; }
+                figure.root.toggleAttribute('data-artwork-ready', Boolean(source));
+                figure.photo.setAttribute('aria-hidden', String(!source));
                 figure.transfer.hidden = !state.loading && !picture.main.failed;
                 figure.label.textContent = picture.main.failed ? (fa ? 'تصویر باز نشد' : 'Artwork unavailable') :
                     (fa ? 'دریافت تصویر' : 'Downloading artwork');
