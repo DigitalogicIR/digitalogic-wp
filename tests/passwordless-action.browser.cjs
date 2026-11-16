@@ -434,9 +434,16 @@ async function checkSmsAction(page, labels) {
     assert.equal(await page.locator('.digits-form_input_info > input[name="otp_token_key"]').inputValue(), 'fixture');
     assert.equal(await page.locator('.digits-form_input_info > input[name="sms_otp"]').getAttribute('aria-hidden'), 'true');
     await page.addStyleTag({ content: '#login .dg-digits-login-shell .digits-tab_active { display: flex !important; }' });
-    const captionBox = await caption.boundingBox();
-    const firstBox = await first.boundingBox();
-    const lastBox = await page.locator('.dg-otp-slot input').last().boundingBox();
+    const { captionBox, firstBox, lastBox } = await first.evaluate(input => {
+        const stack = input.closest('.dg-otp-stack');
+        const digits = stack.querySelectorAll('.dg-otp-slot input');
+        // Read all positions in the same animation frame as the OTP step enters.
+        return {
+            captionBox: stack.querySelector('.dg-otp-instructions').getBoundingClientRect().toJSON(),
+            firstBox: input.getBoundingClientRect().toJSON(),
+            lastBox: digits[digits.length - 1].getBoundingClientRect().toJSON()
+        };
+    });
     assert.ok(captionBox.y + captionBox.height + 8 <= firstBox.y, 'Caption must stay above the code even in a flex provider tab');
     assert.ok(Math.abs(firstBox.y - lastBox.y) < 1, 'Digits stay in one row');
     const resend = page.locator('.dg-otp-resend');
