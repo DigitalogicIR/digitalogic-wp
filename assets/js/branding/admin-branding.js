@@ -4064,13 +4064,11 @@
         var track = element('div', 'dg-story-track');
         stage.append(track);
         var controls = element('div', 'dg-story-controls');
-        var tabs = element('div', 'dg-story-tabs');
         var navigation = element('div', 'dg-story-navigation');
-        var dots = element('div', 'dg-story-dots');
+        var dots = element('div', 'dg-story-dots' + (cards.length <= 3 ? ' dg-story-dots--named' : ''));
         var announcement = element('span', 'dg-visually-hidden');
         announcement.setAttribute('aria-live', 'polite');
         var articles = [];
-        var buttons = [];
         var indicators = [];
 
         cards.forEach(function (card, index) {
@@ -4102,24 +4100,15 @@
 
             if (multiple) {
                 var position = getLabel('heroSlide', fa ? 'نمایش تصویر %d' : 'Show image %d').replace('%d', String(index + 1));
-                if (card.tab) {
-                    var button = slideControl('dg-story-tab', card.tab, index, card.tab);
-                    buttons[index] = button;
-                    tabs.append(button);
-                }
-                var dot = slideControl('dg-story-dot', card.title ? position + ', ' + card.title : position, index);
+                var dot = element('button', 'dg-story-dot');
+                dot.type = 'button';
+                dot.setAttribute('aria-label', card.tab ? position + ', ' + card.tab : position);
+                if (card.tab) { dot.append(element('span', 'dg-story-label', card.tab)); }
+                dot.addEventListener('click', function () { select(index, true); });
                 indicators.push(dot);
                 dots.append(dot);
             }
         });
-
-        function slideControl(className, label, index, text) {
-            var button = element('button', className, text);
-            button.type = 'button';
-            button.setAttribute('aria-label', label);
-            button.addEventListener('click', function () { select(index, true); });
-            return button;
-        }
 
         // Keep the track's measurements LTR and order the cards physically for the page direction.
         var ordered = rtl ? articles.slice().reverse() : articles;
@@ -4196,7 +4185,6 @@
                 article.inert = !visible;
                 article.setAttribute('aria-hidden', String(!visible));
                 article.classList.toggle('is-active', visible);
-                buttons[position]?.setAttribute('aria-pressed', String(visible));
                 indicators[position]?.setAttribute('aria-pressed', String(visible));
             });
             if (manual) { announcement.textContent = indicators[active]?.getAttribute('aria-label') || cards[active].title; }
@@ -4220,11 +4208,19 @@
             var next = storyArrow('arrow', fa ? 'اسلاید بعدی' : 'Next slide', 1);
             navigation.append(previous, dots, next, rotation);
             controls.append(navigation);
-            if (tabs.childElementCount) { controls.append(tabs); }
             region.append(controls, announcement);
             rotation.addEventListener('click', function () { playing = !playing; syncRotation(); });
-            bindStoryKeys(dots, indicators);
-            bindStoryKeys(tabs, Array.from(tabs.children));
+            dots.addEventListener('keydown', function (event) {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { return; }
+                var focused = indicators.indexOf(document.activeElement);
+                if (focused < 0) { return; }
+                event.preventDefault();
+                var offset = (event.key === 'ArrowRight' ? 1 : -1) * (rtl ? -1 : 1);
+                var index = event.key === 'Home' ? 0 : event.key === 'End' ? indicators.length - 1 :
+                    (focused + offset + indicators.length) % indicators.length;
+                select(index, true);
+                indicators[index].focus();
+            });
             track.addEventListener('transitionend', function (event) {
                 if (event.target === track && event.propertyName === 'transform' && snapTimer !== undefined) { snap(); }
             });
@@ -4267,19 +4263,6 @@
                 return button;
             }
 
-            function bindStoryKeys(group, entries) {
-                group.addEventListener('keydown', function (event) {
-                    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { return; }
-                    var focused = entries.indexOf(document.activeElement);
-                    if (focused < 0) { return; }
-                    event.preventDefault();
-                    var offset = (event.key === 'ArrowRight' ? 1 : -1) * (rtl ? -1 : 1);
-                    var index = event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1 :
-                        (focused + offset + entries.length) % entries.length;
-                    entries[index].click();
-                    entries[index].focus();
-                });
-            }
             region.addEventListener('pointerenter', function (event) {
                 if (event.pointerType === 'mouse') { hovering = true; schedule(); }
             });
