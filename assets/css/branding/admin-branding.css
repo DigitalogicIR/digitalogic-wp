@@ -5520,12 +5520,19 @@ body.login :is(.dg-auth-preloader, .dg-story-loading) > span::before {
     animation: dg-fuji-spin 950ms linear infinite;
 }
 
-body.login :is(.dg-auth-preloader, .dg-story-loading) > span::after {
+body.login .dg-auth-preloader > span::after {
     content: "";
     inline-size: 29px;
     block-size: 22px;
     background: linear-gradient(var(--dg-story-ink, var(--dg-heading)) 42%, var(--dg-accent) 43%);
     clip-path: polygon(50% 0, 63% 24%, 72% 31%, 100% 96%, 0 96%, 29% 36%, 41% 21%);
+}
+
+body.login .dg-story-loading > span::after {
+    content: "";
+    inline-size: 32px;
+    block-size: 32px;
+    background: center / contain no-repeat url("../../images/icon.svg");
 }
 
 @keyframes dg-auth-preloader-expire {
