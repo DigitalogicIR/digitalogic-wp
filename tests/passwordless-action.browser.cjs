@@ -437,7 +437,20 @@ async function checkSmsAction(page, labels) {
     assert.equal(attempts, 1, 'Refilling a complete code must wait for explicit submit');
     await page.locator('.dg-otp-progress[data-state="ready"]').waitFor();
     await verify.click();
-    await page.locator('.dg-otp-editor[aria-invalid="true"]').waitFor();
+    const rejectedEditor = page.locator('.dg-otp-editor[aria-invalid="true"]');
+    await rejectedEditor.waitFor({ timeout: 8000 }).catch(async error => {
+        const layout = await rejectedEditor.evaluateAll(editors => editors.map(editor => {
+            const parents = [];
+            for (let node = editor; node; node = node.parentElement) {
+                const style = getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                parents.push([node.className, node.hidden, style.display, style.visibility,
+                    style.contentVisibility, rect.width, rect.height]);
+            }
+            return parents;
+        }));
+        throw new Error(`Rejected OTP must remain visible after attempt ${attempts}; layout: ${JSON.stringify(layout)}`, { cause: error });
+    });
     assert.equal(await alert.innerText(), 'Code expired. Request a new code.');
     assert.equal(await first.evaluate(el => document.activeElement === el), true);
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
