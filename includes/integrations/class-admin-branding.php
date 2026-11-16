@@ -59,6 +59,7 @@ final class Digitalogic_Plugin_Admin_Branding {
         $storage_key = wp_json_encode(self::THEME_STORAGE_KEY);
         $initial_theme = wp_json_encode(self::current_user_theme());
         $admin_color = wp_json_encode(self::current_user_admin_color());
+        $is_login = wp_json_encode(current_filter() === 'login_head');
 
         echo <<<HTML
 <script>
@@ -67,6 +68,19 @@ final class Digitalogic_Plugin_Admin_Branding {
     var root = document.documentElement;
     var theme = {$initial_theme};
     var adminColor = {$admin_color};
+
+    if ({$is_login}) {
+        var mode = 'auto';
+        try {
+            var preference = window.localStorage.getItem(key + ':login');
+            if (preference === 'light' || preference === 'dark') { mode = preference; }
+        } catch (error) {}
+        root.setAttribute('data-dg-theme-mode', mode);
+        root.setAttribute('data-dg-theme', mode === 'auto'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : mode);
+        return;
+    }
 
     if (adminColor !== 'digitalogic-light' && adminColor !== 'digitalogic-dark') {
         try {
@@ -633,6 +647,7 @@ JS;
         if (!$is_fa) {
             return [
                 'theme'                 => 'Theme',
+                'auto'                  => 'Auto',
                 'dark'                  => 'Dark',
                 'light'                 => 'Light',
                 'toggleToDark'          => 'Switch to dark mode',
@@ -691,6 +706,7 @@ JS;
 
         return [
             'theme'                 => 'قالب',
+            'auto'                  => 'خودکار',
             'dark'                  => 'تاریک',
             'light'                 => 'روشن',
             'toggleToDark'          => 'تغییر به حالت تاریک',

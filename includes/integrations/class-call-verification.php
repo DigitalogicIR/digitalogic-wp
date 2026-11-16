@@ -1792,7 +1792,6 @@ final class Digitalogic_Call_Verification {
 									<p data-call-public-note><?php echo esc_html( $persian ? 'برای تماس، از همان شماره‌ای استفاده کنید که وارد کردید.' : 'Call from the same number you entered.' ); ?></p>
 									<p data-call-lan-note hidden><?php echo esc_html( $persian ? 'از تلفن یا نرم‌افزار تماس شرکت و داخلی خودتان استفاده کنید.' : 'Use your assigned extension on the company phone or softphone.' ); ?></p>
 								</div>
-								<a class="dg-call-number" data-call-preview-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><span data-call-dial-number><?php echo esc_html( $dial['display'] ); ?></span></a>
 							</div>
 						</li>
 						<li>

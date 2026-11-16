@@ -249,7 +249,8 @@ test('a successful Digits login resumes its same-site OpenID request with the or
     target.searchParams.set('response_type', 'code');
     target.searchParams.set('state', 'probe+state/&=%');
     const hidden = {value: target.href};
-    const feedback = { classList: { toggle() {} } };
+    document.createElement = () => ({});
+    const feedback = { dataset: {}, classList: { add() {}, toggle() {} }, replaceChildren() {}, appendChild() {} };
     const form = {offsetWidth: 300, matches: () => true, closest: () => ({}),
         querySelector: selector => selector === 'input[name="digits_redirect_page"]' ? hidden :
             selector === '.dg-digits-inline-message' ? feedback : null,
