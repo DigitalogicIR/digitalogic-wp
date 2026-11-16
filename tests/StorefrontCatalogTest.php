@@ -96,6 +96,27 @@ final class StorefrontCatalogTest extends TestCase {
 		$this->assertSame( '---', $GLOBALS['wpdb']->get_results( '' )[0]['post_title'] );
 	}
 
+	/** Persistent workers must refresh the local memo after an external repair. */
+	public function test_invalid_title_memo_refreshes_from_shared_cache_after_local_ttl(): void {
+		$GLOBALS['digitalogic_test_object_cache_enabled'] = true;
+		$GLOBALS['digitalogic_test_object_cache']         = array(
+			'digitalogic-storefront-catalog:invalid-product-titles-v1' => array( 41 ),
+		);
+		$GLOBALS['digitalogic_test_cache_gets'] = array();
+		$catalog = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+
+		$this->assertSame( array( 41 ), $catalog->invalid_product_title_ids() );
+		$this->assertSame( array( 'invalid-product-titles-v1', 'digitalogic-storefront-catalog', true ), $GLOBALS['digitalogic_test_cache_gets'][0] );
+		$GLOBALS['digitalogic_test_object_cache']['digitalogic-storefront-catalog:invalid-product-titles-v1'] = array( 42 );
+		$this->assertSame( array( 41 ), $catalog->invalid_product_title_ids() );
+
+		$loaded_at = new ReflectionProperty( $catalog, 'invalid_product_title_ids_loaded_at' );
+		$loaded_at->setValue( $catalog, hrtime( true ) - 2000000000 );
+		$this->assertSame( array( 42 ), $catalog->invalid_product_title_ids() );
+
+		unset( $GLOBALS['digitalogic_test_object_cache_enabled'], $GLOBALS['digitalogic_test_object_cache'], $GLOBALS['digitalogic_test_cache_gets'] );
+	}
+
 	/** Store API direct details must not bypass collection-query visibility. */
 	public function test_store_api_single_product_guard_returns_not_found_for_invalid_title(): void {
 		$GLOBALS['digitalogic_test_posts'][910041] = array(

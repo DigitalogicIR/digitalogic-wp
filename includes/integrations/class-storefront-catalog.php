@@ -10,6 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Digitalogic_Storefront_Catalog {
 	private const INVALID_TITLE_CACHE_KEY   = 'invalid-product-titles-v1';
 	private const INVALID_TITLE_CACHE_GROUP = 'digitalogic-storefront-catalog';
+	private const INVALID_TITLE_LOCAL_TTL_NS = 1000000000;
 
 	private static $instance = null;
 
@@ -33,6 +34,16 @@ final class Digitalogic_Storefront_Catalog {
 	 * @var int[]|null
 	 */
 	private $invalid_product_title_ids = null;
+
+	/**
+	 * Monotonic nanoseconds for the request-local title projection.
+	 *
+	 * A WebSocket worker can serve many commands in one PHP process, so this
+	 * memo must not outlive an external product repair indefinitely.
+	 *
+	 * @var int
+	 */
+	private $invalid_product_title_ids_loaded_at = 0;
 
 	public static function instance() {
 		if ( null === self::$instance ) {
@@ -111,13 +122,19 @@ final class Digitalogic_Storefront_Catalog {
 	 * @return int[]
 	 */
 	public function invalid_product_title_ids() {
-		if ( null !== $this->invalid_product_title_ids ) {
+		$now = hrtime( true );
+		if ( null !== $this->invalid_product_title_ids && ( $now - $this->invalid_product_title_ids_loaded_at ) < self::INVALID_TITLE_LOCAL_TTL_NS ) {
 			return $this->invalid_product_title_ids;
 		}
+		$this->invalid_product_title_ids           = null;
+		$this->invalid_product_title_ids_loaded_at = 0;
 
-		$cached = wp_cache_get( self::INVALID_TITLE_CACHE_KEY, self::INVALID_TITLE_CACHE_GROUP );
-		if ( is_array( $cached ) ) {
-			$this->invalid_product_title_ids = array_values( array_unique( array_filter( array_map( 'absint', $cached ) ) ) );
+		$external_cache = ! function_exists( 'wp_using_ext_object_cache' ) || wp_using_ext_object_cache();
+		$found          = false;
+		$cached         = $external_cache ? wp_cache_get( self::INVALID_TITLE_CACHE_KEY, self::INVALID_TITLE_CACHE_GROUP, true, $found ) : false;
+		if ( $external_cache && $found && is_array( $cached ) ) {
+			$this->invalid_product_title_ids           = array_values( array_unique( array_filter( array_map( 'absint', $cached ) ) ) );
+			$this->invalid_product_title_ids_loaded_at = $now;
 
 			return $this->invalid_product_title_ids;
 		}
@@ -138,6 +155,7 @@ final class Digitalogic_Storefront_Catalog {
 			}
 		}
 		$this->invalid_product_title_ids = array_values( array_unique( array_filter( $this->invalid_product_title_ids ) ) );
+		$this->invalid_product_title_ids_loaded_at = $now;
 		wp_cache_set( self::INVALID_TITLE_CACHE_KEY, $this->invalid_product_title_ids, self::INVALID_TITLE_CACHE_GROUP, 300 );
 
 		return $this->invalid_product_title_ids;
@@ -149,9 +167,10 @@ final class Digitalogic_Storefront_Catalog {
 	 * @return void
 	 */
 	public function clear_public_title_cache() {
-		$this->invalid_product_title_ids = null;
-		$this->visible_category_ids      = null;
-		$this->visible_category_counts   = null;
+		$this->invalid_product_title_ids           = null;
+		$this->invalid_product_title_ids_loaded_at = 0;
+		$this->visible_category_ids                = null;
+		$this->visible_category_counts             = null;
 		wp_cache_delete( self::INVALID_TITLE_CACHE_KEY, self::INVALID_TITLE_CACHE_GROUP );
 	}
 

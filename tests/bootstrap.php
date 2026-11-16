@@ -894,7 +894,7 @@ function wp_cache_delete($key, $group = '') {
  * @return mixed
  */
 function wp_cache_get( $key, $group = '', $force = false, &$found = null ) { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- WordPress test double.
-	unset( $force );
+	$GLOBALS['digitalogic_test_cache_gets'][] = array( $key, $group, (bool) $force );
 	if ( empty( $GLOBALS['digitalogic_test_object_cache_enabled'] ) ) {
 		$found = false;
 		return false;
