@@ -423,6 +423,7 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         padding: 0;
         background: color-mix(in srgb, var(--dg-panel-strong) 88%, var(--dg-accent));
         color: var(--dg-accent-strong);
+        font: inherit;
         cursor: ew-resize;
         touch-action: pan-y;
         -webkit-tap-highlight-color: transparent;
