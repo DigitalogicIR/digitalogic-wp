@@ -1764,7 +1764,7 @@ final class Digitalogic_Call_Verification {
 	 */
 	private static function render_branded_caller_summary( bool $persian ): void {
 		?>
-		<div class="dg-auth-identity dg-auth-identity--recipient" data-call-caller hidden>
+		<div class="dg-auth-identity dg-auth-identity--recipient dg-auth-identity--phone" data-call-caller hidden>
 			<span class="dg-auth-identity-mark" aria-hidden="true"></span>
 			<span class="dg-auth-identity-label"><?php echo esc_html( $persian ? 'شمارهٔ شما' : 'Your phone number' ); ?></span>
 			<bdi class="dg-auth-identity-value" dir="ltr" data-call-caller-number></bdi>

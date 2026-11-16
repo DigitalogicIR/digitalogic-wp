@@ -761,6 +761,19 @@ async function checkSmsAction(page, labels) {
     const first = page.locator('.dg-otp-slot input').first();
     await first.waitFor();
     assert.equal(await page.locator('body').getAttribute('data-selected-channel'), 'sms_otp');
+    const recipient = page.locator('.dg-otp-stack .dg-auth-identity--phone');
+    const number = recipient.locator('.dg-auth-identity-value');
+    assert.equal(await number.textContent(), '+989120000000');
+    assert.ok(await number.evaluate(value => {
+        const field = value.parentElement;
+        const valueBox = value.getBoundingClientRect();
+        const fieldBox = field.getBoundingClientRect();
+        const style = getComputedStyle(value);
+        return !field.querySelector('input, button, [contenteditable]') &&
+            Math.abs(valueBox.left + valueBox.right - fieldBox.left - fieldBox.right) < 2 &&
+            style.direction === 'ltr' && style.fontVariantNumeric === 'proportional-nums' &&
+            parseFloat(style.letterSpacing) < 0 && parseFloat(getComputedStyle(field).borderTopWidth) >= 1;
+    }), 'The read-only recipient is centered with compact proportional digits');
     const caption = page.locator('.dg-otp-instructions');
     await caption.locator('.digits_otp_info_ic').waitFor();
     const digits = page.locator('.dg-otp-slot input:visible');
