@@ -110,6 +110,41 @@ final class CatalogSearchPolicy {
 	}
 
 	/**
+	 * Resolve a matched group to one stable internal query for ranking.
+	 *
+	 * The customer input is never overwritten outside the query execution
+	 * context. Exact SKU precedence is enforced by the caller before using this
+	 * result.
+	 *
+	 * @param string     $search Customer search input.
+	 * @param array|null $groups Explicit fixture groups, or the saved setting.
+	 * @return string Normalized canonical query.
+	 */
+	public static function canonical( string $search, ?array $groups = null ): string {
+		$search = self::normalize( $search );
+		if ( '' === $search ) {
+			return '';
+		}
+		$groups ??= self::groups( self::configured() );
+		foreach ( self::mergedGroups( $groups ) as $group ) {
+			$aliases = self::expandedGroup( $group );
+			if ( empty( $aliases ) ) {
+				continue;
+			}
+			$canonical = reset( $aliases );
+			foreach ( $aliases as $alias ) {
+				$pattern = '/(?<![\p{L}\p{N}])' . preg_quote( $alias, '/' ) . '(?![\p{L}\p{N}])/u';
+				if ( preg_match( $pattern, $search ) ) {
+					$search = preg_replace_callback( $pattern, static fn() => $canonical, $search );
+					break;
+				}
+			}
+		}
+
+		return $search;
+	}
+
+	/**
 	 * Project symmetric groups into WoodMart's one-way runtime syntax.
 	 *
 	 * The saved textarea remains concise and editable. This generated view is
@@ -265,18 +300,42 @@ final class CatalogSearchPolicy {
 				continue;
 			}
 
-			$index = 0;
-			while ( $index < count( $merged ) ) {
-				$existing = $merged[ $index ];
-				if ( array_intersect( $aliases, $existing ) ) {
-					$aliases = array_values( array_unique( array_merge( $aliases, $existing ) ) );
-					array_splice( $merged, $index, 1 );
-					$index = 0;
-					continue;
+			$matched = array();
+			do {
+				$changed = false;
+				foreach ( $merged as $index => $existing ) {
+					if ( isset( $matched[ $index ] ) || ! array_intersect( $aliases, $existing ) ) {
+						continue;
+					}
+					$matched[ $index ] = true;
+					$aliases            = array_values( array_unique( array_merge( $aliases, $existing ) ) );
+					$changed            = true;
 				}
-				++$index;
+			} while ( $changed );
+
+			if ( empty( $matched ) ) {
+				$merged[] = array_slice( $aliases, 0, self::MAX_EXPANDED_ALIASES );
+				continue;
 			}
-			$merged[] = array_slice( $aliases, 0, self::MAX_EXPANDED_ALIASES );
+
+			$matched_indices = array_keys( $matched );
+			sort( $matched_indices, SORT_NUMERIC );
+			$union = array();
+			foreach ( $matched_indices as $matched_index ) {
+				$union = array_merge( $union, $merged[ $matched_index ] );
+			}
+			$union     = array_slice( array_values( array_unique( array_merge( $union, $aliases ) ) ), 0, self::MAX_EXPANDED_ALIASES );
+			$insert_at = reset( $matched_indices );
+			$result    = array();
+			foreach ( $merged as $index => $existing ) {
+				if ( $index === $insert_at ) {
+					$result[] = $union;
+				}
+				if ( ! isset( $matched[ $index ] ) ) {
+					$result[] = $existing;
+				}
+			}
+			$merged = $result;
 		}
 
 		return $merged;

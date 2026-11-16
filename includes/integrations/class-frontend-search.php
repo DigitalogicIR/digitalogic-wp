@@ -8,6 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Digitalogic_Frontend_Search {
+	private const CACHE_KEY_VERSION = 'canonical-alias-rank-v1';
 
 	private static $instance      = null;
 	private $invalidation_pending = false;
@@ -264,7 +265,7 @@ class Digitalogic_Frontend_Search {
 		$policy         = '\\Digitalogic\\Laravel\\Services\\CatalogSearchPolicy';
 		$query_terms    = class_exists( $policy ) ? $policy::terms( $query['query'] ) : array( $query['query'] );
 		$alias_revision = class_exists( $policy ) && is_callable( array( $policy, 'revision' ) ) ? $policy::revision() : hash( 'sha256', '' );
-		$key            = 'dg_search_' . hash( 'sha256', wp_json_encode( array( $generation, $query, $query_terms, $alias_revision, $settings, get_current_user_id(), $_COOKIE, get_locale(), get_woocommerce_currency() ) ) );
+		$key            = 'dg_search_' . hash( 'sha256', wp_json_encode( array( self::CACHE_KEY_VERSION, $generation, $query, $query_terms, $alias_revision, $settings, get_current_user_id(), $_COOKIE, get_locale(), get_woocommerce_currency() ) ) );
 		$data           = false;
 		if ( 'object' === $settings['server'] ) {
 			$data = wp_cache_get( $key, 'digitalogic_search' );
@@ -274,7 +275,8 @@ class Digitalogic_Frontend_Search {
 		$hit = is_array( $data );
 		if ( ! $hit ) {
 			$old_request = $_REQUEST;
-			$_REQUEST    = array_merge( $_REQUEST, $query );
+			$theme_query = $this->theme_search_query( $query, $policy );
+			$_REQUEST    = array_merge( $_REQUEST, $theme_query );
 			try {
 				$search      = \XTS\Modules\Search\Ajax_Search::get_instance();
 				$suggestions = $search->build_suggestions( $search->get_main_suggestions(), $search->get_product_categories_suggestions(), $search->get_blog_suggestions() );
@@ -341,6 +343,31 @@ class Digitalogic_Frontend_Search {
 		wp_send_json( $result );
 	}
 	// phpcs:enable WordPress.Security.NonceVerification.Recommended
+
+	/**
+	 * Use one canonical alias form for WoodMart ranking without hiding exact SKUs.
+	 *
+	 * @param array  $query Sanitized request fields retained for cache identity.
+	 * @param string $policy Shared policy class.
+	 * @return array Runtime-only WoodMart request fields.
+	 */
+	private function theme_search_query( $query, $policy ) {
+		if ( ! class_exists( $policy ) || ! is_callable( array( $policy, 'canonical' ) ) ) {
+			return $query;
+		}
+		$original   = (string) ( $query['query'] ?? '' );
+		$canonical  = $policy::canonical( $original );
+		$normalized = is_callable( array( $policy, 'normalize' ) ) ? $policy::normalize( $original ) : $original;
+		if ( '' === $canonical || $canonical === $normalized ) {
+			return $query;
+		}
+		$exact_sku_id = function_exists( 'wc_get_product_id_by_sku' ) ? absint( wc_get_product_id_by_sku( $original ) ) : 0;
+		if ( $exact_sku_id <= 0 ) {
+			$query['query'] = $canonical;
+		}
+
+		return $query;
+	}
 
 	/**
 	 * Prevent cached or theme-generated suggestions from bypassing catalog visibility.

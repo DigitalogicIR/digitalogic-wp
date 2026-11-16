@@ -5,6 +5,13 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/../laravel/app/Services/CatalogSearchPolicy.php';
 require_once __DIR__ . '/../includes/integrations/class-frontend-search.php';
 
+if ( ! function_exists( 'wc_get_product_id_by_sku' ) ) {
+	/** Exact-SKU fixture for canonical autocomplete ranking. */
+	function wc_get_product_id_by_sku( $sku ) {
+		return $GLOBALS['digitalogic_test_exact_skus'][ (string) $sku ] ?? 0;
+	}
+}
+
 final class FrontendSearchFreshnessTest extends TestCase {
 
 	/** Exercise real response/cache code in an isolated WordPress fixture. */
@@ -70,5 +77,22 @@ final class FrontendSearchFreshnessTest extends TestCase {
 		$this->assertStringContainsString( 'two-way group', $help );
 		$this->assertStringContainsString( 'reciprocal rows are not required', $help );
 		$this->assertSame( 'Native help', $search->clarify_search_alias_admin_help( 'Native help', 'Other text', 'woodmart' ) );
+	}
+
+	/** Alias ranking is canonical, except when the literal query is an exact SKU. */
+	public function test_woodmart_runtime_query_preserves_exact_literal_sku(): void {
+		$GLOBALS['digitalogic_test_options']['xts-woodmart-options'] = array( 'search_synonyms' => 'Super Mini =' );
+		$GLOBALS['digitalogic_test_exact_skus'] = array();
+		$search = ( new ReflectionClass( Digitalogic_Frontend_Search::class ) )->newInstanceWithoutConstructor();
+		$method = new ReflectionMethod( $search, 'theme_search_query' );
+
+		$canonical = $method->invoke( $search, array( 'query' => 'SuperMini' ), 'Digitalogic\\Laravel\\Services\\CatalogSearchPolicy' );
+		$this->assertSame( 'super mini', $canonical['query'] );
+
+		$GLOBALS['digitalogic_test_exact_skus']['SuperMini'] = 77;
+		$exact = $method->invoke( $search, array( 'query' => 'SuperMini' ), 'Digitalogic\\Laravel\\Services\\CatalogSearchPolicy' );
+		$this->assertSame( 'SuperMini', $exact['query'] );
+
+		unset( $GLOBALS['digitalogic_test_exact_skus'], $GLOBALS['digitalogic_test_options']['xts-woodmart-options'] );
 	}
 }

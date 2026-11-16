@@ -68,6 +68,11 @@ final class CatalogSearchPolicyTest extends TestCase {
 		self::assertSame( $spaced, $compact );
 		self::assertSame( $spaced, $hyphen );
 		self::assertNotContains( 'super miniature', $compact );
+		self::assertSame( 'super mini', Policy::canonical( 'Super Mini', $groups ) );
+		self::assertSame( 'super mini', Policy::canonical( 'SuperMini', $groups ) );
+		self::assertSame( 'super mini', Policy::canonical( 'Super-Mini', $groups ) );
+		self::assertSame( 'board super mini rev2', Policy::canonical( 'Board SuperMini Rev2', $groups ) );
+		self::assertSame( 'alpha', Policy::canonical( 'charlie', array( array( 'alpha' ), array( 'charlie' ), array( 'alpha', 'charlie' ) ) ) );
 	}
 
 	/** Administrators can add, edit and remove independent groups without code changes. */
