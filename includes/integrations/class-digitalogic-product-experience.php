@@ -14,6 +14,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
+if ( ! class_exists( 'Digitalogic_Storefront_Icons', false ) ) {
+	require_once __DIR__ . '/class-digitalogic-storefront-icons.php';
+}
+
 final class Digitalogic_Product_Experience {
 	const VERSION = '2.3.2';
 
@@ -106,6 +110,10 @@ final class Digitalogic_Product_Experience {
 	}
 
 	private static function icon( $name ) {
+		if ( 'barcode' === $name ) {
+			return Digitalogic_Storefront_Icons::barcode_svg( 'dgl-icon' );
+		}
+
 		$paths = array(
 			'chip'    => '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
 			'check'   => '<path d="M20 11.1V12a8 8 0 1 1-4.7-7.3"/><path d="m20 4-9 9-3-3"/>',
@@ -256,7 +264,7 @@ final class Digitalogic_Product_Experience {
 					break;
 				}
 			}
-			$items[] = array( 'copy', 'کد کالا', '', 'product_code', true, 'product-code' );
+			$items[] = array( 'barcode', 'کد کالا', '', 'product_code', true, 'product-code' );
 		}
 
 		foreach ( $attribute_rows as $row ) {
