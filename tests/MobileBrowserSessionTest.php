@@ -186,6 +186,22 @@ final class MobileBrowserSessionTest extends TestCase {
 		$inspection=$this->inspect($context);self::assertSame('Bearer '.$payload['access_token'],$inspection['authorization']);
 		$this->error('browser_csrf_invalid',$this->inspect($context,['HTTP_X_DIGITALOGIC_CSRF'=>$old['csrf']]));
 	}
+	public function test_delayed_existing_anonymous_discovery_cannot_overwrite_completed_login_cookie():void {
+		$anonymous=BrowserSession::anonymous();
+		$inspection=BrowserSession::inspect($this->server('GET','/app-api/auth/browser/session'),[BrowserSession::COOKIE=>BrowserSession::encode($anonymous)],true);
+		$request=Request::create('/_digitalogic/mobile/auth/browser/session');BrowserSession::apply($request,$inspection);
+		$delayed=(new MobileBrowserController())->session($request);
+		$payload=$this->seedSession();
+		$login=BrowserSession::finish($this->request($anonymous),new Illuminate\Http\JsonResponse($payload));
+		$jar=$login->headers->getCookies()[0]->getValue();
+		$generation=BrowserSession::decode($jar);
+		foreach($delayed->headers->getCookies()as$cookie)if($cookie->getName()===BrowserSession::COOKIE)$jar=$cookie->getValue();
+		self::assertCount(0,$delayed->headers->getCookies(),'An unchanged discovery must never rewrite the captured cookie generation.');
+		self::assertSame($generation,BrowserSession::decode($jar));
+		self::assertSame('Bearer '.$payload['access_token'],$this->inspect(BrowserSession::decode($jar))['authorization']);
+		self::assertFalse(json_decode($delayed->getContent(),true)['authenticated']);
+		self::assertStringContainsString('no-store',$delayed->headers->get('Cache-Control'));
+	}
 	public function test_finish_invalid_revoked_or_mismatched_credentials_never_reach_json_or_cookie():void {
 		$payload=$this->seedSession();$request=$this->request(BrowserSession::anonymous());
 		foreach([['access_token'=>'malformed'],['session_id'=>str_repeat('e',32)],['profile'=>['id'=>8]]]as$change) {

@@ -26,10 +26,11 @@ final class MobileBrowserController {
 		if ( ! Browser::active( $request ) || ! Browser::enabled() ) {
 			return response()->json( array( 'code' => 'browser_auth_unavailable' ), 403 );
 		}
-		$browser = $request->attributes->get( 'digitalogic_browser' );
-		$context = $browser['context'];
-		$session = Identity::authenticate( $browser['authorization'], false );
-		if ( ! $context || ( isset( $context['access_token'] ) && ! $session ) ) {
+		$browser        = $request->attributes->get( 'digitalogic_browser' );
+		$context        = $browser['context'];
+		$session        = Identity::authenticate( $browser['authorization'], false );
+		$replace_cookie = ! $context || ( isset( $context['access_token'] ) && ! $session );
+		if ( $replace_cookie ) {
 			$context = Browser::anonymous();
 		}
 		$data = array(
@@ -43,7 +44,10 @@ final class MobileBrowserController {
 			$data['profile']    = ( new MobileIdentityController() )->profileData( (int) $session['user_id'] );
 		}
 		$response = response()->json( $data, 200, array( 'Cache-Control' => 'private, no-store' ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-		Browser::cookie( $response, $context );
+		// A delayed read must not overwrite a newer login's rotated cookie generation.
+		if ( $replace_cookie ) {
+			Browser::cookie( $response, $context );
+		}
 		return $response;
 	}
 

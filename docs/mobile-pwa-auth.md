@@ -62,4 +62,12 @@ The exact two-file artifact passed 30 isolated Linux canonical socket-pair asser
 
 The public-read refinement separately permits exact unmarked catalog GET/HEAD requests without decoding or forwarding the app cookie. Protected calls still require the marker and CSRF. Its backup is `/var/backups/digitalogic-pwa-public-read.a4f2zv0f`; all final runtime hashes are in the deployment checkpoint.
 
+### Discovery response ordering
+
+An existing valid browser generation is read-only during `/auth/browser/session` discovery: it returns the current CSRF/profile without `Set-Cookie`. Only missing, invalid or expired/revoked authority initialization creates a replacement anonymous cookie. Login and explicit current-session logout retain their existing rotation behavior.
+
+The previous unconditional discovery cookie write allowed a delayed anonymous response to overwrite a successfully rotated login cookie. The canonical isolated kernel reproduced the sequence: protected profile/history/events returned 200 after login, then failed after the old discovery response arrived, while the underlying native session remained valid. The new regression orders those same responses and verifies that an unchanged discovery cannot overwrite the completed login.
+
+Clients must serialize initial discovery before authentication and await any in-flight discovery before verifying the post-login cookie round-trip. A stale response body must not replace newer local account state. This remains necessary for genuinely cookieless initialization; the server cannot retroactively cancel a `Set-Cookie` header already sent by an earlier request. Ordinary cart, profile, history and event responses do not rotate the browser authentication cookie.
+
 The final full local PHP suite passed 1,297 tests / 11,786 assertions, with 35 platform-dependent skips on Windows. A CI fixture guard initially misread a numeric span inside the deployed WebSocket SHA-256 as a phone number. The extracted guard now exempts only complete SHA-256 values in explicitly named digest fields; eight regressions preserve phone detection, digit normalization, adjacent-value checks and locations-only diagnostics. This correction changes no production runtime.
