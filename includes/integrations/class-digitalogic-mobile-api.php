@@ -268,6 +268,9 @@ final class Digitalogic_Mobile_API {
 	 * @return string|null Native adapter result.
 	 */
 	public static function route( string $path ): ?string {
+		if ( preg_match( '~^/app-api/products/([1-9][0-9]{0,9})/models/?$~D', $path, $matches ) ) {
+			return '/_digitalogic/mobile/products/' . $matches[1] . '/models';
+		}
 		if ( preg_match( '~^/app-api/auth/browser/(session|google/challenge)/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/auth/browser/' . $matches[1];
 		}

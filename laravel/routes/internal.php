@@ -41,6 +41,7 @@ Route::get( '/mobile/bootstrap', array( MobileCatalogController::class, 'bootstr
 Route::get( '/mobile/links/resolve', array( MobileCatalogController::class, 'resolveLink' ) );
 Route::get( '/mobile/categories', array( MobileCatalogController::class, 'categories' ) );
 Route::get( '/mobile/products', array( MobileCatalogController::class, 'products' ) );
+Route::get( '/mobile/products/{id}/models', array( MobileCatalogController::class, 'models' ) )->whereNumber( 'id' );
 Route::get( '/mobile/products/{id}', array( MobileCatalogController::class, 'product' ) )->whereNumber( 'id' );
 Route::post( '/mobile/auth/otp/request', array( MobileIdentityController::class, 'requestOtp' ) );
 Route::post( '/mobile/auth/otp/verify', array( MobileIdentityController::class, 'verifyOtp' ) );

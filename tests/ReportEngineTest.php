@@ -255,6 +255,44 @@ final class ReportEngineTest extends TestCase {
 		$this->assertTrue( has_action( 'delete_pa_model' ) );
 	}
 
+	/** Model payload metadata and direct stock writes fence public caches. */
+	public function test_mobile_model_metadata_and_direct_stock_hooks_advance_generation(): void {
+		$GLOBALS['digitalogic_test_posts'][77] = array(
+			'post_type' => 'product_variation',
+			'meta'      => array(),
+		);
+		foreach ( array( '_product_image_gallery', '_digitalogic_product_documents', '_wp_attachment_image_alt', '_backorders', '_sale_price_dates_from', '_wc_average_rating' ) as $key ) {
+			$before = $this->engine->current_projection_generation();
+			$this->engine->invalidate_cache_for_product_meta( 1, 77, $key );
+			$this->assertNotSame( $before, $this->engine->current_projection_generation(), $key );
+		}
+		foreach ( array( 'woocommerce_product_set_stock', 'woocommerce_variation_set_stock' ) as $hook ) {
+			$before = $this->engine->current_projection_generation();
+			do_action( $hook, new stdClass() );
+			$this->assertNotSame( $before, $this->engine->current_projection_generation(), $hook );
+		}
+		$before = $this->engine->current_projection_generation();
+		$this->engine->begin_pricing_transaction();
+		do_action( 'woocommerce_variation_set_stock', new stdClass() );
+		$this->assertSame( $before, $this->engine->current_projection_generation() );
+		$this->assertTrue( $this->engine->finish_pricing_transaction( true ) );
+		$this->assertNotSame( $before, $this->engine->current_projection_generation() );
+	}
+
+	/** Direct attribute and post-delete changes also fence a pre-delete cache fill. */
+	public function test_mobile_attribute_and_terminal_delete_hooks_advance_generation(): void {
+		$before = $this->engine->current_projection_generation();
+		$this->engine->invalidate_cache_for_attribute_term( 10, 10, 'pa_voltage' );
+		$this->assertNotSame( $before, $this->engine->current_projection_generation() );
+		$before = $this->engine->current_projection_generation();
+		$this->engine->invalidate_cache_after_deleted_product( 77, (object) array( 'post_type' => 'product_variation' ) );
+		$this->assertNotSame( $before, $this->engine->current_projection_generation() );
+		$before = $this->engine->current_projection_generation();
+		$this->engine->invalidate_cache_after_deleted_product( 77, (object) array( 'post_type' => 'page' ) );
+		$this->engine->invalidate_cache_for_attribute_term( 10, 10, 'post_tag' );
+		$this->assertSame( $before, $this->engine->current_projection_generation() );
+	}
+
 	/** Product-type taxonomy writes rotate WooCommerce's versioned type cache. */
 	public function test_product_type_mutation_invalidates_exact_woocommerce_product_cache_group(): void {
 		$GLOBALS['digitalogic_test_posts'][77] = array(

@@ -65,7 +65,10 @@ final class Digitalogic_Report_Engine {
 		add_action( 'delete_attachment', array( $this, 'invalidate_cache' ) );
 		add_action( 'woocommerce_update_product', array( $this, 'invalidate_cache' ) );
 		add_action( 'woocommerce_update_product_variation', array( $this, 'invalidate_cache' ) );
+		add_action( 'woocommerce_product_set_stock', array( $this, 'invalidate_cache' ) );
+		add_action( 'woocommerce_variation_set_stock', array( $this, 'invalidate_cache' ) );
 		add_action( 'before_delete_post', array( $this, 'invalidate_cache_for_deleted_product' ) );
+		add_action( 'after_delete_post', array( $this, 'invalidate_cache_after_deleted_product' ), 10, 2 );
 		add_action( 'set_object_terms', array( $this, 'invalidate_cache_for_product_terms' ), 10, 4 );
 		add_action( 'added_post_meta', array( $this, 'invalidate_cache_for_product_meta' ), 10, 3 );
 		add_action( 'updated_post_meta', array( $this, 'invalidate_cache_for_product_meta' ), 10, 3 );
@@ -76,6 +79,9 @@ final class Digitalogic_Report_Engine {
 		add_action( 'created_pa_model', array( $this, 'invalidate_cache' ) );
 		add_action( 'edited_pa_model', array( $this, 'invalidate_cache' ) );
 		add_action( 'delete_pa_model', array( $this, 'invalidate_cache' ) );
+		add_action( 'created_term', array( $this, 'invalidate_cache_for_attribute_term' ), 10, 3 );
+		add_action( 'edited_term', array( $this, 'invalidate_cache_for_attribute_term' ), 10, 3 );
+		add_action( 'delete_term', array( $this, 'invalidate_cache_for_attribute_term' ), 10, 3 );
 		add_action( 'digitalogic_product_updated', array( $this, 'invalidate_cache' ) );
 		add_action( 'digitalogic_product_sync_applied', array( $this, 'invalidate_cache' ) );
 		add_action( 'digitalogic_patris_feed_synced', array( $this, 'invalidate_cache' ) );
@@ -1231,6 +1237,33 @@ final class Digitalogic_Report_Engine {
 		}
 	}
 
+	/**
+	 * Fence a cache filled after the pre-delete hook but before the actual delete.
+	 *
+	 * @param int     $post_id Deleted object ID.
+	 * @param WP_Post $post Original canonical post, retained by WordPress.
+	 */
+	public function invalidate_cache_after_deleted_product( $post_id, $post ) {
+		unset( $post_id );
+		if ( is_object( $post ) && in_array( $post->post_type ?? '', array( 'product', 'product_variation' ), true ) ) {
+			$this->invalidate_cache();
+		}
+	}
+
+	/**
+	 * Attribute labels/options are public model data even without a product save.
+	 *
+	 * @param int    $term_id Canonical term ID.
+	 * @param int    $tt_id Canonical term taxonomy ID.
+	 * @param string $taxonomy Changed taxonomy.
+	 */
+	public function invalidate_cache_for_attribute_term( $term_id, $tt_id, $taxonomy ) {
+		unset( $term_id, $tt_id );
+		if ( str_starts_with( (string) $taxonomy, 'pa_' ) && 'pa_model' !== (string) $taxonomy ) {
+			$this->invalidate_cache();
+		}
+	}
+
 	/** Invalidate taxonomy-only changes that alter product identity/projection. */
 	public function invalidate_cache_for_product_terms( $object_id, $terms, $tt_ids, $taxonomy ) {
 		unset( $terms, $tt_ids );
@@ -1246,7 +1279,7 @@ final class Digitalogic_Report_Engine {
 			WC_Cache_Helper::invalidate_cache_group( 'product_' . (int) $object_id );
 		}
 		if (
-			in_array( (string) $taxonomy, array( 'product_type', 'product_cat', 'pa_model' ), true )
+			( in_array( (string) $taxonomy, array( 'product_type', 'product_cat', 'product_visibility' ), true ) || str_starts_with( (string) $taxonomy, 'pa_' ) )
 			&& in_array( get_post_type( $object_id ), array( 'product', 'product_variation' ), true )
 		) {
 			$this->invalidate_cache();
@@ -1268,6 +1301,15 @@ final class Digitalogic_Report_Engine {
 			'_stock_status',
 			'_weight',
 			'_thumbnail_id',
+			'_product_image_gallery',
+			'_digitalogic_product_documents',
+			'_wp_attachment_image_alt',
+			'_sale_price_dates_from',
+			'_sale_price_dates_to',
+			'_backorders',
+			'_sold_individually',
+			'_wc_average_rating',
+			'_wc_review_count',
 			'_digitalogic_shipping_method_id',
 			'_digitalogic_markup',
 			'_digitalogic_markup_type',

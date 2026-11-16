@@ -14,6 +14,7 @@ namespace Digitalogic\Laravel\Http\Controllers;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Digitalogic\Laravel\Services\CatalogSearchPolicy;
+use Digitalogic\Laravel\Services\MobileCatalogCache;
 
 /**
  * Public catalog projection. No private pricing metadata, tokens or customer data.
@@ -100,6 +101,7 @@ final class MobileCatalogController {
 					),
 					'capabilities' => array(
 						'catalog'                   => true,
+						'product_models'            => true,
 						'cart'                      => true,
 						'cloud_cart'                => MobileCartController::enabled(),
 						'browser_checkout'          => false,
@@ -229,11 +231,77 @@ final class MobileCatalogController {
 	 * @return Response Native adapter result.
 	 */
 	public function product( Request $request, string $id ): Response {
-		$product = wc_get_product( (int) $id );
-		if ( ! $product || ! $this->isPublic( $product ) ) {
-			return response()->json( array( 'code' => 'product_not_found' ), 404 )->header( 'Cache-Control', 'no-store' );
+		return $this->cached(
+			$request,
+			'product',
+			array( 'id' => (int) $id ),
+			function () use ( $id ) {
+				$product = wc_get_product( (int) $id );
+				return $product && $this->isPublic( $product ) ? $this->project( $product, true ) : new \WP_Error( 'product_not_found', '', array( 'status' => 404 ) );
+			}
+		);
+	}
+
+	/**
+	 * Page complete canonical model details, bound to one catalog revision.
+	 *
+	 * @param Request $request Public bounded query.
+	 * @param string  $id Exact variable parent ID.
+	 * @return Response Full model page or a definitive refresh requirement.
+	 */
+	public function models( Request $request, string $id ): Response {
+		$query = self::normalizeModelQuery( $request->query() );
+		if ( is_wp_error( $query ) ) {
+			return $this->catalogError( $query );
 		}
-		return $this->cached( $request, 'product', array( 'id' => (int) $id ), fn() => $this->project( $product, true ) );
+		$query['id'] = (int) $id;
+		return $this->cached(
+			$request,
+			'models',
+			$query,
+			function () use ( $id, $query ) {
+				$product = wc_get_product( (int) $id );
+				if ( ! $product || ! $product->is_type( 'variable' ) || ! $this->isPublic( $product ) ) {
+					return new \WP_Error( 'product_not_found', '', array( 'status' => 404 ) );
+				}
+				$children = $this->publicChildren( $product );
+				$total    = count( $children );
+				return array(
+					'parent_id'  => (int) $id,
+					'items'      => array_map( fn( $child ) => $this->project( $child, true ), array_slice( $children, ( $query['page'] - 1 ) * $query['per_page'], $query['per_page'] ) ),
+					'pagination' => array(
+						'page'        => $query['page'],
+						'per_page'    => $query['per_page'],
+						'total'       => $total,
+						'total_pages' => (int) ceil( $total / $query['per_page'] ),
+					),
+				);
+			}
+		);
+	}
+
+	/**
+	 * Reject malformed continuations instead of silently combining revisions.
+	 *
+	 * @param array $input Public model query.
+	 * @return array|\WP_Error Bounded query.
+	 */
+	public static function normalizeModelQuery( array $input ) {
+		foreach ( array( 'page', 'per_page' ) as $field ) {
+			if ( isset( $input[ $field ] ) && ( ! is_scalar( $input[ $field ] ) || ! preg_match( '/^[1-9][0-9]{0,5}$/D', (string) $input[ $field ] ) ) ) {
+				return new \WP_Error( 'invalid_model_query', '', array( 'status' => 400 ) );
+			}
+		}
+		$page     = (int) ( $input['page'] ?? 1 );
+		$revision = $input['revision'] ?? '';
+		if ( ! is_string( $revision ) || ( '' !== $revision && ! preg_match( '/^[a-f0-9]{64}$/D', $revision ) ) || ( $page > 1 && '' === $revision ) ) {
+			return new \WP_Error( 'model_revision_required', '', array( 'status' => 400 ) );
+		}
+		return array(
+			'page'     => $page,
+			'per_page' => min( 50, (int) ( $input['per_page'] ?? 24 ) ),
+			'revision' => $revision,
+		);
 	}
 
 	/**
@@ -517,33 +585,45 @@ final class MobileCatalogController {
 			return null;
 		}
 		try {
-			$ids = $product->get_children();
-			if ( ! is_array( $ids ) ) {
-				return null;
-			}
-			$count = 0;
-			foreach ( array_unique( array_map( 'absint', $ids ) ) as $id ) {
-				$child = wc_get_product( $id );
-				if ( $child && $child->is_type( 'variation' )
-					&& (int) $child->get_parent_id() === (int) $product->get_id()
-					&& $this->isPublic( $child ) ) {
-					++$count;
-				}
-			}
-			return $count;
+			return count( $this->publicChildren( $product ) );
 		} catch ( \Throwable $error ) {
 			return null;
 		}
 	}
 
 	/**
+	 * Load each public canonical child once, independent of availability and page size.
+	 *
+	 * @param mixed $product Variable parent.
+	 * @return array Woo children in stable numeric identity order.
+	 * @throws \RuntimeException If canonical inventory cannot be read.
+	 */
+	private function publicChildren( $product ): array {
+		$ids = $product->get_children();
+		if ( ! is_array( $ids ) ) {
+			throw new \RuntimeException( 'Canonical model inventory is unavailable.' );
+		}
+		$ids = array_unique( array_map( 'absint', $ids ) );
+		sort( $ids, SORT_NUMERIC );
+		$children = array();
+		foreach ( $ids as $id ) {
+			$child = wc_get_product( $id );
+			if ( $child && $child->is_type( 'variation' ) && (int) $child->get_parent_id() === (int) $product->get_id() && $this->isPublic( $child ) ) {
+				$children[] = $child;
+			}
+		}
+		return $children;
+	}
+
+	/**
 	 * Project only currently available public prices, without changing saved prices.
 	 *
-	 * @param mixed $product Canonical Woo product.
-	 * @param int   $minor Canonical currency precision.
+	 * @param mixed      $product Canonical Woo product.
+	 * @param int        $minor Canonical currency precision.
+	 * @param array|null $children Already verified public children, scoped to this projection.
 	 * @return array Public amount fields; absent offers remain empty.
 	 */
-	public function publicPriceAmounts( $product, int $minor ): array {
+	public function publicPriceAmounts( $product, int $minor, ?array $children = null ): array {
 		$empty = array(
 			'price'         => '',
 			'regular_price' => '',
@@ -561,9 +641,8 @@ final class MobileCatalogController {
 		if ( $product->is_type( 'variable' ) ) {
 			$offer   = null;
 			$amounts = array();
-			foreach ( $product->get_children() as $id ) {
-				$child = wc_get_product( $id );
-				if ( ! $child || ! $child->is_type( 'variation' ) || (int) $child->get_parent_id() !== (int) $product->get_id() || ! $this->isPublic( $child ) || ! $child->is_in_stock() ) {
+			foreach ( $children ?? $this->publicChildren( $product ) as $child ) {
+				if ( ! $child->is_in_stock() ) {
 					continue;
 				}
 				$price = $child->get_price();
@@ -599,11 +678,12 @@ final class MobileCatalogController {
 	 * @return array Native adapter result.
 	 */
 	private function project( $product, bool $details ): array {
+		$children   = $product->is_type( 'variable' ) ? $this->publicChildren( $product ) : null;
 		$minor      = (int) wc_get_price_decimals();
-		$amounts    = $this->publicPriceAmounts( $product, $minor );
+		$amounts    = $this->publicPriceAmounts( $product, $minor, $children );
 		$image_ids  = array_values( array_unique( array_filter( array_merge( array( $product->get_image_id() ), $details ? $product->get_gallery_image_ids() : array() ) ) ) );
 		$attributes = array();
-		foreach ( $product->get_attributes() as $attribute ) {
+		foreach ( $details ? $product->get_attributes() : array() as $attribute ) {
 			if ( ! is_object( $attribute ) || ! $attribute->get_visible() ) {
 				continue;
 			}
@@ -619,28 +699,29 @@ final class MobileCatalogController {
 		$categories = get_the_terms( $product->get_id(), 'product_cat' );
 		$categories = is_array( $categories ) ? $categories : array();
 		$data       = array(
-			'id'                => $product->get_id(),
-			'parent_id'         => $product->get_parent_id(),
-			'sku'               => $product->get_sku(),
-			'name'              => self::displayName( html_entity_decode( $product->get_name(), ENT_QUOTES, 'UTF-8' ), $product->get_sku() ),
-			'type'              => $product->get_type(),
-			'permalink'         => $product->get_permalink(),
-			'short_description' => wp_kses_post( strip_shortcodes( $product->get_short_description() ) ),
-			'description'       => $details ? wp_kses_post( strip_shortcodes( $product->get_description() ) ) : '',
-			'prices'            => $amounts + array(
+			'detail_level'         => $details ? 'full' : 'summary',
+			'id'                   => $product->get_id(),
+			'parent_id'            => $product->get_parent_id(),
+			'sku'                  => $product->get_sku(),
+			'name'                 => self::displayName( html_entity_decode( $product->get_name(), ENT_QUOTES, 'UTF-8' ), $product->get_sku() ),
+			'type'                 => $product->get_type(),
+			'permalink'            => $product->get_permalink(),
+			'short_description'    => wp_kses_post( strip_shortcodes( $product->get_short_description() ) ),
+			'description'          => $details ? wp_kses_post( strip_shortcodes( $product->get_description() ) ) : '',
+			'prices'               => $amounts + array(
 				'currency_code'       => get_woocommerce_currency(),
 				'currency_minor_unit' => $minor,
 				'currency_symbol'     => html_entity_decode( get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ),
 			),
-			'is_in_stock'       => $product->is_in_stock(),
-			'stock_status'      => $product->get_stock_status(),
-			'stock_quantity'    => $product->get_stock_quantity(),
-			'is_purchasable'    => $product->is_purchasable(),
-			'on_sale'           => '' !== $amounts['sale_price'],
-			'sold_individually' => $product->is_sold_individually(),
-			'images'            => array_map( fn( $id ) => $this->image( (int) $id ), $image_ids ),
-			'attributes'        => $attributes,
-			'categories'        => array_map(
+			'is_in_stock'          => $product->is_in_stock(),
+			'stock_status'         => $product->get_stock_status(),
+			'stock_quantity'       => $product->get_stock_quantity(),
+			'is_purchasable'       => $product->is_in_stock() && '' !== $amounts['price'] && $product->is_purchasable(),
+			'on_sale'              => '' !== $amounts['sale_price'],
+			'sold_individually'    => $product->is_sold_individually(),
+			'images'               => array_map( fn( $id ) => $this->image( (int) $id ), $image_ids ),
+			'attributes'           => $attributes,
+			'categories'           => array_map(
 				static fn( $term ) => array(
 					'id'   => $term->term_id,
 					'name' => $term->name,
@@ -648,26 +729,30 @@ final class MobileCatalogController {
 				),
 				$categories
 			),
-			'variations'        => array(),
-			'variation_count'   => $this->variationCount( $product ),
-			'average_rating'    => $product->get_average_rating(),
-			'review_count'      => $product->get_review_count(),
-			'modified_at'       => $product->is_in_stock() && $product->get_date_modified() ? $product->get_date_modified()->date( 'c' ) : null,
+			'variations'           => array(),
+			'variation_count'      => null === $children ? null : count( $children ),
+			'variation_attributes' => $product->is_type( 'variation' ) ? $product->get_variation_attributes() : array(),
+			'average_rating'       => $product->get_average_rating(),
+			'review_count'         => $product->get_review_count(),
+			'modified_at'          => $product->is_in_stock() && $product->get_date_modified() ? $product->get_date_modified()->date( 'c' ) : null,
 		);
+		if ( null !== $children ) {
+			$data['models_endpoint'] = home_url( '/app-api/products/' . $product->get_id() . '/models' );
+			$data['models_complete'] = 0 === count( $children );
+		}
 		if ( $details && $product->is_type( 'variable' ) ) {
-			foreach ( array_slice( $product->get_children(), 0, 100 ) as $child_id ) {
-				$child = wc_get_product( $child_id );
-				if ( ! $child || ! $this->isPublic( $child ) ) {
-					continue;
-				}
+			$data['variations_complete'] = count( $children ) <= 100;
+			foreach ( array_slice( $children, 0, 100 ) as $child ) {
 				$data['variations'][] = array(
-					'id'             => $child_id,
+					'id'             => $child->get_id(),
+					'parent_id'      => $product->get_id(),
+					'type'           => 'variation',
 					'sku'            => $child->get_sku(),
 					'name'           => self::displayName( $child->get_name(), $child->get_sku() ),
 					'attributes'     => $child->get_variation_attributes(),
 					'price'          => $child->is_in_stock() ? self::minorUnits( $child->get_price(), $minor ) : '',
 					'is_in_stock'    => $child->is_in_stock(),
-					'is_purchasable' => $child->is_purchasable(),
+					'is_purchasable' => $child->is_in_stock() && '' !== $child->get_price() && $child->is_purchasable(),
 					'stock_quantity' => $child->get_stock_quantity(),
 					'image'          => $child->get_image_id() ? $this->image( $child->get_image_id() ) : null,
 				);
@@ -716,26 +801,65 @@ final class MobileCatalogController {
 	 * @return Response Native adapter result.
 	 */
 	private function cached( Request $request, string $route, array $query, callable $build ): Response {
-		$generation = class_exists( 'Digitalogic_Report_Engine' ) ? \Digitalogic_Report_Engine::instance()->current_projection_generation() : '';
-		$generation = is_wp_error( $generation ) ? '' : $generation;
-		$key        = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), get_option( 'digitalogic_mobile_account_activity', false ), 'account-activity-1', 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
-		$private    = get_current_user_id() > 0;
-		$data       = $private ? false : wp_cache_get( $key, 'digitalogic-mobile' );
-		$hit        = is_array( $data );
+		$generation = $this->generation();
+		if ( is_wp_error( $generation ) ) {
+			return $this->catalogError( $generation );
+		}
+		$revision = hash( 'sha256', wp_json_encode( array( 'models-1', $generation, get_woocommerce_currency(), wc_get_price_decimals() ) ) );
+		if ( 'models' === $route && '' !== $query['revision'] && ! hash_equals( $revision, $query['revision'] ) ) {
+			return $this->catalogError(
+				new \WP_Error(
+					'catalog_revision_changed',
+					'',
+					array(
+						'status'   => 409,
+						'reset'    => true,
+						'revision' => $revision,
+					)
+				)
+			);
+		}
+		$key     = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), get_option( 'digitalogic_mobile_account_activity', false ), 'account-activity-1', 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
+		$private = get_current_user_id() > 0;
+		$data    = $private ? null : MobileCatalogCache::get( $key );
+		$hit     = is_array( $data );
 		if ( ! $hit ) {
-			$data = $build();
-			if ( ! $private ) {
-				wp_cache_set( $key, $data, 'digitalogic-mobile', 60 );
+			try {
+				$data = $build();
+			} catch ( \Throwable $error ) {
+				return $this->catalogError( new \WP_Error( 'catalog_unavailable', '', array( 'status' => 503 ) ) );
 			}
+		}
+		$after = $this->generation();
+		if ( is_wp_error( $after ) || ! hash_equals( $generation, $after ) ) {
+			return $this->catalogError(
+				new \WP_Error(
+					'catalog_changed_during_read',
+					'',
+					array(
+						'status' => 503,
+						'reset'  => true,
+					)
+				)
+			);
+		}
+		if ( is_wp_error( $data ) ) {
+			return $this->catalogError( $data );
+		}
+		$data['revision']          = $revision;
+		$data['cache_ttl_seconds'] = MobileCatalogCache::TTL_SECONDS;
+		if ( ! $hit && ! $private ) {
+			MobileCatalogCache::put( $key, $data );
 		}
 		$response = response()->json(
 			$data,
 			200,
 			array(
-				'Cache-Control'                 => $private ? 'private, no-store' : 'public, max-age=15, stale-while-revalidate=45',
+				'Cache-Control'                 => $private ? 'private, no-store' : 'public, max-age=0, must-revalidate',
 				'X-Digitalogic-Cache'           => $hit ? 'HIT' : 'MISS',
+				'X-Digitalogic-Revision'        => $revision,
 				'X-Content-Type-Options'        => 'nosniff',
-				'Access-Control-Expose-Headers' => 'ETag, X-Digitalogic-Cache',
+				'Access-Control-Expose-Headers' => 'ETag, X-Digitalogic-Cache, X-Digitalogic-Revision',
 			),
 			JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 		);
@@ -745,5 +869,31 @@ final class MobileCatalogController {
 		$request->headers->set( 'If-None-Match', preg_replace( '/-(?:gzip|br)(?=")/', '', $request->headers->get( 'If-None-Match', '' ) ) );
 		$response->isNotModified( $request );
 		return $response;
+	}
+
+	/** Read the committed canonical generation; a failure must never share a fallback cache key. */
+	private function generation() {
+		$generation = class_exists( 'Digitalogic_Report_Engine' ) ? \Digitalogic_Report_Engine::instance()->current_projection_generation() : null;
+		return is_string( $generation ) && '' !== $generation ? $generation : new \WP_Error( 'catalog_generation_unavailable', '', array( 'status' => 503 ) );
+	}
+
+	/**
+	 * Public errors are never cached and expose no provider exception detail.
+	 *
+	 * @param \WP_Error $error Bounded public error.
+	 * @return Response Error response.
+	 */
+	private function catalogError( \WP_Error $error ): Response {
+		$details = (array) $error->get_error_data();
+		$status  = (int) ( $details['status'] ?? 503 );
+		unset( $details['status'] );
+		return response()->json(
+			array( 'code' => $error->get_error_code() ) + $details,
+			$status,
+			array(
+				'Cache-Control' => 'no-store',
+				'Retry-After'   => '1',
+			)
+		);
 	}
 }
