@@ -15,6 +15,7 @@
     var loginAccountPickers = new WeakMap();
     var digitsSmsSelections = new WeakSet();
     var authRecovery = false;
+    var passkeySupport;
     var authSocket = null;
     var authSocketSequence = 0;
     var authSocketRetryAt = 0;
@@ -961,7 +962,8 @@
             return '';
         }
         var local = value.split('@', 1)[0];
-        return /(^\.|\.\.|\.$)/.test(local) ? '' : value.slice(local.length + 1).toLowerCase();
+        var domain = value.slice(local.length + 1).toLowerCase();
+        return /(^\.|\.\.|\.$)/.test(local) || !/\.(?:[a-z]{2,63}|xn--[a-z0-9-]{1,58}[a-z0-9])$/.test(domain) ? '' : domain;
     }
 
     function phonePartsFromValue(value, selectedCountry) {
@@ -1078,7 +1080,28 @@
 
     function sanitizeIdentityValue(value) {
         var normalized = normalizeDigits(value).replace(/\s/gu, '');
-        return normalized.includes('@') ? normalized.toLowerCase() : normalized;
+        var at = normalized.indexOf('@');
+        if (at < 0) { return normalized; }
+        var domain = normalized.slice(at + 1).replace(/[^a-z0-9.-]/gi, '');
+        return (normalized.slice(0, at + 1) + domain).toLowerCase();
+    }
+
+    function preventInvalidEmailInsertion(input, event, data = event.data) {
+        if (!data || event.isComposing || input.selectionStart === null) { return; }
+        var at = input.value.indexOf('@');
+        if (at < 0) { return; }
+
+        var text = normalizeDigits(data);
+        if (input.selectionStart <= at) {
+            if (input.selectionEnd <= at && /^@+$/.test(text)) { event.preventDefault(); }
+            return;
+        }
+        var isAppending = input.selectionStart === input.value.length;
+        var verified = config.emailKnownDomains?.includes(emailDomain(input.value))
+            || digitsEmailChecks.get(input.form)?.isVerified(input.value);
+        if (!/[a-z0-9.-]/i.test(text) || (isAppending && verified && /^[^a-z.-]+$/i.test(text))) {
+            event.preventDefault();
+        }
     }
 
     function normalizePhoneOnBlur(input) {
@@ -4021,9 +4044,10 @@
             input.setAttribute('autocorrect', 'off');
             input.spellcheck = false;
             input.addEventListener('beforeinput', function (event) {
-                if (event.data && /^\s+$/u.test(event.data) && !event.isComposing && input.value.includes('@')) {
-                    event.preventDefault();
-                }
+                preventInvalidEmailInsertion(input, event);
+            });
+            input.addEventListener('paste', function (event) {
+                preventInvalidEmailInsertion(input, event, event.clipboardData?.getData('text/plain'));
             });
         });
         phoneInput.dir = 'ltr';
@@ -4982,7 +5006,7 @@
         chevronDown: 'M6 9l6 6 6-6',
         trash: 'M4 6h16M9 6V3h6v3m3 0-1 15H7L6 6m4 4v7m4-7v7',
         home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
-        email: 'M4 5h16v14H4z M4 6l8 6 8-6',
+        email: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z M3 7l9 6 9-6',
         eye: 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
         eyeOff: 'M3 3l18 18 M10.6 6.1 12 6c6.4 0 10 6 10 6a16 16 0 0 1-3.1 3.4 M6.1 7.9A16.4 16.4 0 0 0 2 12s3.6 6 10 6a11 11 0 0 0 4.1-.8',
         phone: 'M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M10 17h4',
@@ -5600,6 +5624,25 @@
         });
     }
 
+    async function browserSupportsPasskeys() {
+        var credentials = window.PublicKeyCredential;
+        if (!window.isSecureContext || !credentials || typeof navigator.credentials?.get !== 'function') { return false; }
+        try {
+            if (typeof credentials.getClientCapabilities === 'function') {
+                var capabilities = await credentials.getClientCapabilities();
+                if (capabilities.passkeyPlatformAuthenticator || capabilities.hybridTransport || capabilities.userVerifyingPlatformAuthenticator) {
+                    return true;
+                }
+            }
+        } catch (error) { /* Older browsers can still report a local authenticator. */ }
+        try {
+            return typeof credentials.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+                && await credentials.isUserVerifyingPlatformAuthenticatorAvailable();
+        } catch (error) {
+            return false;
+        }
+    }
+
     function mountLoginAlternatives() {
         var form = document.querySelector('.dg-digits-login-shell .digits-form_login');
         if (!form) {
@@ -5611,23 +5654,24 @@
         if (widget && !shell.contains(widget)) {
             shell.appendChild(widget);
         }
-        var passkey = form.querySelector('.digits-form_passwordless_login');
         var login = form.closest('form') || form;
-        var social = login.querySelector('.digits-social-logins-box');
-        var disclosure = (social && social.querySelector('.dg-passkey-options')) || form.querySelector('.dg-passkey-options');
-        if (!disclosure && passkey) {
-            disclosure = document.createElement('details');
-            disclosure.className = 'dg-passkey-options';
-            var summary = document.createElement('summary');
-            summary.textContent = getLabel('passkeyOptions', 'Other sign-in options');
-            disclosure.appendChild(summary);
-            form.appendChild(disclosure);
-        }
-        if (social && disclosure && disclosure.parentElement !== social) {
-            social.appendChild(disclosure);
-        }
-
-        if (passkey && passkey.parentElement !== disclosure) {
+        var passkey = login.querySelector('.digits-form_passwordless_login');
+        if (!passkey || passkey.dataset.dgPasskeyReady) { return; }
+        passkey.dataset.dgPasskeyReady = 'true';
+        passkeySupport ||= browserSupportsPasskeys();
+        void passkeySupport.then(function (supported) {
+            if (!supported || !passkey.isConnected) { return; }
+            var social = login.querySelector('.digits-social-logins-box');
+            var disclosure = login.querySelector('.dg-passkey-options');
+            if (!disclosure) {
+                disclosure = document.createElement('details');
+                disclosure.className = 'dg-passkey-options';
+                var summary = document.createElement('summary');
+                summary.textContent = getLabel('passkeyOptions', 'Other sign-in options');
+                putAuthIcon(summary, 'more');
+                disclosure.appendChild(summary);
+                (social || form).appendChild(disclosure);
+            }
             passkey.type = 'button';
             passkey.classList.add('dg-icon-label-action');
             var label = document.createElement('span');
@@ -5635,7 +5679,7 @@
             passkey.replaceChildren(label);
             putAuthIcon(passkey, 'key');
             disclosure.appendChild(passkey);
-        }
+        });
     }
 
     function prepareDigitsTextFields() {

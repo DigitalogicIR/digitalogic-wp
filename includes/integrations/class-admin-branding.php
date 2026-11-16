@@ -217,7 +217,7 @@ HTML;
 		}
 
 		$persian = str_starts_with( strtolower( determine_locale() ), 'fa' );
-		echo '<details><summary>' . esc_html( $persian ? 'مدیریت کلیدهای عبور' : __( 'Manage passkeys', 'digitalogic' ) ) . '</summary>';
+		echo '<details><summary>' . esc_html( $persian ? 'مدیریت Passkeyها' : __( 'Manage passkeys', 'digitalogic' ) ) . '</summary>';
 		echo $settings; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Markup from the installed Digits account shortcode.
 		echo '</details>';
 	}
@@ -234,14 +234,14 @@ HTML;
 			return $translation;
 		}
 		$labels = array(
-			'Passkey'                       => 'کلید عبور',
-			'Passkeys'                      => 'کلیدهای عبور',
-			'Passwordless login'            => 'ورود با کلید عبور',
-			'Sign in with a passkey'        => 'ورود با کلید عبور',
-			'Set up a passkey'              => 'تنظیم کلید عبور',
-			'Create a passkey'              => 'ایجاد کلید عبور',
-			'Add a passkey'                 => 'افزودن کلید عبور',
-			'Passkey authentication failed' => 'ورود با کلید عبور انجام نشد.',
+			'Passkey'                       => 'Passkey',
+			'Passkeys'                      => 'Passkeyها',
+			'Passwordless login'            => 'ورود با Passkey',
+			'Sign in with a passkey'        => 'ورود با Passkey',
+			'Set up a passkey'              => 'تنظیم Passkey',
+			'Create a passkey'              => 'ایجاد Passkey',
+			'Add a passkey'                 => 'افزودن Passkey',
+			'Passkey authentication failed' => 'ورود با Passkey انجام نشد.',
 		);
 		return $labels[ $original ] ?? $translation;
 	}
@@ -630,6 +630,7 @@ JS;
 			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
 			$config['otpCursor']              = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
 			$config['emailDomainNonce']       = wp_create_nonce( 'digitalogic_email_domain' );
+			$config['emailKnownDomains']      = Digitalogic_Plugin_Auth_Routes::EMAIL_PROVIDERS;
 			$config['loginSlidesUrl']         = rest_url( 'digitalogic/v1/login-slides' );
 			$config['authEventsUrl']         = rest_url( ltrim( Digitalogic_Auth_Realtime::ROUTE, '/' ) );
 			$config['authWebSocket']          = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
@@ -726,7 +727,7 @@ JS;
             'password'              => 'رمز عبور',
 			'skipPassword'          => 'ورود بدون رمز عبور',
 			'passkeyOptions'        => 'روش‌های دیگر ورود',
-			'passkeyLogin'          => 'ورود با کلید عبور',
+			'passkeyLogin'          => 'ورود با Passkey',
 			'otpCode'               => 'کد تأیید',
 			'otpDigit'              => 'رقم %d',
 			'otpIncomplete'         => 'کد تأیید را کامل وارد کنید.',
