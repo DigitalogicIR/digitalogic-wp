@@ -1065,6 +1065,8 @@ async function checkLoginStories(browser) {
     await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     assert.equal(requests, 1);
     async function assertSingleRow(visibleLabels) {
+        await page.waitForFunction(count => [...document.querySelectorAll('.dg-story-controls .dg-story-label')]
+            .filter(label => label.getClientRects().length).length === count, visibleLabels);
         await panel.evaluate(node => Promise.all(node.getAnimations()
             .filter(animation => animation.transitionProperty === 'transform')
             .map(animation => animation.finished.catch(() => {}))));
