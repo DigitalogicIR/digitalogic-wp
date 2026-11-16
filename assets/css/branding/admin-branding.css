@@ -600,6 +600,7 @@ body.login .dg-story-dot[aria-pressed="true"]::before {
 }
 
 body.login .dg-story-dot:hover::before { opacity: 1; }
+body.login .dg-story-rotation { margin-inline-start: auto; }
 body.login .dg-story-rotation[hidden] { display: none; }
 
 @container dg-story-controls (max-width: 325px) {

@@ -710,16 +710,26 @@ async function checkLoginStories(browser) {
     assert.ok((await panel.locator('.dg-story-track').getAttribute('style')).includes('--dg-story-drag'));
     await page.mouse.up();
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const rotation = panel.locator('.dg-story-rotation');
+    await rotation.waitFor();
+    const spacing = await rotation.evaluate(button => {
+        const box = button.getBoundingClientRect();
+        return {
+            fromEnd: box.left - button.parentElement.getBoundingClientRect().left,
+            fromArrows: button.previousElementSibling.getBoundingClientRect().left - box.right,
+        };
+    });
+    assert.ok(Math.abs(spacing.fromEnd) < 1 && spacing.fromArrows > 24, JSON.stringify(spacing));
     await page.setViewportSize({ width: 390, height: 850 });
     await panel.waitFor({ state: 'hidden' });
     titles = Array.from({ length: 8 }, (_, index) => 'عنوان کامل محصول ' + (index + 1));
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.setViewportSize({ width: 720, height: 1024 });
     await open();
     await panel.waitFor();
     await assertSingleRow(0);
     assert.equal(await panel.locator('.dg-story-dot:visible').count(), 8);
-    assert.equal(await panel.locator('.dg-story-rotation').isVisible(), true);
+    assert.equal(await rotation.isVisible(), true);
     single = true;
     await page.setViewportSize({ width: 768, height: 1024 });
     await open();
