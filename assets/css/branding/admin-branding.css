@@ -600,6 +600,7 @@ body.login .dg-story-dot[aria-pressed="true"]::before {
 }
 
 body.login .dg-story-dot:hover::before { opacity: 1; }
+body.login .dg-story-rotation { margin-inline-start: auto; }
 body.login .dg-story-rotation[hidden] { display: none; }
 
 @container dg-story-controls (max-width: 325px) {
@@ -3191,7 +3192,7 @@ body.login #lostpasswordform #wp-submit {
 body.login #lostpasswordform #wp-submit:disabled {
     background: var(--dg-panel-soft);
 }
-body.login:has(#lostpasswordform) #login :is(#nav, #backtoblog) {
+body.login:has(#lostpasswordform) #login :is(#nav, #backtoblog):not(.dg-login-preferences *) {
     padding: 0;
     margin: 12px 0 0;
 }
@@ -3239,19 +3240,33 @@ body.login .dg-login-preferences {
     position: relative;
     z-index: 1;
     display: flex;
-    flex-wrap: wrap;
     justify-content: center;
     align-items: center;
-    gap: 12px;
-    inline-size: min(100% - 32px, 460px);
-    margin: 10px auto 0;
+    gap: 8px 10px;
+    inline-size: fit-content;
+    max-inline-size: 100%;
+    margin: 14px auto 0;
+}
+
+body.login #login .dg-login-preferences > #backtoblog {
+    display: flex;
+    min-inline-size: 44px;
+    margin: 0;
+    padding: 0;
+}
+
+body.login #login .dg-login-preferences #backtoblog .dg-auth-home {
+    min-inline-size: 0;
+    min-block-size: 44px;
+    padding-block: 4px;
 }
 
 body.login .dg-login-preferences .language-switcher {
     display: flex;
     align-items: center;
+    flex: 0 2 auto;
     inline-size: auto;
-    min-inline-size: 0;
+    min-inline-size: 44px;
     margin: 0;
     padding: 0;
 }
@@ -3261,7 +3276,8 @@ body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-butt
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 42px;
+    min-block-size: 44px;
+    min-inline-size: 44px;
     margin: 0 !important;
     padding-inline: 12px;
     border: 1px solid var(--dg-border);
@@ -3272,9 +3288,18 @@ body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-butt
     cursor: pointer;
 }
 
-body.login .dg-login-preferences .dg-theme-toggle-button { width: auto; box-shadow: none; }
+body.login .dg-login-preferences .dg-theme-toggle-button { flex: 0 0 auto; width: auto; box-shadow: none; }
 body.login .dg-login-preferences:has(.dg-language-picker.is-open) { z-index: 80; }
-body.login .dg-login-preferences .dg-language-picker { min-width: 120px; }
+body.login .dg-login-preferences :is(.dg-language-form, .dg-language-picker) { min-inline-size: 0; }
+body.login .dg-login-preferences .dg-language-trigger { max-inline-size: 100%; }
+body.login .dg-login-preferences :is(.dg-select-text, .dg-login-exit-label) {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+body.login .dg-login-preferences .dg-login-exit-compact { display: none; }
+body.login .dg-login-preferences .dashicons { flex: 0 0 auto; }
 body.login .dg-login-preferences .dg-language-menu {
     box-sizing: border-box;
     inset-inline: auto 0;
@@ -3285,6 +3310,32 @@ body.login .dg-login-preferences .dg-language-menu {
 body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-button):hover {
     border-color: var(--dg-border-strong);
     background: var(--dg-accent-soft);
+}
+
+@media (max-width: 480px) {
+    body.login .dg-login-preferences { column-gap: 6px; }
+    body.login .dg-login-preferences :is(.dg-language-region, .dg-language-trigger .dashicons-translation) { display: none; }
+    body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-button),
+    body.login #login .dg-login-preferences #backtoblog .dg-auth-home {
+        gap: 5px;
+        padding-inline: 7px;
+        font-size: 13px;
+    }
+    body.login #login .dg-login-preferences #backtoblog .dg-auth-home > .dg-auth-icon { padding: 5px; }
+}
+
+@media (max-width: 375px) {
+    body.login .dg-login-preferences:dir(ltr) .dg-auth-home:has(.dg-login-exit-compact) > .dg-login-exit-label { display: none; }
+    body.login .dg-login-preferences:dir(ltr) .dg-login-exit-compact { display: inline; }
+}
+
+@media (max-width: 350px) {
+    body.login .dg-login-preferences .dg-auth-home:has(.dg-login-exit-compact) > .dg-login-exit-label { display: none; }
+    body.login .dg-login-preferences .dg-login-exit-compact { display: inline; }
+}
+
+@media (max-width: 280px) {
+    body.login .dg-login-preferences { flex-wrap: wrap; }
 }
 
 .dg-theme-toggle-button {
@@ -4333,10 +4384,6 @@ body.wp-admin .digitalogic-panel-page .button-hero {
         width: 100%;
     }
 
-    .dg-login-preferences > .language-switcher {
-        inline-size: 100%;
-    }
-
     .dg-dashboard-grid {
         grid-template-columns: 1fr;
     }
@@ -4603,15 +4650,6 @@ body.login #login .admin-email__actions-secondary {
 body.login #login :is(.admin-email-confirm-form, .dg-native-auth-card) :is(a, input):focus-visible {
     outline: 2px solid var(--dg-native-card-link);
     outline-offset: 3px;
-}
-
-body.login #login:has(> .dg-native-auth-card) > #backtoblog {
-    margin-block: 16px 0;
-    text-align: center;
-}
-
-body.login #login:has(> :is(.admin-email-confirm-form, .dg-native-auth-card)) > .dg-login-preferences {
-    margin-block: 18px 0;
 }
 
 @media (max-width: 430px) {

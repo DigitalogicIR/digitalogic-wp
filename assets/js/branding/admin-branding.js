@@ -347,14 +347,38 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    function injectLoginToggle() {
+    function mountLoginFooter() {
         if (!document.body?.classList.contains('login') || document.querySelector('.dg-login-preferences')) { return; }
         var login = document.getElementById('login');
+        var exit = login?.querySelector(':scope > #backtoblog');
+        var exitLink = exit?.querySelector('a');
         var language = document.querySelector('.language-switcher');
-        if (!login || (!language && !config.showLoginThemeSwitcher)) { return; }
+        if (!login || (!exitLink && !language && !config.showLoginThemeSwitcher)) { return; }
         var controls = document.createElement('div');
         controls.className = 'dg-login-preferences';
-        login.append(controls);
+        login.insertBefore(controls, exitLink ? exit : null);
+        if (exitLink) {
+            var label = document.createElement('span');
+            label.className = 'dg-login-exit-label';
+            label.append(...exitLink.childNodes);
+            if (label.firstChild?.nodeType === Node.TEXT_NODE) {
+                label.firstChild.textContent = label.firstChild.textContent.replace(/^\s*[←→]\s*/, '');
+            }
+            exitLink.append(label);
+            var isBack = exitLink.dataset.dgExitIcon === 'back';
+            var shortLabel = isPersianLocale() ? (isBack ? 'بازگشت' : 'صفحه اصلی') : (isBack ? 'Back' : 'Home');
+            if (label.textContent.trim() !== shortLabel) {
+                var compact = document.createElement('span');
+                compact.className = 'dg-login-exit-compact';
+                compact.textContent = shortLabel;
+                compact.setAttribute('aria-hidden', 'true');
+                if (!exitLink.hasAttribute('aria-label')) { exitLink.setAttribute('aria-label', label.textContent.trim()); }
+                exitLink.append(compact);
+            }
+            exitLink.classList.add('dg-auth-home');
+            putAuthIcon(exitLink, isBack ? 'back' : 'home');
+            controls.append(exit);
+        }
         if (config.showLoginThemeSwitcher) {
             var button = document.createElement('button');
             button.type = 'button';
@@ -463,8 +487,11 @@
         function syncSelection() {
             var selected = select.options[select.selectedIndex];
             var text = selected ? selected.text : 'فارسی';
+            var languageName = text.match(/^(.*?)\s+(\([^()]+\))$/);
             trigger.innerHTML = '<span class="dashicons dashicons-translation" aria-hidden="true"></span>' +
-                '<span class="dg-select-text">' + escapeHtml(text) + '</span>' +
+                '<span class="dg-select-text">' + (languageName
+                    ? escapeHtml(languageName[1]) + ' <span class="dg-language-region">' + escapeHtml(languageName[2]) + '</span>'
+                    : escapeHtml(text)) + '</span>' +
                 '<span class="dashicons dg-language-chevron dashicons-arrow-down-alt2" aria-hidden="true"></span>';
 
             menu.querySelectorAll('.dg-language-option').forEach(function (option) {
@@ -4491,15 +4518,7 @@
         if (authShell) {
             var footer = document.querySelector('body.login #nav');
             if (footer) { footer.hidden = true; }
-            var home = document.querySelector('#backtoblog .dg-auth-home');
-            if (home) { putAuthIcon(home, home.dataset.dgExitIcon === 'back' ? 'back' : 'home'); }
         }
-        document.querySelectorAll('body.login #backtoblog a').forEach(function (link) {
-            var label = link.textContent.replace(/^\s*[←→]\s*/, '');
-            if (label !== link.textContent) {
-                link.textContent = label;
-            }
-        });
         document.querySelectorAll('.dg-digits-login-shell form').forEach(prepareDigitsSkipPassword);
         document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) form.digits_register').forEach(prepareRegistrationOtp);
         mountLoginAlternatives();
@@ -4902,7 +4921,7 @@
         migrateLegacyStoredTheme();
         bindThemeStorageSync();
         bindThemeToggles();
-        injectLoginToggle();
+        mountLoginFooter();
         buildLanguageSwitcher();
         injectLateLoginOverrides();
         decorateNativeLoginCards();
