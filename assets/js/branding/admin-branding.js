@@ -6130,6 +6130,53 @@
         });
     }
 
+    function fitLoginOptionsToViewport() {
+        var shell = document.querySelector('body.login #login > .dg-digits-login-shell');
+        if (!shell || shell.dataset.dgViewportFit) { return; }
+        shell.dataset.dgViewportFit = 'true';
+        var viewport = window.visualViewport;
+        var frame = 0;
+        var reserve = ['data-dg-reserve-phone', 'data-dg-reserve-passkey'];
+
+        function measure() {
+            frame = 0;
+            var visualHeight = viewport?.scale === 1 && viewport.height < document.documentElement.clientHeight - 1
+                ? Math.floor(viewport.height) + 'px' : '';
+            document.body.style.setProperty('--dg-login-viewport-height', visualHeight);
+
+            var form = shell.querySelector('form.digloginpage.digits_form_index_section');
+            var panel = form?.closest('.digits-form_container') || form;
+            var scrollTop = panel?.scrollTop || 0;
+            reserve.forEach(function (attribute) { shell.removeAttribute(attribute); });
+            if (!panel || !isVisibleElement(form)) { return; }
+
+            var shouldReserve = [
+                callVerificationEnabled(shell) && Boolean(form.querySelector('.dg-phone-channels')),
+                isVisibleElement(form.querySelector('.dg-passkey-options'))
+            ];
+            reserve.forEach(function (attribute, index) {
+                if (!shouldReserve[index]) { return; }
+                shell.setAttribute(attribute, '');
+                if (panel.scrollHeight > panel.clientHeight) { shell.removeAttribute(attribute); }
+            });
+            if (scrollTop && panel.scrollTop !== scrollTop) { panel.scrollTop = scrollTop; }
+        }
+
+        function schedule() {
+            if (!frame) { frame = window.requestAnimationFrame(measure); }
+        }
+
+        var formContainer = shell.querySelector(':scope > :is(.digits-form_container, form)') || shell;
+        new MutationObserver(schedule).observe(formContainer, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'open', 'class']
+        });
+        if (window.ResizeObserver) { new ResizeObserver(schedule).observe(shell); }
+        viewport?.addEventListener('resize', schedule);
+        window.addEventListener('resize', schedule);
+        document.fonts?.ready.then(schedule);
+        schedule();
+    }
+
     function observeAuthChallenges() {
         var shell = document.querySelector('.dg-digits-login-shell');
         if (!shell) { return; }
@@ -6237,6 +6284,7 @@
         routeBrandedAuth?.();
         animateBrandedAuthSteps();
         observeAuthChallenges();
+        fitLoginOptionsToViewport();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();
