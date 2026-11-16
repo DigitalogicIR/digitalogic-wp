@@ -4516,6 +4516,8 @@
             loading = true;
             var fa = /^fa(?:[-_]|$)/i.test(document.documentElement.lang);
             var locale = fa ? 'fa_IR' : 'en_US';
+            var drawer = shell.matches('.dg-digits-login-shell') ? createStoryDrawer(shell, fa) : null;
+            var mounted = false;
             try {
                 var response = await authSocketRequest('digitalogic_auth_presentation', { locale: locale });
                 var cards = readCards(response?.slides);
@@ -4525,10 +4527,14 @@
                     var fallback = await window.fetch(url, { credentials: 'same-origin' });
                     cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
-                if (cards.length && shell.isConnected) { mountLoginStories(shell, cards, wide, fa); }
+                if (cards.length && shell.isConnected) {
+                    mountLoginStories(shell, cards, wide, fa, drawer);
+                    mounted = true;
+                }
             } catch (_error) {
                 // The sign-in form and compact brand artwork remain available.
             } finally {
+                if (!mounted) { drawer?.remove(); }
                 loading = false;
             }
         }
@@ -4537,7 +4543,174 @@
         void loadCards();
     }
 
-    function mountLoginStories(shell, cards, wide, fa) {
+    function createStoryDrawer(shell, fa) {
+        var layout = shell.parentElement;
+        var drawer = document.createElement('div');
+        drawer.className = 'dg-story-drawer';
+        drawer.setAttribute('aria-busy', 'true');
+        var panel = document.createElement('aside');
+        panel.id = 'dg-story-drawer-panel';
+        panel.className = 'dg-login-stories';
+        panel.dir = fa ? 'rtl' : 'ltr';
+        panel.inert = true;
+        var loader = document.createElement('div');
+        loader.className = 'dg-story-loading';
+        loader.setAttribute('aria-hidden', 'true');
+        loader.append(document.createElement('span'));
+        panel.append(loader);
+        var toggle = document.createElement('button');
+        toggle.className = 'dg-story-drawer-toggle';
+        toggle.type = 'button';
+        toggle.setAttribute('aria-controls', panel.id);
+        drawer.append(panel, toggle);
+        shell.prepend(drawer);
+        shell.classList.add('dg-has-login-stories', 'dg-has-story-drawer');
+
+        var storageKey = 'digitalogic-login-stories-collapsed';
+        var manual = false;
+        try { manual = window.localStorage.getItem(storageKey) === '1'; } catch (error) { /* Storage is optional. */ }
+        var open = false;
+        var drag;
+        var ignoreClick = false;
+        var panelWidth = 0;
+        var formWidth = 0;
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+        var started = performance.now();
+
+        function measure() {
+            var width = Math.max(0, layout.clientWidth - 2);
+            panelWidth = Math.round(width / 2.08);
+            formWidth = width - panelWidth;
+            layout.style.setProperty('--dg-story-panel-width', panelWidth + 'px');
+            layout.style.setProperty('--dg-story-form-width', formWidth + 'px');
+        }
+
+        function changed() { shell.dispatchEvent(new Event('digitalogic:story-drawer-change')); }
+
+        function setOpen(value, userAction) {
+            open = value && !shell.classList.contains('dg-auth-is-success');
+            panel.inert = !open;
+            shell.toggleAttribute('data-drawer-open', open);
+            toggle.setAttribute('aria-expanded', String(open));
+            var label = open ? (fa ? 'جمع کردن پنل محصولات' : 'Collapse product panel') :
+                (fa ? 'باز کردن پنل محصولات' : 'Expand product panel');
+            toggle.setAttribute('aria-label', label);
+            toggle.title = label;
+            putAuthIcon(toggle, open ? 'back' : 'arrow');
+            if (userAction) {
+                manual = true;
+                try { window.localStorage.setItem(storageKey, open ? '0' : '1'); } catch (error) { /* Storage is optional. */ }
+            }
+            changed();
+        }
+
+        function haptic(event, pattern) {
+            if (event.pointerType && event.pointerType !== 'mouse' && !reduced.matches) {
+                navigator.vibrate?.(pattern);
+            }
+        }
+
+        toggle.addEventListener('click', function (event) {
+            if (ignoreClick && event.detail) { return; }
+            if (toggle.disabled) { return; }
+            haptic(event, 14);
+            setOpen(!open, true);
+        });
+        toggle.addEventListener('pointerdown', function (event) {
+            if (toggle.disabled || event.button !== 0 || !event.isPrimary) { return; }
+            ignoreClick = false;
+            var left = shell.getBoundingClientRect().left;
+            var offset = left - layout.getBoundingClientRect().left;
+            drag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, offset: offset,
+                left: left, width: drawer.getBoundingClientRect().width, active: false, detent: false };
+            toggle.setPointerCapture(event.pointerId);
+        });
+        toggle.addEventListener('pointermove', function (event) {
+            if (!drag || drag.id !== event.pointerId) { return; }
+            var delta = event.clientX - drag.x;
+            if (!drag.active && (Math.abs(delta) < 5 || Math.abs(delta) <= Math.abs(event.clientY - drag.y))) { return; }
+            if (!drag.active) {
+                drag.active = true;
+                shell.setAttribute('data-drawer-dragging', '');
+                layout.style.setProperty('--dg-story-anchor', drag.offset + 'px');
+                haptic(event, 7);
+                changed();
+            }
+            var rail = toggle.getBoundingClientRect().width;
+            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - 14);
+            var width = Math.max(rail, Math.min(limit, drag.width + delta));
+            layout.style.setProperty('--dg-story-reveal', width + 'px');
+            shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');
+            var atDetent = (open ? -delta : delta) >= 72;
+            if (atDetent && !drag.detent) { haptic(event, 11); }
+            drag.detent = atDetent;
+        });
+
+        function finishDrag(event) {
+            if (!drag || drag.id !== event.pointerId) { return; }
+            var gesture = drag;
+            drag = null;
+            if (!gesture.active) { return; }
+            ignoreClick = true;
+            shell.removeAttribute('data-drawer-dragging');
+            void shell.offsetWidth;
+            layout.style.removeProperty('--dg-story-anchor');
+            layout.style.removeProperty('--dg-story-reveal');
+            shell.style.removeProperty('--dg-story-fold');
+            var delta = (event.clientX - gesture.x) * (open ? -1 : 1);
+            var commit = event.type === 'pointerup' && (delta >= 72 || (delta > 24 && delta / Math.max(1, event.timeStamp - gesture.time) > 0.5));
+            if (commit) { haptic(event, [14, 24, 7]); }
+            setOpen(commit ? !open : open, commit);
+        }
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (name) { toggle.addEventListener(name, finishDrag); });
+
+        var resize = window.ResizeObserver ? new ResizeObserver(measure) : null;
+        if (resize) { resize.observe(layout); }
+        else { window.addEventListener('resize', measure); }
+        measure();
+        setOpen(false, false);
+        var success = new MutationObserver(function () {
+            if (!shell.classList.contains('dg-auth-is-success')) { return; }
+            if (drag) { finishDrag({ type: 'pointercancel', pointerId: drag.id }); }
+            toggle.disabled = true;
+            setOpen(false, false);
+        });
+        success.observe(shell, { attributes: true, attributeFilter: ['class'] });
+        window.requestAnimationFrame(function () {
+            window.requestAnimationFrame(function () {
+                if (drawer.isConnected && !manual && !drag) { setOpen(true, false); }
+            });
+        });
+
+        return {
+            panel: panel,
+            isOpen: function () { return open && !drag?.active && !drawer.hasAttribute('aria-busy'); },
+            ready: function (image) {
+                var loaded = image?.decode ? image.decode().catch(function () {}) : Promise.resolve();
+                var fade = new Promise(function (resolve) { window.setTimeout(resolve, Math.max(0, 250 - (performance.now() - started))); });
+                var deadline = new Promise(function (resolve) { window.setTimeout(resolve, 1600); });
+                void Promise.race([Promise.all([loaded, fade]), deadline]).then(function () {
+                    loader.hidden = true;
+                    drawer.removeAttribute('aria-busy');
+                    changed();
+                });
+            },
+            remove: function () {
+                resize?.disconnect();
+                window.removeEventListener('resize', measure);
+                success.disconnect();
+                drawer.remove();
+                shell.classList.remove('dg-has-login-stories', 'dg-has-story-drawer');
+                shell.removeAttribute('data-drawer-open');
+                shell.removeAttribute('data-drawer-dragging');
+                shell.style.removeProperty('--dg-story-fold');
+                ['--dg-story-panel-width', '--dg-story-form-width', '--dg-story-anchor',
+                    '--dg-story-reveal'].forEach(function (name) { layout.style.removeProperty(name); });
+            }
+        };
+    }
+
+    function mountLoginStories(shell, cards, wide, fa, drawer) {
         function element(tag, className, content) {
             var node = document.createElement(tag);
             node.className = className;
@@ -4545,7 +4718,7 @@
             return node;
         }
 
-        var region = element('aside', 'dg-login-stories');
+        var region = drawer?.panel || element('aside', 'dg-login-stories');
         var rtl = getComputedStyle(shell).direction === 'rtl';
         var multiple = cards.length > 1;
         region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
@@ -4631,6 +4804,10 @@
 
         var active = 0;
         var timer;
+        var interval = 9000;
+        var remaining = interval;
+        var startedAt;
+        var progressAnimation;
         var snapTimer;
         var drag;
         var hovering = false;
@@ -4639,12 +4816,39 @@
         var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
         var rotation = element('button', 'dg-story-rotation');
         rotation.type = 'button';
+        var progressOnEdge = config.loginStoryProgress === 'edge';
+        var progress = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        progress.setAttribute('class', 'dg-story-progress' + (progressOnEdge ? ' dg-story-progress--edge' : ''));
+        progress.setAttribute('aria-hidden', 'true');
+        progress.setAttribute('preserveAspectRatio', 'none');
+        progress.setAttribute('viewBox', progressOnEdge ? '0 0 400 4' : '0 0 40 40');
+        var progressLine = document.createElementNS(progress.namespaceURI, 'path');
+        progressLine.setAttribute('pathLength', '1');
+        progressLine.setAttribute('d', progressOnEdge ? 'M1 2H399' :
+            'M20 1h8a11 11 0 0 1 11 11v16a11 11 0 0 1-11 11H12A11 11 0 0 1 1 28V12A11 11 0 0 1 12 1Z');
+        progress.append(progressLine);
 
-        function schedule() {
-            window.clearTimeout(timer);
-            if (multiple && !drag && playing && !reduced.matches && wide.matches && onScreen &&
-                !document.hidden && !hovering && !region.contains(document.activeElement)) {
-                timer = window.setTimeout(function () { select(active + 1, false); }, 9000);
+        function schedule(reset) {
+            if (!multiple) { return; }
+            if (timer !== undefined) {
+                window.clearTimeout(timer);
+                timer = undefined;
+                remaining = Math.max(1, remaining - (performance.now() - startedAt));
+            }
+            if (reset === true) { remaining = interval; }
+            progressAnimation?.cancel();
+            var offset = String(remaining / interval);
+            progressLine.style.strokeDashoffset = offset;
+            var focused = document.activeElement;
+            if ((!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
+                !document.hidden && !hovering && (focused === rotation || !region.contains(focused))) {
+                startedAt = performance.now();
+                progressAnimation = progressLine.animate?.([{ strokeDashoffset: offset }, { strokeDashoffset: '0' }],
+                    { duration: remaining, easing: 'linear', fill: 'forwards' });
+                timer = window.setTimeout(function () {
+                    timer = undefined;
+                    select(active + 1, false);
+                }, remaining);
             }
         }
 
@@ -4681,7 +4885,7 @@
                 indicators[position]?.setAttribute('aria-pressed', String(visible));
             });
             if (manual) { announcement.textContent = indicators[active]?.getAttribute('aria-label') || cards[active].title; }
-            schedule();
+            schedule(manual || previous !== active);
         }
 
         function syncRotation() {
@@ -4697,6 +4901,7 @@
         region.append(header, stage);
         if (multiple) {
             stage.dataset.draggable = '';
+            (progressOnEdge ? region : rotation).append(progress);
             var previous = storyArrow('back', fa ? 'اسلاید قبلی' : 'Previous slide', -1);
             var next = storyArrow('arrow', fa ? 'اسلاید بعدی' : 'Next slide', 1);
             navigation.append(previous, dots, next, rotation);
@@ -4762,6 +4967,7 @@
             region.addEventListener('pointerleave', function () { hovering = false; schedule(); });
             region.addEventListener('focusin', schedule);
             region.addEventListener('focusout', function () { window.setTimeout(schedule, 0); });
+            if (drawer) { shell.addEventListener('digitalogic:story-drawer-change', schedule); }
             document.addEventListener('visibilitychange', schedule);
             wide.addEventListener('change', schedule);
             reduced.addEventListener('change', syncRotation);
@@ -4775,8 +4981,11 @@
         }
 
         select(0, false);
-        shell.prepend(region);
-        shell.classList.add('dg-has-login-stories');
+        if (drawer) { drawer.ready(articles[0].querySelector('.dg-story-image')); }
+        else {
+            shell.prepend(region);
+            shell.classList.add('dg-has-login-stories');
+        }
     }
 
 
@@ -5818,7 +6027,7 @@
     function enableRipples() {
         document.addEventListener('pointerdown', function (event) {
             var target = event.target.closest('button, .button, .page-title-action, #wpadminbar a, .digits-social-btn');
-            if (!target || target.disabled || target.matches('.ab-empty-item, .dg-skip-password')) {
+            if (!target || target.disabled || target.matches('.ab-empty-item, .dg-skip-password, .dg-story-drawer-toggle')) {
                 return;
             }
 
