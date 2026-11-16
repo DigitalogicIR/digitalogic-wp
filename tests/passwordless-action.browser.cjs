@@ -1269,7 +1269,7 @@ async function checkLoginSwitchers(browser) {
                     await page.locator('.dg-passkey-options summary').click();
                     await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction, 10);
                     assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Opening other methods must not resize the card');
-                    await identity.fill('+12025550123');
+                    await identity.fill('09120000000');
                     await page.locator('.dg-phone-channels').getByRole('radio').last().waitFor();
                     assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Showing verification choices must not resize the card');
                     await identity.fill('fixture-user');
