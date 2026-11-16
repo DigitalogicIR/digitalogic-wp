@@ -385,6 +385,93 @@ async function checkEmailGate(page, labels) {
     assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
 }
 
+async function checkBrowserManagedSignIn(browser) {
+    for (const method of ['google', 'fedcm', 'passkey']) {
+        const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
+        try {
+            const providers = method === 'passkey' ? [] : [{
+                key: method === 'google' ? 'google' : 'partner',
+                label: 'Partner', clientId: 'registered-client', oneTap: true,
+                fedcm: 'https://partner.test/fedcm.json', redirect: false
+            }];
+            const completed = [];
+            await page.route('**/federation/prepare', route => route.fulfill({
+                json: { nonce: 'bound-challenge', expires_in: 600 }
+            }));
+            await page.route('**/federation/complete', route => {
+                completed.push(route.request().postDataJSON());
+                return route.fulfill({ json: { redirect: '/intended-destination' } });
+            });
+            await page.route('**/passkey-vendor', route => {
+                const start = route.request().postData().includes('start_passwordless_login');
+                return route.fulfill({
+                    json: start ? { success: true, data: { token: { challenge: 'nonce', rpId: 'digitalogic.test' } } }
+                        : { success: true, data: { process: true, process_type: 'login', redirect: '/intended-destination' } }
+                });
+            });
+            await render(page, 'ltr', {}, false, '', {
+                federatedLogin: { prepare: '/federation/prepare', complete: '/federation/complete', providers, passkeys: method === 'passkey' }
+            });
+            await page.evaluate(() => {
+                window.digitalogicBrowserSuccess = 0;
+                window.DigitalogicAuthSuccess = () => { window.digitalogicBrowserSuccess++; };
+                window.GoogleFixture = {};
+                window.google = { accounts: { id: {
+                    initialize(options) { window.GoogleFixture.options = options; },
+                    renderButton(slot) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.textContent = 'GIS fixture';
+                        button.addEventListener('click', () => window.GoogleFixture.options.callback({ credential: 'signed-fixture' }));
+                        slot.append(button);
+                    },
+                    prompt() { window.GoogleFixture.prompted = true; },
+                    cancel() { window.GoogleFixture.cancelled = true; }
+                } } };
+                window.IdentityCredential = class {};
+                window.PublicKeyCredential.isConditionalMediationAvailable = async () => true;
+                window.digits_preparePublicKeyOptions = value => value;
+                window.digits_preparePublicKeyCredentials = value => value;
+                window.dig_script = { ajax_url: '/passkey-vendor' };
+                window.DigitalogicFinishBrowserPasskey = (_form, data) => {
+                    window.passkeyDestination = data.redirect;
+                    return true;
+                };
+                Object.defineProperty(navigator.credentials, 'get', { value: async options => {
+                    window.credentialOptions = options;
+                    return options.identity ? { token: 'signed-fixture' } : { id: 'stored-passkey' };
+                } });
+            });
+            await page.addScriptTag({ path: path.join(__dirname, '..', 'assets', 'js', 'branding', 'browser-signin.js') });
+            if (method === 'google') {
+                const button = page.getByRole('button', { name: 'GIS fixture' });
+                await button.waitFor();
+                const options = await page.evaluate(() => ({
+                    nonce: window.GoogleFixture.options.nonce, fedcm: window.GoogleFixture.options.use_fedcm_for_button,
+                    auto: window.GoogleFixture.options.auto_select, prompted: window.GoogleFixture.prompted
+                }));
+                assert.deepEqual(options, { nonce: 'bound-challenge', fedcm: true, auto: false, prompted: true });
+                assert.equal(await page.locator('#digits_google_login').isVisible(), true);
+                await button.click();
+            } else if (method === 'fedcm') {
+                await page.getByRole('button', { name: 'Sign in in the browser with Partner' }).click();
+                const request = await page.evaluate(() => window.credentialOptions.identity);
+                assert.equal(request.mode, 'active');
+                assert.deepEqual(request.providers[0].params, { nonce: 'bound-challenge' });
+            } else {
+                await page.locator('input[name="digits_phone"]').click();
+                await page.waitForFunction(() => window.passkeyDestination === '/intended-destination');
+                assert.equal(await page.evaluate(() => window.credentialOptions.mediation), 'conditional');
+                continue;
+            }
+            await page.waitForFunction(() => window.digitalogicBrowserSuccess === 1);
+            assert.deepEqual(completed.map(({ nonce, credential }) => ({ nonce, credential })), [
+                { nonce: 'bound-challenge', credential: 'signed-fixture' }
+            ]);
+        } finally { await page.close(); }
+    }
+}
+
 async function checkStoryDrawer(browser, direction, labels) {
     const page = await browser.newPage({ viewport: { width: 1050, height: 850 } });
     try {
@@ -1089,6 +1176,7 @@ async function checkLoginSwitchers(browser) {
     try {
         await checkLoginSwitchers(browser);
         await checkLoginStories(browser);
+        await checkBrowserManagedSignIn(browser);
         for (const [direction, width, skipPassword, skipPasswordCaption] of [
             ['rtl', 390, 'ورود بدون رمز عبور', 'رمز خود را فراموش کرده اید؟'],
             ['ltr', 1024, 'Sign in without a password', 'Forgot your password?']

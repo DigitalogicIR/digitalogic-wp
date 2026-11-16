@@ -1688,6 +1688,17 @@
         return true;
     }
 
+    window.DigitalogicFinishBrowserPasskey = function (form, data) {
+        if (!data?.process || data.process_type !== 'login') { return false; }
+        finishBrandedDigitsLogin(form, data);
+        try {
+            var destination = new URL(data.redirect || config.loginUrl || '/', window.location.href);
+            if (destination.origin !== window.location.origin || destination.username || destination.password) { return false; }
+            showAuthSuccess(function () { window.location.assign(destination.href); });
+            return true;
+        } catch (error) { return false; }
+    };
+
     async function showRecoveryDialog(destination, loginForm) {
         var endpoint = config.ajaxUrl || '/wp-admin/admin-ajax.php';
         async function post(action, fields) {
@@ -3586,7 +3597,8 @@
             phoneInput.required = visibleMode === 'phone';
             phoneInput.type = nextMode === 'phone' ? 'tel' : 'text';
             phoneInput.setAttribute('inputmode', nextMode === 'phone' ? 'tel' : 'text');
-            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national' : 'username');
+            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national'
+                : phoneInput.dataset.dgPasskeyAutofill ? 'username webauthn' : 'username');
             var firstLetter = phoneInput.value.match(/\p{Letter}/u)?.[0] || '';
             phoneInput.dir = nextMode === 'username' && /[\p{Script=Arabic}\p{Script=Hebrew}]/u.test(firstLetter) ? 'rtl' : 'ltr';
         }

@@ -2503,7 +2503,7 @@ final class Digitalogic_Call_Verification {
 	 * @param WP_User $user Resolved user.
 	 * @return WP_User|WP_Error
 	 */
-	private function authenticate_verified_user( WP_User $user ) {
+	public function authenticate_verified_user( WP_User $user ) {
 		$removed = $this->suspend_zerospam_login_filter();
 		try {
 			return apply_filters( 'wp_authenticate_user', $user, '' );
