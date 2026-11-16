@@ -546,6 +546,11 @@ async function checkStoryDrawer(browser, direction, labels) {
         assert.ok(expanded.height > expanded.width && expanded.height < 56, 'The handle has a compact vertical shape');
         assert.ok(Math.abs(expanded.x + expanded.width / 2 - panel.x - panel.width) <= 1, 'The handle straddles the right border');
         assert.ok(Math.abs(expanded.y + expanded.height / 2 - panel.y - panel.height / 2) <= 1, 'The handle is vertically centered');
+        const chevron = toggle.locator('.dg-story-toggle-chevron');
+        assert.equal(await chevron.evaluate(node => getComputedStyle(node).opacity), '0');
+        await toggle.hover();
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('.dg-story-toggle-chevron')).opacity === '1');
+        await page.mouse.move(0, 0);
         const track = shell.locator('.dg-story-track');
         const gap = await track.evaluate(element => {
             const [a, b] = element.children;
@@ -571,8 +576,9 @@ async function checkStoryDrawer(browser, direction, labels) {
             return drawer?.clientWidth === 0 && getComputedStyle(drawer).visibility === 'hidden';
         });
         const grip = await toggle.boundingBox();
-        const separation = (await shell.boundingBox()).x - grip.x - grip.width;
-        assert.ok(grip.x > 0 && separation >= 0 && separation < 16, 'The collapsed button sits beside the left edge');
+        const closedCard = await shell.boundingBox();
+        assert.ok(Math.abs(grip.x + grip.width / 2 - closedCard.x) <= 1, 'The reopen handle straddles the left edge');
+        assert.ok(Math.abs(grip.y + grip.height / 2 - closedCard.y - closedCard.height / 2) <= 1, 'The reopen handle is vertically centered');
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
         const movement = 96;
