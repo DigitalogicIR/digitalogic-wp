@@ -1754,9 +1754,7 @@
         if (!button) { return; }
         var action = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         var label = getLabel('continue', 'Continue');
-        if (action?.type === 'password' && form.closest('.dg-digits-login-shell')?.dataset.dgIdentity === 'username') {
-            label = getLabel('enterPassword', 'Enter password');
-        } else if (action?.type === 'email') {
+        if (action?.type === 'email') {
             label = getLabel('sendEmailCode', 'Send email code');
         } else if (action?.type === 'call') {
             label = getLabel('continueByCall', isPersianLocale() ? 'ادامه با تماس تلفنی' : 'Continue by phone call');
@@ -1936,9 +1934,26 @@
         window.addEventListener('pagehide', function () { stopDigitsSmsWait(form); });
     }
 
+    async function matchesWorkstationIdentity(value, workstation) {
+        if (!workstation?.login) { return false; }
+        var identity = value.toLowerCase();
+        if (identity === workstation.login.toLowerCase()) { return true; }
+        if (!workstation.emailDigest || !emailDomain(identity) || !window.crypto?.subtle) { return false; }
+        try {
+            var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
+            var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+            return hex === workstation.emailDigest;
+        } catch (_error) {
+            return false;
+        }
+    }
+
     function showDigitsUsernamePasswordStep(form, username) {
+        var shell = form.closest('.dg-digits-login-shell');
         var wrapper = form.querySelector('.digits-form_tab_wrapper') || form;
         var step = form.querySelector('.dg-username-password-step');
+        var lanAction = shell?.querySelector('[data-call-lan-action]');
+        var callWidget = shell?.querySelector('[data-call-unified]');
 
         hideDigitsIdentityContainer(form);
         form.dataset.dgUsernameStep = 'password';
@@ -1966,12 +1981,21 @@
             wrapper.appendChild(step);
             mountPasswordField(step.querySelector('.dg-username-password-input'));
 
-            step.querySelector('.dg-username-login-actions').appendChild(createPasswordlessAction('dg-identity-passwordless-caption', function () {
+            var passwordlessAction = createPasswordlessAction('dg-identity-passwordless-caption', function () {
                 authRecovery = true;
                 showDigitsSmsIdentity(form);
-            }));
+            });
+            step.querySelector('.dg-username-login-actions').appendChild(passwordlessAction);
+            if (lanAction && callWidget) {
+                putAuthIcon(lanAction, 'phone');
+                passwordlessAction.appendChild(lanAction);
+            }
 
             step.querySelector('.dg-username-login-back').addEventListener('click', function () {
+                if (lanAction && callWidget) {
+                    lanAction.hidden = true;
+                    callWidget.appendChild(lanAction);
+                }
                 // Digits counts every tab container when handling Back, including hidden ones.
                 step.remove();
                 delete form.dataset.dgUsernameStep;
@@ -1987,17 +2011,30 @@
 
         step.hidden = false;
         step.style.display = '';
-        var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
-        var account = [config.rememberedAccount].concat(accounts).find(function (candidate) {
-            return candidate && candidate.login === username;
-        });
-        var photo = account?.avatar;
+        var profile = step.querySelector('.dg-username-login-profile');
         var kind = emailDomain(username) ? 'email' : 'user';
-        var identity = createAuthIdentity(username, kind, photo);
-        identity.classList.add('dg-username-login-summary');
-        identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
-        identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
-        step.querySelector('.dg-username-login-profile').replaceChildren(identity);
+        function renderProfile(photo) {
+            var identity = createAuthIdentity(username, kind, photo);
+            identity.classList.add('dg-username-login-summary');
+            identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
+            identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
+            profile.replaceChildren(identity);
+        }
+        renderProfile();
+        var account = config.rememberedAccount;
+        if (account?.assigned && account.avatar) {
+            matchesWorkstationIdentity(username, account).then(function (match) {
+                if (match && step.isConnected && form.dataset.dgUsernameValue === username) { renderProfile(account.avatar); }
+            });
+        }
+        if (lanAction) {
+            lanAction.hidden = true;
+            matchesWorkstationIdentity(username, lanAction.dataset).then(function (match) {
+                if (step.isConnected && form.dataset.dgUsernameValue === username) {
+                    lanAction.hidden = !match || !callVerificationEnabled(shell);
+                }
+            });
+        }
         var password = step.querySelector('.dg-username-password-input');
         password.disabled = false;
         password.focus({ preventScroll: true });
@@ -3857,29 +3894,6 @@
         var updateEmailFeedback = bindEmailDomainFeedback(emailInput);
         var login = phoneInput.form;
         if (login) {
-            var lanAction = shell.querySelector('[data-call-lan-action]');
-            if (lanAction) {
-                var submit = login.querySelector('.digits-form_login > .digits-form_submit-btn');
-                submit?.after(lanAction);
-                putAuthIcon(lanAction, 'phone');
-                var updateLanAction = async function () {
-                    var identity = digitsIdentityValue(login).toLowerCase();
-                    var available = callVerificationEnabled(shell);
-                    lanAction.hidden = !available || identity !== lanAction.dataset.login.toLowerCase();
-                    if (!available || !emailDomain(identity) || !window.crypto?.subtle) { return; }
-                    try {
-                        var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
-                        var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-                        if (identity === digitsIdentityValue(login).toLowerCase()) {
-                            lanAction.hidden = hex !== lanAction.dataset.emailDigest;
-                        }
-                    } catch (_error) {
-                        // The assigned username remains available on browsers without digest support.
-                    }
-                };
-                login.addEventListener('input', updateLanAction);
-                updateLanAction();
-            }
             shell.addEventListener('digitalogic:call-error', function (event) {
                 showDigitsInlineMessage(login, event.detail, 'error');
             });
@@ -4870,6 +4884,7 @@
         if (photo) {
             var image = document.createElement('img');
             image.alt = '';
+            image.referrerPolicy = 'no-referrer';
             image.hidden = true;
             image.addEventListener('load', function () { image.hidden = false; }, { once: true });
             image.addEventListener('error', function () { image.remove(); }, { once: true });
@@ -5010,6 +5025,7 @@
         title.appendChild(titleText);
         var avatar = document.createElement('img');
         avatar.alt = '';
+        avatar.referrerPolicy = 'no-referrer';
         avatar.className = 'dg-account-field-avatar';
         avatar.hidden = true;
         avatar.addEventListener('load', function () { avatar.hidden = false; });
@@ -5071,7 +5087,7 @@
                 choice.className = 'dg-account-menu-choice';
                 var kind = classifyIdentity(account.login);
                 var icon = account.assigned ? 'device' : kind === 'email' ? 'email' : kind === 'phone' ? 'phone' : 'user';
-                var badge = createAuthIdentity(account.name || account.login, icon, account.avatar);
+                var badge = createAuthIdentity(account.name || account.login, icon, account.assigned ? account.avatar : '');
                 var text = document.createElement('span');
                 text.className = 'dg-account-menu-text';
                 text.appendChild(badge.querySelector('.dg-auth-identity-value'));
@@ -5196,7 +5212,7 @@
             titleText.textContent = account?.name || (input.value ? caption : chooseLabel);
             var holder = input.closest('.dg-auth-input-icon');
             if (holder && account?.assigned && mode === 'username') { putAuthIcon(holder, 'device'); }
-            var photo = (mode !== 'phone' && account?.avatar) || null;
+            var photo = (mode !== 'phone' && account?.assigned && account.avatar) || null;
             if (photo !== avatar.getAttribute('src')) {
                 avatar.hidden = true;
                 if (photo) { avatar.src = photo; }

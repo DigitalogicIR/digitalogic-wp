@@ -498,13 +498,44 @@ final class Digitalogic_Plugin_Auth_Routes {
 	 * @param bool    $assigned Whether to preselect the account.
 	 */
 	private static function account_hint( WP_User $user, bool $assigned ): array {
-		$avatar = get_avatar_url( $user->ID, array( 'size' => 80 ) );
-		return array(
+		$hint = array(
 			'login'    => $user->user_login,
 			'name'     => $user->display_name,
-			'avatar'   => is_string( $avatar ) && wp_parse_url( $avatar, PHP_URL_HOST ) === wp_parse_url( home_url(), PHP_URL_HOST ) ? esc_url_raw( $avatar ) : '',
+			'avatar'   => '',
 			'assigned' => $assigned,
 		);
+		if ( $assigned ) {
+			$hint['avatar']      = self::workstation_avatar( $user );
+			$hint['emailDigest'] = hash( 'sha256', strtolower( $user->user_email ) );
+		}
+		return $hint;
+	}
+
+	/**
+	 * Allow an actual site or Gravatar photo for an assigned workstation.
+	 *
+	 * @param WP_User $user Account assigned to this workstation.
+	 */
+	private static function workstation_avatar( WP_User $user ): string {
+		$avatar = get_avatar_url(
+			$user->ID,
+			array(
+				'size'          => 160,
+				'default'       => '404',
+				'force_default' => false,
+			)
+		);
+		if ( ! is_string( $avatar ) ) {
+			return '';
+		}
+		$url  = wp_parse_url( $avatar );
+		$host = strtolower( $url['host'] ?? '' );
+		if ( 'https' !== ( $url['scheme'] ?? '' ) || '' === $host ) {
+			return '';
+		}
+		$local    = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) === $host;
+		$gravatar = ( 'gravatar.com' === $host || str_ends_with( $host, '.gravatar.com' ) ) && str_starts_with( $url['path'] ?? '', '/avatar/' );
+		return $local || $gravatar ? esc_url_raw( $avatar ) : '';
 	}
 
     public static function redirect_legacy_login_page(): void {

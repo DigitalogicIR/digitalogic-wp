@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
@@ -103,7 +104,12 @@ async function render(page, direction, labels, native, search = '', accountHints
                   <div class="digits-social-logins"><div id="digits_google_login"><span class="digits-social-text">Google</span></div></div>
                 </div>
               </div>
-            </form><div class="dg-call-unified" data-call-unified data-call-available="true"><div data-call-instructions hidden><a data-call-dial href="tel:+982112345678">Call</a></div></div></div></div></body></html>`
+            </form><div class="dg-call-unified" data-call-unified data-call-available="true">
+                ${accountHints.rememberedAccount?.emailDigest ? `<button type="button" data-call-lan-action
+                   data-login="${accountHints.rememberedAccount.login}" data-email-digest="${accountHints.rememberedAccount.emailDigest}"
+                   data-extension="101" hidden><span>Extension 101</span></button>` : ''}
+                <div data-call-instructions hidden><a data-call-dial href="tel:+982112345678">Call</a></div>
+            </div></div></div></body></html>`
     }));
     await page.goto('https://digitalogic.test/login/' + search);
     await page.evaluate(({ labels, accountHints }) => {
@@ -170,6 +176,65 @@ async function checkAccountPicker(page, direction, labels) {
     assert.equal(await input.inputValue(), '');
     assert.equal(await input.getAttribute('role'), null);
     assert.ok(await input.evaluate(node => document.activeElement === node));
+}
+
+async function checkWorkstationPasswordStep(page, direction, labels) {
+    const email = 'workstation@example.com';
+    const account = {
+        login: 'known-user', name: 'Known Account', assigned: true, avatar: '/known-avatar.svg',
+        emailDigest: createHash('sha256').update(email).digest('hex')
+    };
+    await render(page, direction, labels, false, '', { rememberedAccount: account });
+    await page.route('**/email-domain', route => route.fulfill({ json: { success: true, data: { valid: true } } }));
+
+    const phone = page.locator('input[name="digits_phone"]');
+    const button = page.getByRole('button', { name: labels.continue, exact: true });
+    const extension = page.locator('[data-call-lan-action]');
+    const profile = page.locator('.dg-username-login-profile');
+    const back = page.locator('.dg-username-login-back');
+    assert.equal(await phone.inputValue(), account.login);
+    assert.equal(await extension.isVisible(), false);
+
+    await button.click();
+    await profile.locator('img').waitFor();
+    await extension.waitFor();
+    const layout = await profile.evaluate(element => {
+        const tab = element.parentElement;
+        const avatar = element.querySelector('.dg-username-login-avatar');
+        const icon = avatar.getBoundingClientRect();
+        const label = element.querySelector('.dg-username-login-value').getBoundingClientRect();
+        const password = tab.querySelector('.dg-password-field').getBoundingClientRect();
+        const signIn = tab.querySelector('.dg-username-login-submit').getBoundingClientRect();
+        const back = tab.querySelector('.dg-username-login-back').getBoundingClientRect();
+        const skip = tab.querySelector('.dg-skip-password').getBoundingClientRect();
+        const extension = tab.querySelector('[data-call-lan-action]').getBoundingClientRect();
+        return {
+            avatarAbove: icon.bottom < label.top,
+            avatarCentered: Math.abs((icon.left + icon.right - label.left - label.right) / 2) < 1,
+            avatarSize: icon.width,
+            radius: getComputedStyle(avatar).borderRadius,
+            actionsUnderPassword: [signIn, back].every(button => button.top >= password.bottom && button.top - password.bottom < 30),
+            extensionUnderPasswordless: extension.top >= skip.bottom
+        };
+    });
+    assert.deepEqual(layout, {
+        avatarAbove: true, avatarCentered: true, avatarSize: 64, radius: '50%',
+        actionsUnderPassword: true, extensionUnderPasswordless: true
+    });
+
+    await back.click();
+    assert.equal(await extension.isVisible(), false);
+    assert.equal(await extension.count(), 1);
+    await phone.fill('other-user');
+    await button.click();
+    assert.equal(await profile.locator('img').count(), 0);
+    assert.equal(await extension.isVisible(), false);
+    await back.click();
+    await phone.fill(email);
+    await page.locator('#dg-email-domain-status[data-state="valid"]').waitFor();
+    await button.click();
+    await profile.locator('img').waitFor();
+    await extension.waitFor();
 }
 
 async function checkEmailGate(page, labels) {
@@ -897,7 +962,6 @@ async function checkLoginSwitchers(browser) {
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
                 continue: direction === 'rtl' ? 'ادامه' : 'Continue',
-                enterPassword: direction === 'rtl' ? 'وارد کردن رمز عبور' : 'Enter password',
                 getCallCode: direction === 'rtl' ? 'ادامه با تماس تلفنی' : 'Continue by phone call',
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',
                 verifyCode: direction === 'rtl' ? 'تأیید کد' : 'Verify code'
@@ -918,7 +982,7 @@ async function checkLoginSwitchers(browser) {
                     await page.locator('.dg-passkey-options summary').click();
                     await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction);
                     await page.locator('input[name="digits_phone"]').fill('fixture-user');
-                    await page.getByRole('button', { name: labels.enterPassword, exact: true }).click();
+                    await page.getByRole('button', { name: labels.continue, exact: true }).click();
                     assert.equal(await remember.count(), 0);
                     await checkAlternatives(page, false);
                     const profile = page.locator('.dg-username-login-summary');
@@ -929,22 +993,9 @@ async function checkLoginSwitchers(browser) {
                     assert.equal(await remember.count(), 1);
                     await checkAlternatives(page, true);
                     await page.locator('input[name="digits_phone"]').fill('known-user');
-                    await page.getByRole('button', { name: labels.enterPassword, exact: true }).click();
-                    await avatar.locator('img').waitFor();
-                    assert.equal(await avatar.locator('svg').isVisible(), false);
-                    const layout = await profile.evaluate(element => {
-                        const avatar = element.querySelector('.dg-username-login-avatar');
-                        const name = element.querySelector('.dg-username-login-value');
-                        const rect = avatar.getBoundingClientRect();
-                        const label = name.getBoundingClientRect();
-                        return {
-                            above: rect.bottom < label.top,
-                            centered: Math.abs((rect.left + rect.right - label.left - label.right) / 2) < 1,
-                            size: rect.width,
-                            radius: getComputedStyle(avatar).borderRadius
-                        };
-                    });
-                    assert.deepEqual(layout, { above: true, centered: true, size: 64, radius: '50%' });
+                    await page.getByRole('button', { name: labels.continue, exact: true }).click();
+                    assert.equal(await avatar.locator('img').count(), 0, 'A remembered identity alone cannot display a profile photo');
+                    assert.equal(await avatar.locator('svg').isVisible(), true);
                 }
                 await checkPasswordField(page, labels, direction === 'rtl');
                 const password = page.locator('input.dg-password-input:visible');
@@ -971,7 +1022,7 @@ async function checkLoginSwitchers(browser) {
                     assert.equal(await page.locator('.dg-auth-back').isVisible(), false);
                     assert.equal(await page.locator('.digits-form_tab_container').count(), 1, 'Digits must have only the identity tab after returning');
                     await page.locator('input[name="digits_phone"]').fill('known-user');
-                    await page.getByRole('button', { name: labels.enterPassword, exact: true }).click();
+                    await page.getByRole('button', { name: labels.continue, exact: true }).click();
                     await page.locator('.dg-skip-password:visible').click();
                 }
                 await checkOtpEditor(page, native ? 'sms' : 'email');
@@ -1002,6 +1053,9 @@ async function checkLoginSwitchers(browser) {
             const accountPicker = await browser.newPage({ viewport: { width, height: 800 } });
             await checkAccountPicker(accountPicker, direction, labels);
             await accountPicker.close();
+            const workstation = await browser.newPage({ viewport: { width, height: 800 } });
+            await checkWorkstationPasswordStep(workstation, direction, labels);
+            await workstation.close();
             const location = await browser.newPage({ viewport: { width, height: 800 } });
             await render(location, direction, labels, false);
             await checkStepLocation(location);
