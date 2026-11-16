@@ -2825,6 +2825,9 @@ body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_i
 body.login .digits-form_input:has(> .dg-otp-stack) > :is(.digits-form_input_info:empty, .digits-field_icon, i, .dg-auth-icon) {
     display: none !important;
 }
+body.login .dg-otp-step .digits-form_tab_body:has(> .digits-form_input_row .dg-otp-editor) {
+    flex-direction: column;
+}
 body.login .dg-otp-step .digits-form_input_row:has(.dg-otp-editor) {
     padding-inline: 0 !important;
     border: 0 !important;

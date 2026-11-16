@@ -438,19 +438,13 @@ async function checkSmsAction(page, labels) {
     await page.locator('.dg-otp-progress[data-state="ready"]').waitFor();
     await verify.click();
     const rejectedEditor = page.locator('.dg-otp-editor[aria-invalid="true"]');
-    await rejectedEditor.waitFor({ timeout: 8000 }).catch(async error => {
-        const layout = await rejectedEditor.evaluateAll(editors => editors.map(editor => {
-            const parents = [];
-            for (let node = editor; node; node = node.parentElement) {
-                const style = getComputedStyle(node);
-                const rect = node.getBoundingClientRect();
-                parents.push([node.className, node.hidden, style.display, style.visibility,
-                    style.contentVisibility, rect.width, rect.height]);
-            }
-            return parents;
-        }));
-        throw new Error(`Rejected OTP must remain visible after attempt ${attempts}; layout: ${JSON.stringify(layout)}`, { cause: error });
-    });
+    await rejectedEditor.waitFor();
+    const rejectedBox = await rejectedEditor.boundingBox();
+    const feedbackBox = await alert.boundingBox();
+    const resendBox = await resend.boundingBox();
+    assert.ok(rejectedBox.width >= firstBox.width * 6 && rejectedBox.y + rejectedBox.height <= feedbackBox.y,
+        'Feedback must stay below the full-width PIN editor, including when Digits uses a flex tab');
+    assert.ok(feedbackBox.y + feedbackBox.height <= resendBox.y, 'Resend stays below the feedback');
     assert.equal(await alert.innerText(), 'Code expired. Request a new code.');
     assert.equal(await first.evaluate(el => document.activeElement === el), true);
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
