@@ -12,6 +12,13 @@ final class Digitalogic_Plugin_Auth_Routes {
     private const DEFAULT_COUNTRY_CODE = '98';
     private const CANONICAL_LOGIN_PATH = '/login/';
 
+	/** Public providers that do not require an MX lookup. */
+	public const EMAIL_PROVIDERS = array(
+		'gmail.com', 'googlemail.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com',
+		'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com',
+		'rocketmail.com', 'aol.com', 'proton.me', 'protonmail.com',
+	);
+
 	private const ACCOUNT_HINT_COOKIE = 'digitalogic_account_hint';
 	private const ASSIGNED_HINT_COOKIE = 'digitalogic_dismissed_workstation_hint';
 	private const ACCOUNT_HINT_LIMIT  = 5;
@@ -122,8 +129,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 	 * @param bool   $allow_dns Whether to perform uncached DNS lookups on this request.
 	 */
 	public static function email_domain_accepts_mail( string $domain, bool $allow_dns = true ): ?bool {
-		$providers = array( 'gmail.com', 'googlemail.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com', 'rocketmail.com', 'aol.com', 'proton.me', 'protonmail.com' );
-		if ( in_array( $domain, $providers, true ) ) {
+		if ( in_array( $domain, self::EMAIL_PROVIDERS, true ) ) {
 			return true;
 		}
 		if ( ! function_exists( 'getmxrr' ) || ! self::is_email_domain_name( $domain ) ) {

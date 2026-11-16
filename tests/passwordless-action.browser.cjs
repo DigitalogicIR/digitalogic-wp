@@ -44,7 +44,7 @@ async function checkAction(page, labels, direction) {
     return button;
 }
 
-async function checkIconAndLabel(button, direction) {
+async function checkIconAndLabel(button, direction, expectedGap) {
     const layout = await button.evaluate(element => {
         const icon = element.querySelector('svg').getBoundingClientRect();
         const label = element.querySelector(':scope > span').getBoundingClientRect();
@@ -59,12 +59,13 @@ async function checkIconAndLabel(button, direction) {
     });
     assert.ok(layout.iconWidth >= 16, 'The action icon must be visible');
     assert.ok(layout.gap >= 8 && layout.gap <= 12, `Icon and text must be 8–12px apart (got ${layout.gap}px)`);
+    if (expectedGap) { assert.ok(Math.abs(layout.gap - expectedGap) < 0.25, 'Use the shared icon gap'); }
     assert.ok(layout.centerDifference < 1, 'Icon and text must share a vertical center');
     assert.ok(layout.groupOffset < 1, 'Icon and text must be centered as a group');
     assert.equal(layout.iconOnRight, direction === 'rtl');
 }
 
-async function render(page, direction, labels, native, search = '', accountHints = {}) {
+async function render(page, direction, labels, native, search = '', accountHints = {}, webAuthn = 'hybrid') {
     await page.route('https://digitalogic.test/login/**', route => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: `<!doctype html><html lang="${direction === 'rtl' ? 'fa' : 'en'}" dir="${direction}">
@@ -80,7 +81,7 @@ async function render(page, direction, labels, native, search = '', accountHints
                         <input name="digits_phone">
                       </div>
                     </div>
-                    <div class="digits-form_tab_body"><div class="digits-form_input_row"><input name="digits_email"></div></div>
+                    <div class="digits-form_tab_body"><div class="digits-form_input_row"><div class="digits-form_input"><input name="digits_email"></div></div></div>
                   </div>
                   ${native ? `<template id="native-password-step"><div class="digits-form_tab_container">
                     <div class="digits-form_input_row">
@@ -112,16 +113,24 @@ async function render(page, direction, labels, native, search = '', accountHints
             </div></div></div></body></html>`
     }));
     await page.goto('https://digitalogic.test/login/' + search);
-    await page.evaluate(({ labels, accountHints }) => {
+    await page.evaluate(({ labels, accountHints, webAuthn }) => {
+        Object.defineProperty(window, 'PublicKeyCredential', {
+            value: class {
+                static async getClientCapabilities() { return { hybridTransport: webAuthn === 'hybrid' }; }
+                static async isUserVerifyingPlatformAuthenticatorAvailable() { return false; }
+            },
+            configurable: true
+        });
         window.DigitalogicBranding = {
             labels,
             otpCursor: 'bar',
             ajaxUrl: '/email-domain',
             emailDomainNonce: 'fixture',
+            emailKnownDomains: ['gmail.com'],
             rememberedAccounts: [{ login: 'known-user', avatar: '/known-avatar.svg' }],
             ...accountHints
         };
-    }, { labels, accountHints });
+    }, { labels, accountHints, webAuthn });
     await page.route('https://digitalogic.test/known-avatar.svg', route => route.fulfill({
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="blue" d="M0 0h32v32H0z"/></svg>'
@@ -344,6 +353,26 @@ async function checkEmailGate(page, labels) {
     assert.equal(await primary.innerText(), labels.continue);
     assert.equal(await email.getAttribute('aria-invalid'), 'false');
     assert.equal(colors.size, 4);
+    await email.pressSequentially('7!!!@@#)(');
+    assert.equal(await email.inputValue(), 'preview@retry.example');
+    await email.fill('Preview+Tag@Gmail.Com');
+    await email.pressSequentially('7!!!@@#)(');
+    assert.equal(await email.inputValue(), 'preview+tag@gmail.com');
+    await email.fill('Preview+Tag@Gmail.Com!!!@@#)(');
+    assert.equal(await email.inputValue(), 'preview+tag@gmail.com', 'Normalize pasted or autofilled email');
+    const envelope = form.locator('.dg-login-identity-field svg.dg-auth-icon--email');
+    const geometry = await envelope.evaluate(svg => {
+        const box = svg.getBoundingClientRect();
+        const field = svg.closest('.dg-login-identity-field').getBoundingClientRect();
+        const glyph = svg.querySelector('path').getBBox();
+        return { width: box.width, height: box.height, center: (box.top + box.bottom - field.top - field.bottom) / 2, glyphRatio: glyph.width / glyph.height };
+    });
+    assert.equal(geometry.width, geometry.height);
+    assert.ok(Math.abs(geometry.center) < 1 && geometry.glyphRatio > 1.5, 'Use a centered, wide envelope glyph');
+    await expectState('valid', true);
+    await email.fill('Preview+Tag@MX7.Example.com');
+    assert.equal(await email.inputValue(), 'preview+tag@mx7.example.com', 'Allow digits inside domain labels');
+    await expectState('valid', true);
     await primary.click();
     await form.locator('.dg-username-password-input').waitFor();
     const passwordStep = form.locator('.dg-username-password-step');
@@ -974,7 +1003,7 @@ async function checkLoginSwitchers(browser) {
                 showPassword: direction === 'rtl' ? 'نمایش رمز عبور' : 'Show password',
                 hidePassword: direction === 'rtl' ? 'پنهان کردن رمز عبور' : 'Hide password',
                 requiredPassword: direction === 'rtl' ? 'رمز عبور را وارد کنید.' : 'Enter your password.',
-                passkeyLogin: direction === 'rtl' ? 'ورود با کلید عبور' : 'Sign in with a passkey',
+                passkeyLogin: direction === 'rtl' ? 'ورود با Passkey' : 'Sign in with a passkey',
                 sendSmsCode: direction === 'rtl' ? 'ارسال کد پیامکی' : 'Send SMS code',
                 sendEmailCode: direction === 'rtl' ? 'ارسال کد به ایمیل' : 'Send email code',
                 continue: direction === 'rtl' ? 'ادامه' : 'Continue',
@@ -996,7 +1025,7 @@ async function checkLoginSwitchers(browser) {
                     await identity.fill('');
                     await checkIdentityPrompt(page, labels.identityPlaceholder);
                     await page.locator('.dg-passkey-options summary').click();
-                    await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction);
+                    await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction, 10);
                     await page.locator('input[name="digits_phone"]').fill('fixture-user');
                     await page.getByRole('button', { name: labels.continue, exact: true }).click();
                     assert.equal(await remember.count(), 0);
@@ -1047,6 +1076,12 @@ async function checkLoginSwitchers(browser) {
                 await checkAlternatives(page, false);
                 await page.close();
             }
+            const unsupported = await browser.newPage({ viewport: { width, height: 800 } });
+            await render(unsupported, direction, labels, false, '', {}, 'unsupported');
+            assert.equal(await unsupported.locator('.dg-passkey-options').count(), 0, 'No empty other-methods disclosure');
+            assert.equal(await unsupported.locator('.digits-form_passwordless_login').isVisible(), false);
+            assert.equal(await unsupported.locator('#digits_google_login').isVisible(), true);
+            await unsupported.close();
             const recovery = await browser.newPage({ viewport: { width, height: 800 } });
             await render(recovery, direction, labels, false, '?recover=1');
             await checkAlternatives(recovery, false);
