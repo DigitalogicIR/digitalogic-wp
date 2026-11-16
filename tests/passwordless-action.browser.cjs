@@ -438,6 +438,14 @@ async function checkSmsAction(page, labels) {
     assert.equal(await page.locator('.dg-toast, .dig_popmessage').count(), 0);
     await verify.click();
     await page.locator('.dg-auth-is-success > section.dg-auth-success .dg-auth-success-icon svg').waitFor();
+    const spinner = page.locator('.dg-auth-success-spinner');
+    await spinner.waitFor();
+    assert.equal(await spinner.getAttribute('aria-hidden'), 'true');
+    assert.equal(await spinner.evaluate(element => {
+        const caption = element.previousElementSibling.getBoundingClientRect();
+        const ring = element.getBoundingClientRect();
+        return caption.bottom < ring.top && getComputedStyle(element).animationName === 'dg-fuji-spin';
+    }), true);
     assert.equal(await verify.isVisible(), false);
     assert.match(page.url(), /login/);
     await page.waitForURL('**/complete');
