@@ -140,7 +140,18 @@ final class AdminBrandingAuthTest extends TestCase {
         $socket = $commands['digitalogic_auth_presentation'];
         $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
         $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
+        $this->assertStringEndsWith('/components-light.webp', $rest[0]['image_light']);
         $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
+
+        $custom = [['image' => '/custom.webp', 'alt' => 'معرفی']];
+        $GLOBALS['digitalogic_test_options']['digitalogic_login_story_cards'] = ['fa_IR' => $custom];
+        try {
+            $this->assertSame($custom, Digitalogic_Plugin_Admin_Branding::login_slides($request));
+            $this->assertSame($custom, $socket(['locale' => 'fa_IR'])['slides']);
+            $this->assertSame(['components', 'pcb', 'sourcing'], array_column($socket(['locale' => 'en_US'])['slides'], 'id'));
+        } finally {
+            unset($GLOBALS['digitalogic_test_options']['digitalogic_login_story_cards']);
+        }
     }
 
     public function test_recovery_identity_labels_match_the_wordpress_backend(): void {
