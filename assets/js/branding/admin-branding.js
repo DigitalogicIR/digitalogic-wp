@@ -4418,6 +4418,8 @@
         back: 'M19 12H5m6-6-6 6 6 6',
         check: 'M5 12l4 4L19 6',
         info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
+        edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
+        clock: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM12 6v6l4 2',
         more: 'M4 7h16 M4 12h16 M4 17h16 M8 5v4 M15 10v4 M10 15v4'
     };
 
@@ -4436,6 +4438,50 @@
         path.setAttribute('d', authIcons[name]);
         svg.appendChild(path);
         node.prepend(svg);
+    }
+
+    function decorateNativeLoginCards() {
+        var login = document.querySelector('body.login #login');
+        if (!login) { return; }
+        var preferences = login.nextElementSibling;
+        var form = login.querySelector(':scope > .admin-email-confirm-form');
+        if (form) {
+            putAuthIcon(form.querySelector('.admin-email__heading'), 'email');
+            putAuthIcon(form.querySelector('.admin-email__details a'), 'info');
+            putAuthIcon(form.querySelector('.admin-email__actions-secondary a'), 'clock');
+
+            var actions = form.querySelector('.admin-email__actions-primary');
+            var confirm = actions?.querySelector(':scope > #correct-admin-email');
+            if (confirm) { actions.prepend(confirm); }
+            putAuthIcon(actions?.querySelector(':scope > a.button'), 'edit');
+
+            var email = form.querySelectorAll('p.admin-email__details')[1]?.querySelector('strong');
+            if (email) { email.dir = 'ltr'; }
+            if (preferences?.classList.contains('dg-login-preferences')) { login.append(preferences); }
+            return;
+        }
+
+        // Reuse the translated WordPress heading and its notice, including any links.
+        var body = document.body;
+        var isCheckEmail = body.classList.contains('login-action-checkemail');
+        var isConfirmed = body.classList.contains('login-action-confirmaction');
+        var isReset = body.matches('.login-action-rp, .login-action-resetpass') && !login.querySelector('#resetpassform');
+        if (!isCheckEmail && !isConfirmed && !isReset) { return; }
+        var heading = body.querySelector(':scope > h1.screen-reader-text');
+        var notice = isConfirmed && login.querySelector(':scope > p.success');
+        notice = notice || login.querySelector(isReset ? ':scope > .message.reset-pass' : ':scope > .message:not(.notice-error)');
+        if (!heading || !notice) { return; }
+        var followup = isConfirmed && notice.matches('p.success') && notice.nextElementSibling;
+
+        var card = document.createElement('section');
+        card.className = 'dg-native-auth-card' + (isCheckEmail ? '' : ' dg-native-auth-card--success');
+        heading.classList.remove('screen-reader-text');
+        heading.classList.add('dg-native-card-heading');
+        putAuthIcon(heading, isCheckEmail ? 'email' : 'check');
+        notice.before(card);
+        card.append(heading, notice);
+        if (followup && followup.matches('p:not([id], [class])')) { card.append(followup); }
+        if (preferences?.classList.contains('dg-login-preferences')) { login.append(preferences); }
     }
 
     function decorateAuthControls() {
@@ -4737,6 +4783,7 @@
         injectLoginToggle();
         buildLanguageSwitcher();
         injectLateLoginOverrides();
+        decorateNativeLoginCards();
         buildLoginStories();
         bindAuthPressFeedback();
         window.addEventListener('pagehide', function () { if (authSocket) { authSocket.close(); } });
