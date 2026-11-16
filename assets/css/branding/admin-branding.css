@@ -344,6 +344,121 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         border-start-start-radius: inherit;
         border-end-start-radius: inherit;
     }
+
+    body.login #login:has(> .dg-has-story-drawer) {
+        --dg-story-rail: 1em;
+        --dg-story-reveal: var(--dg-story-rail);
+        --dg-story-duration: 480ms;
+    }
+
+    body.login #login:has(> .dg-has-story-drawer[data-drawer-open]) {
+        --dg-story-reveal: var(--dg-story-panel-width);
+    }
+
+    body.login #login:has(> .dg-has-story-drawer[data-drawer-dragging]) { --dg-story-duration: 0ms; }
+
+    body.login #login:has(> .dg-has-story-drawer) > :is(.dg-has-story-drawer, .dg-login-preferences) {
+        box-sizing: border-box;
+        width: calc(var(--dg-story-form-width) + var(--dg-story-reveal) + 2px);
+        margin-left: var(--dg-story-anchor, calc((100% - var(--dg-story-form-width) - var(--dg-story-reveal) - 2px) / 2));
+        margin-right: auto;
+        transition: width var(--dg-story-duration) cubic-bezier(.22,.72,.24,1),
+            margin-left var(--dg-story-duration) cubic-bezier(.22,.72,.24,1);
+    }
+
+    body.login .dg-digits-login-shell.dg-has-story-drawer {
+        --dg-story-fold: -22deg;
+        grid-template-columns: var(--dg-story-form-width) minmax(0, 1fr);
+        gap: 0;
+    }
+
+    body.login .dg-has-story-drawer:dir(rtl) {
+        grid-template-columns: minmax(0, 1fr) var(--dg-story-form-width);
+    }
+
+    body.login .dg-has-story-drawer > .dg-story-drawer {
+        grid-column: 2;
+        grid-row: 1;
+        border-radius: 0 var(--dg-login-radius, 32px) var(--dg-login-radius, 32px) 0;
+    }
+
+    body.login .dg-has-story-drawer:dir(rtl) > .dg-story-drawer { grid-column: 1; }
+    body.login .dg-has-story-drawer > .dg-auth-preloader { display: none; }
+    body.login .dg-has-story-drawer[data-drawer-open] { --dg-story-fold: 0deg; }
+
+    body.login .dg-story-drawer {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: end;
+        direction: ltr;
+        position: relative;
+        min-inline-size: 0;
+        overflow: clip;
+        background: color-mix(in srgb, var(--dg-accent-soft) 70%, var(--dg-panel-strong));
+    }
+
+    body.login .dg-story-drawer > .dg-login-stories {
+        box-sizing: border-box;
+        inline-size: var(--dg-story-panel-width);
+        min-block-size: 100%;
+        border-radius: 0;
+        border-left: 1px solid var(--dg-story-line);
+        box-shadow: inset 12px 0 18px -18px var(--dg-story-ink);
+        perspective: 1000px;
+        transform: perspective(1000px) rotateY(var(--dg-story-fold));
+        transform-origin: right center;
+        transition: transform var(--dg-story-duration) cubic-bezier(.22,.72,.24,1);
+    }
+
+    body.login .dg-story-drawer-toggle {
+        position: absolute;
+        z-index: 2;
+        inset: 0 0 0 auto;
+        display: grid;
+        place-items: center;
+        box-sizing: border-box;
+        inline-size: var(--dg-story-rail);
+        border: 0;
+        border-left: 1px solid color-mix(in srgb, var(--dg-border-strong) 45%, transparent);
+        padding: 0;
+        background: color-mix(in srgb, var(--dg-panel-strong) 88%, var(--dg-accent));
+        color: var(--dg-accent-strong);
+        cursor: ew-resize;
+        touch-action: pan-y;
+        -webkit-tap-highlight-color: transparent;
+        transition: background-color 160ms ease, color 160ms ease;
+    }
+
+    body.login .dg-story-drawer-toggle:hover {
+        background: color-mix(in srgb, var(--dg-panel-strong) 76%, var(--dg-accent));
+    }
+
+    body.login .dg-story-drawer-toggle:focus-visible {
+        outline: 2px solid var(--dg-accent-strong);
+        outline-offset: -3px;
+    }
+
+    body.login .dg-story-drawer-toggle > .dg-auth-icon {
+        inline-size: 12px;
+        block-size: 12px;
+        stroke-width: 2.1;
+    }
+
+    body.login .dg-story-drawer[aria-busy="true"] .dg-story-loading {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        background: var(--dg-story-background);
+    }
+
+    body.login .dg-story-drawer[aria-busy="true"] > .dg-login-stories { min-block-size: max(18rem, 100%); }
+    body.login .dg-story-loading[hidden] { display: none; }
+}
+
+@media (max-width: 719px) {
+    body.login .dg-story-drawer { display: none; }
 }
 
 body.login .dg-story-header {
@@ -392,8 +507,10 @@ body.login .dg-story-track {
     /* Slide geometry is physical. Each card retains the document direction. */
     direction: ltr;
     display: flex;
+    --dg-story-card-gap: 8px;
+    gap: var(--dg-story-card-gap);
     inline-size: 100%;
-    transform: translate3d(calc(var(--dg-story-slot, 0) * -100% + var(--dg-story-drag, 0px)), 0, 0);
+    transform: translate3d(calc(var(--dg-story-slot, 0) * (-100% - var(--dg-story-card-gap)) + var(--dg-story-drag, 0px)), 0, 0);
     transition: transform 400ms cubic-bezier(.22,.72,.24,1);
 }
 
@@ -600,8 +717,30 @@ body.login .dg-story-dot[aria-pressed="true"]::before {
 }
 
 body.login .dg-story-dot:hover::before { opacity: 1; }
-body.login .dg-story-rotation { margin-inline-start: auto; }
+body.login .dg-story-rotation { position: relative; margin-inline-start: auto; }
 body.login .dg-story-rotation[hidden] { display: none; }
+
+body.login .dg-story-progress {
+    position: absolute;
+    inset: -1px;
+    inline-size: calc(100% + 2px);
+    block-size: calc(100% + 2px);
+    overflow: visible;
+    pointer-events: none;
+    fill: none;
+    stroke: var(--dg-story-accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+}
+
+body.login .dg-story-progress > path {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+body.login .dg-login-stories { position: relative; }
+body.login .dg-story-progress--edge { inset: auto 0 0; inline-size: 100%; block-size: 3px; }
 
 @container dg-story-controls (max-width: 325px) {
     body.login .dg-story-navigation { gap: 3px; }
@@ -677,8 +816,10 @@ body.login .dg-story-rotation[data-playing="false"]::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    body.login #login:has(> .dg-has-story-drawer) { --dg-story-duration: 0ms; }
     body.login :is(.dg-story-track, .dg-story-arrow, .dg-story-rotation),
     body.login .dg-story-dot::before { transition: none; }
+    body.login .dg-story-progress { display: none; }
 }
 
 [data-dg-theme="dark"] body.login .dg-digits-login-shell::before {
@@ -5109,7 +5250,7 @@ body.login .dg-auth-preloader.is-ready {
     animation: none;
 }
 
-body.login .dg-auth-preloader > span {
+body.login :is(.dg-auth-preloader, .dg-story-loading) > span {
     box-sizing: border-box;
     inline-size: 48px;
     block-size: 48px;
@@ -5129,7 +5270,7 @@ body.login .dg-auth-preloader > span {
     body.login .dg-auth-context-menu button {
         transition: none;
     }
-    body.login .dg-auth-preloader > span {
+    body.login :is(.dg-auth-preloader, .dg-story-loading) > span {
         animation: none;
     }
 }
@@ -5201,7 +5342,7 @@ body.login .dg-call-unified [data-call-code]:focus-visible {
 }
 
 @media (min-width: 720px) and (max-width: 782px) {
-    body.login :is(.dg-digits-login-shell, .dg-digits-register-shell).dg-has-login-stories {
+    body.login :is(.dg-digits-login-shell, .dg-digits-register-shell).dg-has-login-stories:not(.dg-has-story-drawer) {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
         gap: 0;
     }

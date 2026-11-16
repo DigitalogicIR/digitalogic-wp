@@ -385,6 +385,97 @@ async function checkEmailGate(page, labels) {
     assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
 }
 
+async function checkStoryDrawer(browser, direction, labels) {
+    const page = await browser.newPage({ viewport: { width: 1050, height: 850 } });
+    try {
+        let showStories;
+        const stories = new Promise(resolve => { showStories = resolve; });
+        await page.route('**/fixture-stories?*', async route => {
+            await stories;
+            await route.fulfill({ json: ['First', 'Second'].map(title => ({ title, image: '/story-fixture.svg' })) });
+        });
+        await page.route('**/story-fixture.svg', route => route.fulfill({
+            contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260"><path fill="#075fa3" d="M0 0h400v260H0z"/></svg>'
+        }));
+        await render(page, direction, labels, false, '', { loginSlidesUrl: '/fixture-stories' });
+        const shell = page.locator('.dg-has-story-drawer');
+        const toggle = shell.locator('.dg-story-drawer-toggle');
+        await page.waitForFunction(() => document.querySelector('.dg-story-drawer-toggle')?.getAttribute('aria-expanded') === 'true');
+        assert.equal(await shell.locator('.dg-story-loading').isVisible(), true);
+        showStories();
+        await shell.locator('.dg-story-loading').waitFor({ state: 'hidden' });
+        await shell.evaluate(node => Promise.all(node.getAnimations({ subtree: true })
+            .filter(animation => ['width', 'margin-left', 'transform'].includes(animation.transitionProperty))
+            .map(animation => animation.finished.catch(() => {}))));
+        const track = shell.locator('.dg-story-track');
+        const gap = await track.evaluate(element => {
+            const [a, b] = element.children;
+            return b.getBoundingClientRect().left - a.getBoundingClientRect().right;
+        });
+        assert.ok(Math.abs(gap - 8) < 0.25, 'The slide spacing is included in both LTR and RTL geometry');
+
+        const rotation = shell.locator('.dg-story-rotation');
+        await page.waitForFunction(() => parseFloat(getComputedStyle(document.querySelector('.dg-story-progress path')).strokeDashoffset) < 0.97);
+        const readProgress = () => rotation.locator('.dg-story-progress path').evaluate(path => parseFloat(getComputedStyle(path).strokeDashoffset));
+        await rotation.evaluate(button => button.click());
+        const paused = await readProgress();
+        await page.waitForTimeout(125);
+        assert.equal(await readProgress(), paused);
+        await rotation.evaluate(button => button.click());
+        await page.waitForFunction(previous => parseFloat(getComputedStyle(document.querySelector('.dg-story-progress path')).strokeDashoffset) < previous - 0.01, paused);
+
+        await toggle.click();
+        assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '1');
+        await page.waitForFunction(() => {
+            const rail = document.querySelector('.dg-story-drawer-toggle');
+            return Math.abs(rail.parentElement.clientWidth - rail.clientWidth) <= 1;
+        });
+        const grip = await toggle.boundingBox();
+        const x = grip.x + grip.width / 2;
+        const y = grip.y + grip.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + 105, y, { steps: 12 });
+        const moved = await toggle.boundingBox();
+        assert.ok(Math.abs(moved.x - grip.x - 105) < 1, 'The rail follows the pointer at 1:1 scale');
+        await page.mouse.up();
+        assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+        assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
+        if (direction === 'rtl') {
+            await toggle.click();
+            await page.waitForFunction(() => {
+                const rail = document.querySelector('.dg-story-drawer-toggle');
+                return Math.abs(rail.parentElement.clientWidth - rail.clientWidth) <= 1;
+            });
+            await page.evaluate(() => {
+                window.storyVibrations = [];
+                Object.defineProperty(navigator, 'vibrate', {
+                    configurable: true, value: pattern => window.storyVibrations.push(pattern)
+                });
+            });
+            const cdp = await page.context().newCDPSession(page);
+            await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+            const rail = await toggle.boundingBox();
+            const touch = { x: rail.x + rail.width / 2, y: rail.y + rail.height / 2 };
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch] });
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, x: touch.x + 40 }] });
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, x: touch.x + 112 }] });
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+            assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+            const pulses = await page.evaluate(() => window.storyVibrations);
+            assert.ok(pulses.includes(7) && pulses.includes(11) && pulses.some(pulse => Array.isArray(pulse) && pulse[0] === 14));
+        }
+        await page.evaluate(() => window.DigitalogicAuthSuccess(() => { document.body.dataset.redirected = 'yes'; }));
+        await page.waitForFunction(() => document.querySelector('.dg-story-drawer-toggle')?.disabled);
+        assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
+        await page.waitForFunction(() => document.body.dataset.redirected === 'yes');
+        await page.setViewportSize({ width: 390, height: 850 });
+        assert.equal(await shell.locator('.dg-story-drawer').isVisible(), false);
+    } finally { await page.close(); }
+}
+
 async function checkStepLocation(page) {
     await page.waitForURL('**/#login');
     const phone = page.locator('[name="digits_phone"]');
@@ -834,7 +925,8 @@ async function checkLoginStories(browser) {
     assert.equal(requests, 0, 'The phone layout does not fetch the presentation');
     await page.setViewportSize({ width: 768, height: 1024 });
     const panel = page.locator('.dg-login-stories');
-    await panel.waitFor();
+    await panel.locator('article.is-active').waitFor();
+    await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     assert.equal(requests, 1);
     async function assertSingleRow(visibleLabels) {
         const controls = panel.locator('.dg-story-controls');
@@ -895,14 +987,16 @@ async function checkLoginStories(browser) {
     titles = Array.from({ length: 8 }, (_, index) => 'عنوان کامل محصول ' + (index + 1));
     await page.setViewportSize({ width: 720, height: 1024 });
     await open();
-    await panel.waitFor();
+    await panel.locator('article.is-active').waitFor();
+    await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     await assertSingleRow(0);
     assert.equal(await panel.locator('.dg-story-dot:visible').count(), 8);
     assert.equal(await rotation.isVisible(), true);
     single = true;
     await page.setViewportSize({ width: 768, height: 1024 });
     await open();
-    await panel.waitFor();
+    await panel.locator('article.is-active').waitFor();
+    await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     assert.equal(await panel.locator('article img[alt="تصویر معرفی"]').count(), 1);
     assert.equal(await panel.locator('.dg-story-controls, .dg-story-stage[data-draggable]').count(), 0);
     await page.close();
@@ -1083,6 +1177,7 @@ async function checkLoginSwitchers(browser) {
             assert.equal(await unsupported.locator('#digits_google_login').isVisible(), true);
             await unsupported.close();
             const recovery = await browser.newPage({ viewport: { width, height: 800 } });
+            await checkStoryDrawer(browser, direction, labels);
             await render(recovery, direction, labels, false, '?recover=1');
             await checkAlternatives(recovery, false);
             await checkIdentityPrompt(recovery, labels.contactPlaceholder);

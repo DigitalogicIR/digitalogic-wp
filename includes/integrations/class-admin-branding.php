@@ -632,6 +632,7 @@ JS;
 			$config['emailDomainNonce']       = wp_create_nonce( 'digitalogic_email_domain' );
 			$config['emailKnownDomains']      = Digitalogic_Plugin_Auth_Routes::EMAIL_PROVIDERS;
 			$config['loginSlidesUrl']         = rest_url( 'digitalogic/v1/login-slides' );
+			$config['loginStoryProgress']     = 'edge' === apply_filters( 'digitalogic_login_story_progress', 'button' ) ? 'edge' : 'button';
 			$config['authEventsUrl']         = rest_url( ltrim( Digitalogic_Auth_Realtime::ROUTE, '/' ) );
 			$config['authWebSocket']          = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
 			$config['rememberedAccount']      = Digitalogic_Plugin_Auth_Routes::remembered_account();
