@@ -18,6 +18,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 	private static float $email_attempt_started = 0.0;
 
     public static function init(): void {
+		Digitalogic_Auth_Realtime::init();
         static $booted = false;
 
         if ($booted || !Digitalogic_Plugin_Admin_Branding::is_enabled()) {
@@ -117,9 +118,10 @@ final class Digitalogic_Plugin_Auth_Routes {
 	/**
 	 * Accept common providers and require a real MX target for other domains.
 	 *
-	 * @param string $domain Lowercase email domain.
+	 * @param string $domain    Lowercase email domain.
+	 * @param bool   $allow_dns Whether to perform uncached DNS lookups on this request.
 	 */
-	private static function email_domain_accepts_mail( string $domain ): bool {
+	public static function email_domain_accepts_mail( string $domain, bool $allow_dns = true ): ?bool {
 		$providers = array( 'gmail.com', 'googlemail.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com', 'rocketmail.com', 'aol.com', 'proton.me', 'protonmail.com' );
 		if ( in_array( $domain, $providers, true ) ) {
 			return true;
@@ -131,6 +133,9 @@ final class Digitalogic_Plugin_Auth_Routes {
 		$cached    = wp_cache_get( $cache_key, 'digitalogic_email_mx' );
 		if ( is_int( $cached ) ) {
 			return 1 === $cached;
+		}
+		if ( ! $allow_dns ) {
+			return null;
 		}
 		$hosts = array();
 		$valid = getmxrr( $domain . '.', $hosts ) && (bool) array_filter(
@@ -261,16 +266,24 @@ final class Digitalogic_Plugin_Auth_Routes {
 	/** Return the completion only to the browser that already holds the verified WordPress session. */
 	public static function otp_completion(): void {
 		nocache_headers();
-		$attempt = self::otp_attempt_id();
-		$token   = wp_get_session_token();
-		$user    = get_current_user_id();
+		wp_send_json_success( self::read_otp_completion( self::otp_attempt_id(), wp_get_session_token(), get_current_user_id() ) );
+	}
+
+	/**
+	 * Return only a completion bound to the caller's validated session token.
+	 *
+	 * @param string $attempt Browser attempt ID.
+	 * @param string $token   Validated WordPress session token.
+	 * @param int    $user    Authenticated WordPress user ID.
+	 */
+	public static function read_otp_completion( string $attempt, string $token, int $user ): array {
 		if ( '' !== $attempt && '' !== $token && $user > 0 ) {
 			$completion = get_transient( self::otp_completion_key( $attempt, $token ) );
 			if ( is_array( $completion ) && $user === (int) $completion['user'] ) {
-				wp_send_json_success( array( 'redirect' => $completion['redirect'] ) );
+				return array( 'redirect' => $completion['redirect'] );
 			}
 		}
-		wp_send_json_success( array( 'pending' => true ) );
+		return array( 'pending' => true );
 	}
 
 	/** Read the per-tab correlation ID. It cannot authenticate a request. */
@@ -631,6 +644,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 		$logged_out = 'true' === sanitize_key( wp_unslash( $_GET['loggedout'] ?? '' ) ) && ! is_user_logged_in();
 		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		Digitalogic_Auth_Realtime::bind_browser();
 		login_header( __( 'Log In' ) );
 
         if (isset($_GET['login']) && sanitize_key(wp_unslash($_GET['login'])) === 'failed') {

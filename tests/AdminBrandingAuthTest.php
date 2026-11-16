@@ -90,10 +90,47 @@ if (!function_exists('get_site_transient')) {
     }
 }
 
+if (!function_exists('wp_using_ext_object_cache')) {
+    function wp_using_ext_object_cache() {
+        return false;
+    }
+}
+
+if (!function_exists('wp_is_uuid')) {
+    function wp_is_uuid($uuid, $version = null) {
+        return $version === 4 && preg_match('/\A[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\z/i', $uuid) === 1;
+    }
+}
+
 require_once dirname(__DIR__) . '/includes/integrations/class-admin-branding.php';
+require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-auth-realtime.php';
 require_once dirname(__DIR__) . '/includes/integrations/class-auth-page.php';
 
 final class AdminBrandingAuthTest extends TestCase {
+    public function test_realtime_snapshot_is_private_to_the_signed_binding_and_cannot_claim_success(): void {
+        $class = Digitalogic_Auth_Realtime::class;
+        $flow = 'aabc19e1-2e35-4ee0-88d1-6ef46ab79a6b';
+        $value = str_repeat('a', 48) . '.' . (time() + 60);
+        $cookie = $value . '.' . hash_hmac('sha256', $value, wp_salt('nonce'));
+        $binding = $class::binding($cookie);
+        $key = $class::key($binding, $flow);
+        self::assertSame(str_repeat('a', 48), $binding);
+        self::assertSame('', $class::binding($cookie . '0'));
+        self::assertSame('', $class::flow('wrong flow'));
+        self::assertNotSame($key, $class::key(str_repeat('b', 48), $flow));
+
+        $class::update($key, 'password');
+        $class::update($key, 'success');
+        self::assertSame('password', $class::snapshot($key)['step']);
+        self::assertFalse($class::snapshot($key)['authenticated']);
+
+        $event = ['user' => 123, 'session' => 'private-fingerprint', 'revision' => 'server'];
+        set_transient($key . '_session', $event);
+        self::assertSame(['step' => 'success', 'authenticated' => true, 'revision' => 'server'], $class::snapshot($key));
+        delete_transient($key . '_session');
+        delete_transient($key);
+    }
+
     protected function setUp(): void {
         $GLOBALS['digitalogic_test_locale']            = 'en_US';
         $GLOBALS['digitalogic_test_is_user_logged_in'] = false;

@@ -219,6 +219,7 @@
 		}
 
 		function stopPolling() {
+			if (useRealtime) { window.DigitalogicAuthRealtime?.stopCall?.(); }
 			stopped = true;
 			window.clearTimeout(pollTimer);
 			window.clearTimeout(countdownTimer);
@@ -284,6 +285,8 @@
 				const redirect = new URLSearchParams(window.location.search).get('redirect_to');
 				if (redirect) { body.redirect_to = redirect; }
 				if (unified && remember) { body.rememberme = true; }
+				const flow = window.DigitalogicAuthRealtime?.flowId?.();
+				if (flow) { body.dg_auth_flow = flow; }
 			}
 			const data = await request(`${config.challengeUrl}/${encodeURIComponent(expectedChallengeId)}/consume`, {
 				method: 'POST',
@@ -316,12 +319,11 @@
 			try {
 				pollController = new AbortController();
 				const realtime = useRealtime && window.DigitalogicAuthRealtime;
-				let data = realtime ? await realtime.callStatus(expectedChallengeId, expectedCsrfToken) : null;
+				let data = realtime ? await realtime.callStatus(expectedChallengeId, expectedCsrfToken, pollController.signal) : null;
 				if (stopped || consuming || expectedGeneration !== attemptGeneration || expectedChallengeId !== challengeId) {
 					return;
 				}
 				if (!data) {
-					useRealtime = false;
 					data = await request(`${config.challengeUrl}/${encodeURIComponent(expectedChallengeId)}`, {
 						method: 'GET',
 						headers: headers(expectedCsrfToken),
@@ -339,6 +341,7 @@
 				}
 				if (data.status === 'verified') {
 					consuming = true;
+					if (useRealtime) { realtime?.stopCall?.(); }
 					window.clearTimeout(pollTimer);
 					window.clearTimeout(countdownTimer);
 					if (countdown) { countdown.hidden = true; }
@@ -400,6 +403,10 @@
 			}
 			schedulePoll(expectedGeneration);
 		}
+
+		window.addEventListener('digitalogic:auth-call-changed', () => {
+			if (useRealtime && !pollController) { schedulePoll(attemptGeneration, 0); }
+		});
 
 		document.addEventListener('visibilitychange', () => {
 			if (stopped || consuming || !challengeId || !widget.isConnected) {

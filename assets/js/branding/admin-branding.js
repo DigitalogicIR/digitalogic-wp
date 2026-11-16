@@ -17,7 +17,109 @@
     var authRecovery = false;
     var authSocket = null;
     var authSocketSequence = 0;
+    var authSocketRetryAt = 0;
     var authSocketPending = new Map();
+    var authFlow = '';
+    var authStep = '';
+    var authStepSent = '';
+    var authStream = null;
+    var authRevision = null;
+    var authSynchronizing = false;
+    var authRetryTimer = null;
+
+    if (config.authEventsUrl && window.crypto?.randomUUID) {
+        authFlow = window.crypto.randomUUID();
+        try {
+            var storedFlow = window.sessionStorage.getItem('digitalogic-auth-flow');
+            var loginParams = new URLSearchParams(window.location.search);
+            if (storedFlow && !loginParams.has('loggedout') && !loginParams.has('reauth')) { authFlow = storedFlow; }
+            window.sessionStorage.setItem('digitalogic-auth-flow', authFlow);
+        } catch (error) { /* The page can still use a new flow if storage is disabled. */ }
+    }
+
+    function authEventsUrl() {
+        var url = new URL(config.authEventsUrl, window.location.href);
+        if (url.origin !== window.location.origin || !authFlow) { return null; }
+        url.searchParams.set('flow', authFlow);
+        return url;
+    }
+
+    function receiveAuthSnapshot(state) {
+        if (!state || typeof state.revision !== 'string' || state.revision === authRevision) { return; }
+        authRevision = state.revision;
+        if (state.authenticated) {
+            try { window.sessionStorage.removeItem('digitalogic-auth-flow'); } catch (error) { /* Storage is optional. */ }
+        }
+        window.dispatchEvent(new CustomEvent('digitalogic:auth-state', { detail: state }));
+    }
+
+    function retryAuthState(delay = 4500) {
+        window.clearTimeout(authRetryTimer);
+        authRetryTimer = window.setTimeout(function () {
+            authRetryTimer = null;
+            void synchronizeAuth();
+        }, delay);
+    }
+
+    async function synchronizeAuth() {
+        if (!authFlow || !authStep || authSynchronizing) { return; }
+        authSynchronizing = true;
+        var step = authStep;
+        try {
+            var state = await authSocketRequest('digitalogic_auth_watch', { flow: authFlow, step: step });
+            if (state) {
+                authStream?.close();
+                authStream = null;
+                authStepSent = step;
+                receiveAuthSnapshot(state);
+                if (!state.authenticated) { retryAuthState(25000); }
+            } else {
+                var url = authEventsUrl();
+                if (!url) { return; }
+                if (step !== authStepSent) {
+                    var response = await window.fetch(url, {
+                        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                        body: new URLSearchParams({ step: step }),
+                        signal: window.AbortSignal?.timeout?.(4000)
+                    });
+                    if (response.ok) {
+                        authStepSent = step;
+                        receiveAuthSnapshot(await response.json());
+                    }
+                }
+                if (!authStream && window.EventSource) {
+                    authStream = new window.EventSource(url);
+                    authStream.addEventListener('snapshot', function (event) {
+                        try { receiveAuthSnapshot(JSON.parse(event.data)); } catch (error) { /* Ignore malformed snapshots. */ }
+                    });
+                }
+                retryAuthState();
+            }
+        } catch (error) {
+            retryAuthState();
+        } finally {
+            authSynchronizing = false;
+            if (step !== authStep) { void synchronizeAuth(); }
+        }
+    }
+
+    async function readCallEvent(id, proof, signal) {
+        var url = authEventsUrl();
+        if (!url) { return null; }
+        url.searchParams.set('call', id);
+        try {
+            var response = await window.fetch(url, {
+                credentials: 'same-origin', cache: 'no-store', signal: signal,
+                headers: { Accept: 'text/event-stream', 'X-Digitalogic-CSRF': proof }
+            });
+            if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) { return null; }
+            var line = (await response.text()).split('\n').find(function (entry) { return entry.startsWith('data: '); });
+            return line ? JSON.parse(line.slice(6)).call : null;
+        } catch (error) {
+            if (signal?.aborted) { throw error; }
+            return null;
+        }
+    }
 
     function openAuthSocket() {
         var settings = config.authWebSocket;
@@ -27,16 +129,22 @@
         if (authSocket && authSocket.readyState < 2) {
             return authSocket;
         }
+        if (Date.now() < authSocketRetryAt) { return null; }
         var url = new window.URL(settings.url, window.location.href);
         if (url.protocol !== 'wss:' || url.host !== window.location.host) {
             return null;
         }
         url.searchParams.set(settings.token ? 'token' : 'nonce', settings.token || settings.nonce);
+        if (authFlow) { url.searchParams.set('auth', '1'); }
         var socket = new window.WebSocket(url);
         authSocket = socket;
         socket.addEventListener('message', function (event) {
             try {
                 var response = JSON.parse(event.data);
+                if (socket === authSocket && response.event === 'auth_snapshot') { receiveAuthSnapshot(response.data); }
+                if (socket === authSocket && response.event === 'auth_call_changed') {
+                    window.dispatchEvent(new Event('digitalogic:auth-call-changed'));
+                }
                 var pending = authSocketPending.get(response.id);
                 if (pending && pending.socket === socket) {
                     pending.finish(response.success ? response.data : null);
@@ -44,6 +152,10 @@
             } catch (error) { /* Other events are irrelevant to this request. */ }
         });
         socket.addEventListener('close', function () {
+            if (socket === authSocket) {
+                authSocketRetryAt = Date.now() + 3000;
+                if (authStep) { retryAuthState(); }
+            }
             authSocketPending.forEach(function (pending) {
                 if (pending.socket === socket) {
                     pending.finish(null);
@@ -62,7 +174,10 @@
                 return;
             }
             var id = 'auth-' + (++authSocketSequence);
-            var timeout = window.setTimeout(function () { finish(null); }, 1500);
+            var timeout = window.setTimeout(function () {
+                finish(null);
+                if (socket === authSocket && socket.readyState < 2) { socket.close(); }
+            }, 1500);
             function finish(result) {
                 window.clearTimeout(timeout);
                 socket.removeEventListener('open', send);
@@ -85,9 +200,20 @@
     // The first call challenge sets a new HttpOnly cookie. Reconnect so the
     // server sees it in the handshake rather than sharing it with JavaScript.
     window.DigitalogicAuthRealtime = {
-        refreshBinding: function () { if (authSocket) { authSocket.close(); authSocket = null; } },
-        callStatus: function (id, proof) {
-            return authSocketRequest('digitalogic_call_status', { challenge_id: id, csrf_token: proof });
+        refreshBinding: function () {
+            if (authSocket) { authSocket.close(); authSocket = null; }
+            authSocketRetryAt = 0;
+            if (authStep) { void synchronizeAuth(); }
+        },
+        flowId: function () { return authFlow; },
+        callStatus: async function (id, proof, signal) {
+            var command = authFlow ? 'digitalogic_auth_call_watch' : 'digitalogic_call_status';
+            var state = await authSocketRequest(command, { challenge_id: id, csrf_token: proof });
+            if (signal?.aborted) { throw new DOMException('Aborted', 'AbortError'); }
+            return state || readCallEvent(id, proof, signal);
+        },
+        stopCall: function () {
+            if (authFlow && authSocket?.readyState === 1) { void authSocketRequest('digitalogic_auth_call_unwatch', {}); }
         }
     };
     var feedbackSelector = [
@@ -2062,6 +2188,7 @@
             ['log', username],
             ['pwd', password.value],
             ['dg_branded_email', classifyIdentity(username) === 'email' ? '1' : ''],
+            ['dg_auth_flow', authFlow],
             ['rememberme', remember && remember.checked ? 'forever' : ''],
             ['redirect_to', digitsLoginRedirect(form)],
             ['wp-submit', 'Log In']
@@ -2219,14 +2346,19 @@
             digitsOtpChecking.add(form);
             setOtpProgress(form, 'verifying');
             try {
-                var response = await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
+                var completion;
+                if (authFlow && config.authWebSocket?.enabled) {
+                    window.DigitalogicAuthRealtime.refreshBinding();
+                    completion = await authSocketRequest('digitalogic_auth_completion', { attempt: state.id });
+                }
+                var response = completion?.redirect ? null : await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
                     method: 'POST',
                     credentials: 'same-origin',
                     cache: 'no-store',
                     signal: window.AbortSignal?.timeout?.(8000),
                     body: new URLSearchParams({ action: 'digitalogic_otp_completion', dg_otp_attempt: state.id })
                 });
-                var reply = response.ok ? await response.json() : null;
+                var reply = response?.ok ? await response.json() : { success: Boolean(completion?.redirect), data: completion };
                 if (digitsOtpContinuations.get(form) !== state) { return; }
                 if (reply?.success && reply.data?.redirect) {
                     var data = { process: true, process_type: 'login', redirect: reply.data.redirect };
@@ -2359,6 +2491,7 @@
     function sendDigitsAjaxFallback(form, button) {
         var endpoint = (window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php';
         var body = new FormData(form);
+        if (authFlow) { body.set('dg_auth_flow', authFlow); }
         var verifiesCode = Boolean(body.get('sms_otp') || body.get('email_otp'));
         if (verifiesCode) {
             var attempt = attachDigitsOtpAttempt(form);
@@ -2982,6 +3115,10 @@
                         return field && ['sms_otp', 'email_otp'].includes(field.name) ? { name: field.name, value: '' } : field;
                     });
                 }
+                if (!checksStatus && fields.length && authFlow) {
+                    guardedSettings.data = (guardedSettings.data === settings.data ? fields.slice() : guardedSettings.data);
+                    guardedSettings.data.push({ name: 'dg_auth_flow', value: authFlow });
+                }
                 if (checksStatus) {
                     args[settingsIndex] = guardedSettings;
                     return originalAjax.apply(this, args);
@@ -3520,13 +3657,15 @@
                     nonce: config.emailDomainNonce,
                     domain: domain
                 });
-                var response = await window.fetch(config.ajaxUrl, {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    body: body,
-                    signal: request.controller.signal
-                });
-                var result = response.ok ? await response.json() : null;
+                var socketResult = authFlow ? await authSocketRequest('digitalogic_auth_email_domain', { domain: domain }) : null;
+                if (request.controller.signal.aborted) { return; }
+                var result = { success: true, data: socketResult };
+                if (typeof socketResult?.valid !== 'boolean') {
+                    var response = await window.fetch(config.ajaxUrl, {
+                        method: 'POST', credentials: 'same-origin', body: body, signal: request.controller.signal
+                    });
+                    result = response.ok ? await response.json() : null;
+                }
                 if (!result?.success || typeof result.data?.valid !== 'boolean') { throw new Error('Email domain check failed'); }
                 if (pending === request && !input.disabled && emailDomain(input.value) === domain) {
                     if (cache.size >= 24) { cache.clear(); }
@@ -4139,6 +4278,10 @@
             var step = currentStep();
             if (step === previous) { return; }
             previous = step;
+            if (step !== 'success') {
+                authStep = step;
+                void synchronizeAuth();
+            }
             var url = new URL(window.location.href);
             if (url.hash === '#' + step) { return; }
             url.hash = step;

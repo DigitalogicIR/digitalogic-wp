@@ -174,6 +174,7 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-ux.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-topology-guard.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-variation-selector.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-auth-realtime.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-auth-page.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-telegram-account-link.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-checkout-date-compatibility.php';

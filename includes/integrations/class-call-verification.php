@@ -843,6 +843,9 @@ final class Digitalogic_Call_Verification {
 		}
 
 		if ( $user instanceof WP_User ) {
+			if ( class_exists( Digitalogic_Auth_Realtime::class ) ) {
+				Digitalogic_Auth_Realtime::correlate_rest( $request->get_param( 'dg_auth_flow' ) );
+			}
 			wp_set_current_user( $user->ID, $user->user_login );
 			wp_set_auth_cookie( $user->ID, true === $request->get_param( 'rememberme' ), is_ssl() );
 			do_action( 'wp_login', $user->user_login, $user );
