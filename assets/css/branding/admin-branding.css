@@ -4198,3 +4198,220 @@ body.login .dg-call-code-prompt {
     }
     body.login .dg-story-figure { aspect-ratio: 4 / 3; }
 }
+
+/* Native WordPress confirmation screens, alongside the unified sign-in card. */
+body.login:has(#login > :is(.admin-email-confirm-form, .dg-native-auth-card)) {
+    display: flex;
+    flex-direction: column;
+}
+
+body.login #login:has(> :is(.admin-email-confirm-form, .dg-native-auth-card)) {
+    box-sizing: border-box;
+    width: min(560px, calc(100% - 28px)) !important;
+    min-inline-size: 0;
+    margin: auto;
+    padding-block: clamp(20px, 4vh, 40px);
+}
+
+body.login #login:has(> :is(.admin-email-confirm-form, .dg-native-auth-card)) > .wp-login-logo {
+    margin-block: 0 22px;
+}
+
+body.login #login:has(> :is(.admin-email-confirm-form, .dg-native-auth-card)) > .wp-login-logo a {
+    max-inline-size: 212px;
+    block-size: 60px;
+}
+
+body.login #login > :is(.admin-email-confirm-form, .dg-native-auth-card) {
+    --dg-native-card-link: color-mix(in srgb, var(--dg-accent-strong) 82%, var(--dg-heading));
+    margin: 0;
+    padding: clamp(18px, 5vw, 32px);
+    border: 1px solid var(--dg-border);
+    border-radius: clamp(22px, 5vw, 30px);
+    background: var(--dg-panel-strong);
+    box-shadow: var(--dg-shadow);
+    color: var(--dg-text);
+    text-align: start;
+}
+
+[data-dg-theme="dark"] body.login #login > :is(.admin-email-confirm-form, .dg-native-auth-card) {
+    --dg-native-card-link: #90ceff;
+}
+
+body.login div#login :is(.admin-email__heading, .dg-native-card-heading) {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin: 0 0 20px;
+    padding: 0;
+    border: 0;
+    color: var(--dg-heading);
+    font: 750 clamp(20px, 4.6vw, 27px)/1.4 var(--dg-font, system-ui, sans-serif);
+    text-align: start;
+}
+
+body.login #login :is(.admin-email__heading, .dg-native-card-heading) > .dg-auth-icon {
+    box-sizing: content-box;
+    inline-size: 22px;
+    block-size: 22px;
+    flex: 0 0 22px;
+    padding: 11px;
+    border-radius: 14px;
+    background: var(--dg-accent-soft);
+    color: var(--dg-native-card-link);
+}
+
+body.login #login .dg-native-auth-card--success .dg-native-card-heading > .dg-auth-icon {
+    background: var(--dg-success-soft);
+    color: color-mix(in srgb, var(--dg-success) 73%, var(--dg-heading));
+}
+
+body.login #login .admin-email-confirm-form > .admin-email__details,
+body.login #login .dg-native-auth-card :is(.message, .message p) {
+    margin: 0;
+    color: var(--dg-text);
+    font-size: 15px;
+    line-height: 1.75;
+}
+
+body.login #login .dg-native-auth-card .message {
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+}
+
+body.login #login .dg-native-auth-card .message p + p {
+    margin-block-start: 10px;
+}
+
+body.login #login .admin-email-confirm-form > :nth-child(2 of p.admin-email__details) {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    margin-block: 20px 8px;
+    padding: 12px 16px;
+    border: 1px solid var(--dg-border);
+    border-radius: 14px;
+    background: var(--dg-panel-soft);
+    color: var(--dg-text-soft);
+    font-size: 13px;
+}
+
+body.login #login .admin-email-confirm-form > :nth-child(2 of p.admin-email__details) strong {
+    display: block;
+    max-inline-size: 100%;
+    color: var(--dg-heading);
+    direction: ltr;
+    unicode-bidi: isolate;
+    overflow-wrap: anywhere;
+    font-size: 16px;
+}
+
+body.login #login .admin-email-confirm-form > :nth-child(3 of p.admin-email__details) {
+    color: var(--dg-text-soft);
+    font-size: 13px;
+}
+
+body.login #login :is(.admin-email-confirm-form, .dg-native-auth-card) a:not(.button) {
+    color: var(--dg-native-card-link);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+body.login #login .admin-email__details a,
+body.login #login .admin-email__actions-secondary a {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: fit-content;
+    min-block-size: 30px;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+body.login #login .admin-email__details a {
+    margin-block-start: 5px;
+}
+
+body.login #login .admin-email-confirm-form a > .dg-auth-icon {
+    inline-size: 16px;
+    block-size: 16px;
+    flex-basis: 16px;
+}
+
+body.login #login .admin-email__actions {
+    margin: 24px 0 0;
+    padding: 0;
+}
+
+body.login #login .admin-email__actions-primary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+body.login #login .admin-email__actions-primary > .button {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    float: none;
+    width: 100%;
+    min-block-size: 48px;
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 13px;
+    font: 700 15px/1.4 var(--dg-font, system-ui, sans-serif);
+    text-align: center;
+}
+
+body.login #login .admin-email__actions-primary > #correct-admin-email {
+    background: linear-gradient(135deg, #087bb5, #095bb9);
+    box-shadow: 0 7px 15px color-mix(in srgb, var(--dg-accent-strong) 22%, transparent);
+}
+
+body.login #login .admin-email__actions-primary > a.button {
+    border: 1px solid var(--dg-border);
+    background: var(--dg-panel-soft);
+    box-shadow: none;
+    color: var(--dg-native-card-link);
+    white-space: normal;
+    transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+body.login #login .admin-email__actions-primary > a.button:hover {
+    border-color: var(--dg-border-strong);
+    background: color-mix(in srgb, var(--dg-panel-soft) 50%, var(--dg-accent-soft));
+}
+
+body.login #login .admin-email__actions-secondary {
+    margin-block-start: 18px;
+    padding-block-start: 10px;
+    border-block-start: 1px solid var(--dg-border);
+    text-align: start;
+}
+
+body.login #login :is(.admin-email-confirm-form, .dg-native-auth-card) :is(a, input):focus-visible {
+    outline: 2px solid var(--dg-native-card-link);
+    outline-offset: 3px;
+}
+
+body.login #login:has(> .dg-native-auth-card) > #backtoblog {
+    margin-block: 16px 0;
+    text-align: center;
+}
+
+body.login #login:has(> :is(.admin-email-confirm-form, .dg-native-auth-card)) > .dg-login-preferences {
+    margin-block: 18px 0;
+}
+
+@media (max-width: 430px) {
+    body.login #login .admin-email__actions-primary { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.login #login .admin-email__actions-primary > .button { transition: none; }
+}
