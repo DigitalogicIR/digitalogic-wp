@@ -4574,8 +4574,8 @@
         toggle.className = 'dg-story-drawer-toggle';
         toggle.type = 'button';
         toggle.setAttribute('aria-controls', panel.id);
-        drawer.append(panel, toggle);
-        shell.prepend(drawer);
+        drawer.append(panel);
+        shell.prepend(toggle, drawer);
         shell.classList.add('dg-has-login-stories', 'dg-has-story-drawer');
 
         var storageKey = 'digitalogic-login-stories-collapsed';
@@ -4648,9 +4648,8 @@
                 haptic(event, 7);
                 changed();
             }
-            var rail = toggle.getBoundingClientRect().width;
             var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - 14);
-            var width = Math.max(rail, Math.min(limit, drag.width + delta));
+            var width = Math.max(0, Math.min(limit, drag.width + delta));
             layout.style.setProperty('--dg-story-reveal', width + 'px');
             shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');
             var atDetent = (open ? -delta : delta) >= 72;
@@ -4711,6 +4710,7 @@
                 resize?.disconnect();
                 window.removeEventListener('resize', measure);
                 success.disconnect();
+                toggle.remove();
                 drawer.remove();
                 shell.classList.remove('dg-has-login-stories', 'dg-has-story-drawer');
                 shell.removeAttribute('data-drawer-open');

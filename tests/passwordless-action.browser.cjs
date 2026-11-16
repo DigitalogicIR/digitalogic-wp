@@ -386,12 +386,13 @@ async function checkEmailGate(page, labels) {
 }
 
 async function checkBrowserManagedSignIn(browser) {
-    for (const method of ['google', 'google-retry', 'fedcm', 'fedcm-retry', 'passkey', 'passkey-race']) {
+    for (const method of ['google', 'google-expired', 'fedcm', 'fedcm-retry', 'passkey', 'passkey-race']) {
         const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
         try {
             const google = method.startsWith('google');
             const passkey = method.startsWith('passkey');
             const retry = method.endsWith('-retry');
+            const googleExpired = method === 'google-expired';
             const providers = passkey ? [] : [{
                 key: google ? 'google' : 'partner',
                 label: 'Partner', clientId: 'registered-client', oneTap: true,
@@ -406,7 +407,7 @@ async function checkBrowserManagedSignIn(browser) {
             }));
             await page.route('**/federation/complete', route => {
                 completed.push(route.request().postDataJSON());
-                if (retry && completed.length === 1) {
+                if ((retry || googleExpired) && completed.length === 1) {
                     return route.fulfill({ status: 403, json: { code: 'federation_expired' } });
                 }
                 return route.fulfill({ json: { redirect: '/intended-destination' } });
@@ -457,16 +458,26 @@ async function checkBrowserManagedSignIn(browser) {
                 } });
             });
             await page.addScriptTag({ path: path.join(__dirname, '..', 'assets', 'js', 'branding', 'browser-signin.js') });
-            const button = page.getByRole('button', { name: google ? 'GIS fixture' : 'Sign in in the browser with Partner' });
+            const button = page.getByRole('button', { name: 'Sign in in the browser with Partner' });
             if (google) {
-                await button.waitFor();
+                await page.waitForFunction(() => window.GoogleFixture.prompted);
                 const options = await page.evaluate(() => ({
-                    nonce: window.GoogleFixture.options.nonce, fedcm: window.GoogleFixture.options.use_fedcm_for_button,
-                    auto: window.GoogleFixture.options.auto_select, prompted: window.GoogleFixture.prompted
+                    nonce: window.GoogleFixture.options.nonce, auto: window.GoogleFixture.options.auto_select
                 }));
-                assert.deepEqual(options, { nonce: 'bound-challenge', fedcm: true, auto: false, prompted: true });
-                assert.equal(await page.locator('#digits_google_login').isVisible(), true);
-                await button.click();
+                assert.deepEqual(options, { nonce: 'bound-challenge', auto: false });
+                const oauth = page.locator('#digits_google_login');
+                assert.equal(await oauth.isVisible(), true);
+                assert.equal(await page.getByRole('button', { name: 'GIS fixture' }).count(), 0);
+                await page.evaluate(() => window.GoogleFixture.options.callback({ credential: 'signed-fixture' }));
+                if (googleExpired) {
+                    await page.getByText('Google One Tap expired. Use the Google button to continue.').waitFor();
+                    assert.equal(completed.length, 1);
+                    assert.equal(prepared, 1);
+                    assert.equal(await page.evaluate(() => window.digitalogicBrowserSuccess), 0);
+                    await oauth.click();
+                    assert.equal(await page.evaluate(() => window.GoogleFixture.cancelled), true);
+                    continue;
+                }
             } else if (!passkey) {
                 await button.click();
                 const request = await page.evaluate(() => window.credentialOptions.identity);
@@ -528,6 +539,12 @@ async function checkStoryDrawer(browser, direction, labels) {
         await shell.evaluate(node => Promise.all(node.getAnimations({ subtree: true })
             .filter(animation => ['width', 'margin-left', 'transform'].includes(animation.transitionProperty))
             .map(animation => animation.finished.catch(() => {}))));
+        const expanded = await toggle.boundingBox();
+        const drawer = shell.locator('.dg-story-drawer');
+        const panel = await drawer.boundingBox();
+        assert.equal(expanded.width, 36);
+        assert.equal(expanded.height, 36);
+        assert.ok(panel.x + panel.width - expanded.x - expanded.width < 20 && expanded.x > panel.x);
         const track = shell.locator('.dg-story-track');
         const gap = await track.evaluate(element => {
             const [a, b] = element.children;
@@ -548,11 +565,10 @@ async function checkStoryDrawer(browser, direction, labels) {
         await toggle.click();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '1');
-        await page.waitForFunction(() => {
-            const rail = document.querySelector('.dg-story-drawer-toggle');
-            return Math.abs(rail.parentElement.clientWidth - rail.clientWidth) <= 1;
-        });
+        await page.waitForFunction(() => document.querySelector('.dg-story-drawer')?.clientWidth === 0);
         const grip = await toggle.boundingBox();
+        const separation = (await shell.boundingBox()).x - grip.x - grip.width;
+        assert.ok(grip.x > 0 && separation >= 0 && separation < 16, 'The collapsed button sits beside the left edge');
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
         const movement = 96;
@@ -560,16 +576,13 @@ async function checkStoryDrawer(browser, direction, labels) {
         await page.mouse.down();
         await page.mouse.move(x + movement, y, { steps: 12 });
         const moved = await toggle.boundingBox();
-        assert.ok(Math.abs(moved.x - grip.x - movement) < 1, 'The rail follows the pointer at 1:1 scale');
+        assert.ok(Math.abs(moved.x - grip.x - movement) < 1, 'The button follows the pointer at 1:1 scale');
         await page.mouse.up();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
         if (direction === 'rtl') {
             await toggle.click();
-            await page.waitForFunction(() => {
-                const rail = document.querySelector('.dg-story-drawer-toggle');
-                return Math.abs(rail.parentElement.clientWidth - rail.clientWidth) <= 1;
-            });
+            await page.waitForFunction(() => document.querySelector('.dg-story-drawer')?.clientWidth === 0);
             await page.evaluate(() => {
                 window.storyVibrations = [];
                 Object.defineProperty(navigator, 'vibrate', {
@@ -578,8 +591,8 @@ async function checkStoryDrawer(browser, direction, labels) {
             });
             const cdp = await page.context().newCDPSession(page);
             await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
-            const rail = await toggle.boundingBox();
-            const touch = { x: rail.x + rail.width / 2, y: rail.y + rail.height / 2 };
+            const button = await toggle.boundingBox();
+            const touch = { x: button.x + button.width / 2, y: button.y + button.height / 2 };
             await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch] });
             await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, x: touch.x + 40 }] });
             await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, x: touch.x + 112 }] });
@@ -594,7 +607,8 @@ async function checkStoryDrawer(browser, direction, labels) {
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
         await page.waitForFunction(() => document.body.dataset.redirected === 'yes');
         await page.setViewportSize({ width: 390, height: 850 });
-        assert.equal(await shell.locator('.dg-story-drawer').isVisible(), false);
+        assert.equal(await drawer.isVisible(), false);
+        assert.equal(await toggle.isVisible(), false);
     } finally { await page.close(); }
 }
 
@@ -1051,6 +1065,8 @@ async function checkLoginStories(browser) {
     await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     assert.equal(requests, 1);
     async function assertSingleRow(visibleLabels) {
+        await page.waitForFunction(count => [...document.querySelectorAll('.dg-story-controls .dg-story-label')]
+            .filter(label => label.getClientRects().length).length === count, visibleLabels);
         await panel.evaluate(node => Promise.all(node.getAnimations()
             .filter(animation => animation.transitionProperty === 'transform')
             .map(animation => animation.finished.catch(() => {}))));
