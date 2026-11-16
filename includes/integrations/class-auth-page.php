@@ -678,7 +678,7 @@ final class Digitalogic_Plugin_Auth_Routes {
     }
 
 	/** Keep the core language selector optional and local to this footer render. */
-	private static function render_login_footer( bool $logged_out ): void {
+	private static function render_login_footer( bool $logged_out = false ): void {
 		$show_language = (bool) apply_filters( 'digitalogic_login_show_language_switcher', true );
 		$hook          = $show_language ? 'login_language_dropdown_args' : 'login_display_language_dropdown';
 		$callback      = $show_language ? self::installed_login_languages( ... ) : '__return_false';
