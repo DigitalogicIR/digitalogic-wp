@@ -14,6 +14,7 @@ require_once dirname( __DIR__ ) . '/laravel/app/Http/Controllers/MobileCatalogCo
 
 /** Regression coverage for the native adapter. */
 final class MobileCatalogContractTest extends TestCase {
+	/** Restore the synthetic database and catalog cache after every example. */
 	protected function tearDown(): void {
 		$GLOBALS['wpdb'] = new Digitalogic_Test_WPDB();
 		unset( $GLOBALS['digitalogic_test_options']['xts-woodmart-options'], $GLOBALS['digitalogic_test_option_cache']['xts-woodmart-options'] );
@@ -26,19 +27,24 @@ final class MobileCatalogContractTest extends TestCase {
 			'search_synonyms' => "Super Mini =\nNode MCU = nodemcu",
 		);
 		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			/** @var array Captured fixture queries. */
 			public $catalog_queries = array();
+			/** @var array Captured bound fixture values. */
 			public $catalog_values  = array();
 
+			/** {@inheritDoc} */
 			public function esc_like( $value ) {
 				return addcslashes( (string) $value, '_%\\' );
 			}
 
+			/** {@inheritDoc} */
 			public function get_results( $prepared, $output = ARRAY_A ) {
 				unset( $prepared, $output );
 
 				return array();
 			}
 
+			/** {@inheritDoc} */
 			public function get_var( $prepared ) {
 				$this->catalog_queries[] = is_array( $prepared ) ? $prepared['query'] : (string) $prepared;
 				$this->catalog_values[]  = is_array( $prepared ) ? $prepared['args'] : array();
@@ -46,6 +52,7 @@ final class MobileCatalogContractTest extends TestCase {
 				return 0;
 			}
 
+			/** {@inheritDoc} */
 			public function get_col( $prepared ) {
 				$this->catalog_queries[] = is_array( $prepared ) ? $prepared['query'] : (string) $prepared;
 				$this->catalog_values[]  = is_array( $prepared ) ? $prepared['args'] : array();
@@ -54,18 +61,18 @@ final class MobileCatalogContractTest extends TestCase {
 			}
 		};
 		Digitalogic_Storefront_Catalog::instance()->clear_public_title_cache();
-		$controller    = new MobileCatalogController();
-		$method        = new ReflectionMethod( $controller, 'productsData' );
-		$spaced_query  = MobileCatalogController::normalizeQuery( array( 'search' => 'Super Mini' ) );
-		$compact_query = MobileCatalogController::normalizeQuery( array( 'search' => 'SuperMini' ) );
-		$result        = $method->invoke( $controller, $spaced_query );
-		$sql           = implode( "\n", $GLOBALS['wpdb']->catalog_queries );
-		$values        = array_merge( ...array_map( static fn( $args ) => isset( $args[0] ) && is_array( $args[0] ) ? $args[0] : $args, $GLOBALS['wpdb']->catalog_values ) );
-		$spaced_candidates = $GLOBALS['wpdb']->catalog_values[0];
+		$controller                       = new MobileCatalogController();
+		$method                           = new ReflectionMethod( $controller, 'productsData' );
+		$spaced_query                     = MobileCatalogController::normalizeQuery( array( 'search' => 'Super Mini' ) );
+		$compact_query                    = MobileCatalogController::normalizeQuery( array( 'search' => 'SuperMini' ) );
+		$result                           = $method->invoke( $controller, $spaced_query );
+		$sql                              = implode( "\n", $GLOBALS['wpdb']->catalog_queries );
+		$values                           = array_merge( ...array_map( static fn( $args ) => isset( $args[0] ) && is_array( $args[0] ) ? $args[0] : $args, $GLOBALS['wpdb']->catalog_values ) );
+		$spaced_candidates                = $GLOBALS['wpdb']->catalog_values[0];
 		$GLOBALS['wpdb']->catalog_queries = array();
 		$GLOBALS['wpdb']->catalog_values  = array();
-		$compact_result     = $method->invoke( $controller, $compact_query );
-		$compact_candidates = $GLOBALS['wpdb']->catalog_values[0];
+		$compact_result                   = $method->invoke( $controller, $compact_query );
+		$compact_candidates               = $GLOBALS['wpdb']->catalog_values[0];
 
 		self::assertSame( 0, $result['pagination']['total'] );
 		self::assertSame( array(), $result['items'] );
@@ -85,24 +92,29 @@ final class MobileCatalogContractTest extends TestCase {
 			'search_synonyms' => 'MODEL-001 = legacy model',
 		);
 		$GLOBALS['wpdb'] = new class() extends Digitalogic_Test_WPDB {
+			/** @var array Bound values selected by the synthetic catalog query. */
 			public $select_values = array();
 
+			/** {@inheritDoc} */
 			public function esc_like( $value ) {
 				return addcslashes( (string) $value, '_%\\' );
 			}
 
+			/** {@inheritDoc} */
 			public function get_results( $prepared, $output = ARRAY_A ) {
 				unset( $prepared, $output );
 
 				return array();
 			}
 
+			/** {@inheritDoc} */
 			public function get_var( $prepared ) {
 				unset( $prepared );
 
 				return 0;
 			}
 
+			/** {@inheritDoc} */
 			public function get_col( $prepared ) {
 				$this->select_values = is_array( $prepared ) ? $prepared['args'] : array();
 
@@ -114,7 +126,7 @@ final class MobileCatalogContractTest extends TestCase {
 		$controller = new MobileCatalogController();
 		$method     = new ReflectionMethod( $controller, 'productsData' );
 		$method->invoke( $controller, $query );
-		$values = isset( $GLOBALS['wpdb']->select_values[0] ) && is_array( $GLOBALS['wpdb']->select_values[0] )
+		$values      = isset( $GLOBALS['wpdb']->select_values[0] ) && is_array( $GLOBALS['wpdb']->select_values[0] )
 			? $GLOBALS['wpdb']->select_values[0]
 			: $GLOBALS['wpdb']->select_values;
 		$where_count = 1 + ( 4 * count( $query['search_terms'] ) );
