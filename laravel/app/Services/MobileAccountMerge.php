@@ -165,9 +165,9 @@ final class MobileAccountMerge {
 		if ( ! is_array( $favorite_rows ) || '' !== $wpdb->last_error ) {
 			throw new \RuntimeException( 'Wishlist inventory unavailable.' );
 		}
-		$favorite_ids = array_map( 'intval', $favorite_rows );
+		$favorite_ids    = array_map( 'intval', $favorite_rows );
 		$recently_viewed = MobileRecentViews::read( $id );
-		$count_sql    = static function ( $query ) use ( $wpdb ): int {
+		$count_sql       = static function ( $query ) use ( $wpdb ): int {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Every caller passes a closed, prepared provider count query.
 			$value = $wpdb->get_var( $query );
 			if ( null === $value || '' !== $wpdb->last_error ) {
@@ -175,24 +175,24 @@ final class MobileAccountMerge {
 			}
 			return (int) $value;
 		};
-		$count        = static function ( string $table, string $column, int $owner ) use ( $wpdb ): int {
+		$count           = static function ( string $table, string $column, int $owner ) use ( $wpdb ): int {
 			$value = $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE %i=%d', $table, $column, $owner ) );
 			if ( null === $value || '' !== $wpdb->last_error ) {
 				throw new \RuntimeException( 'Provider inventory unavailable.' );
 			}
 			return (int) $value;
 		};
-		$counts       = array(
-			'orders'    => $count( $prefix . 'wc_orders', 'customer_id', $id ),
-			'favorites' => count( $favorite_ids ),
+		$counts          = array(
+			'orders'          => $count( $prefix . 'wc_orders', 'customer_id', $id ),
+			'favorites'       => count( $favorite_ids ),
 			'recently_viewed' => count( $recently_viewed ),
-			'requests'  => $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_author=%d AND post_type='digitalogic_request'", $id ) ),
-			'tickets'   => $count_sql( $wpdb->prepare( 'SELECT COUNT(*) FROM %i t JOIN %i p ON p.id=t.customer_id WHERE p.user_id=%d', $prefix . 'fs_tickets', $prefix . 'fs_persons', $id ) ),
-			'drafts'    => $count( $prefix . 'digitalogic_mobile_drafts', 'user_id', $id ),
+			'requests'        => $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_author=%d AND post_type='digitalogic_request'", $id ) ),
+			'tickets'         => $count_sql( $wpdb->prepare( 'SELECT COUNT(*) FROM %i t JOIN %i p ON p.id=t.customer_id WHERE p.user_id=%d', $prefix . 'fs_tickets', $prefix . 'fs_persons', $id ) ),
+			'drafts'          => $count( $prefix . 'digitalogic_mobile_drafts', 'user_id', $id ),
 		);
-		$pending      = $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM %i WHERE user_id=%d AND state IN ('validating','creating','payment_pending','uncertain')", MobileCheckoutStore::table( 'checkout_operations' ), $id ) );
-		$pending     += $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM %i WHERE user_id=%d AND state NOT IN ('accepted','rejected')", MobileMessageStore::table(), $id ) );
-		$unsupported  = array(
+		$pending         = $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM %i WHERE user_id=%d AND state IN ('validating','creating','payment_pending','uncertain')", MobileCheckoutStore::table( 'checkout_operations' ), $id ) );
+		$pending        += $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM %i WHERE user_id=%d AND state NOT IN ('accepted','rejected')", MobileMessageStore::table(), $id ) );
+		$unsupported     = array(
 			'orders'                 => $counts['orders'],
 			'legacy_orders'          => $count_sql( $wpdb->prepare( "SELECT COUNT(DISTINCT pm.post_id) FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON p.ID=pm.post_id WHERE pm.meta_key='_customer_user' AND pm.meta_value=%s AND p.post_type IN ('shop_order','shop_order_refund')", (string) $id ) ),
 			'service_requests'       => $counts['requests'],
@@ -206,8 +206,8 @@ final class MobileAccountMerge {
 			'comments'               => $count( $wpdb->comments, 'user_id', $id ),
 			'other_authored_content' => $count_sql( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_author=%d AND post_type<>'wd_abandoned_cart'", $id ) ),
 		);
-		$woo_session  = new MobileWooSession( $cart );
-		$raw_cart     = (array) $woo_session->get( 'cart', array() );
+		$woo_session     = new MobileWooSession( $cart );
+		$raw_cart        = (array) $woo_session->get( 'cart', array() );
 		if ( self::hasUnsupportedCartOptions( $raw_cart ) ) {
 			$unsupported['custom_cart_options'] = 1;
 		}
@@ -444,8 +444,8 @@ final class MobileAccountMerge {
 		if ( self::migrationUnsupported( $source, $target ) || $source['pending'] || $target['pending'] ) {
 			throw new \RuntimeException( 'provider_migration_required' );
 		}
-		$source_id   = $context['source'];
-		$target_id   = $context['target'];
+		$source_id = $context['source'];
+		$target_id = $context['target'];
 		MobileRecentViews::save( $target_id, MobileRecentViews::combine( $target['recently_viewed'], $source['recently_viewed'], time() ) );
 		$source_cart = MobileCartStore::create( $source_id );
 		$target_cart = MobileCartStore::create( $target_id );

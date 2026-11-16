@@ -72,9 +72,9 @@ final class MobileWishlist {
 	/**
 	 * Reconcile native intent against the existing canonical provider state.
 	 *
-	 * @param int         $user_id Verified WordPress owner.
-	 * @param array|null  $desired Desired.
-	 * @param string|null $base Base.
+	 * @param int           $user_id Verified WordPress owner.
+	 * @param array|null    $desired Desired.
+	 * @param string|null   $base Base.
 	 * @param callable|null $authority Recheck the initiating session after owner-lock acquisition.
 	 * @return mixed Native adapter result.
 	 * @throws \InvalidArgumentException When the authoritative operation cannot be completed safely.
@@ -84,9 +84,9 @@ final class MobileWishlist {
 		if ( ! self::available() ) {
 			return new \WP_Error( 'favorites_unavailable', 'علاقه‌مندی‌ها موقتاً در دسترس نیست.', array( 'status' => 503 ) );}
 		global $wpdb;
-		$lock     = 'dgl-wishlist-' . $user_id;
-		$old_user = get_current_user_id();
-		$table    = MobileIdentityStore::table( 'favorites' );
+		$lock       = 'dgl-wishlist-' . $user_id;
+		$old_user   = get_current_user_id();
+		$table      = MobileIdentityStore::table( 'favorites' );
 		$owner_lock = 'dgl-link-user-' . $user_id;
 		if ( 1 !== (int) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s,1)', $owner_lock ) ) ) {
 			return new \WP_Error( 'favorites_busy', 'کمی بعد همگام‌سازی را ادامه دهید.', array( 'status' => 409 ) );
