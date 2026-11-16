@@ -1311,7 +1311,10 @@
         var detail = document.createElement('p');
         detail.setAttribute('role', 'status');
         detail.textContent = persian ? 'در حال انتقال…' : 'Redirecting…';
-        step.append(icon, title, detail);
+        var spinner = document.createElement('span');
+        spinner.className = 'dg-auth-success-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        step.append(icon, title, detail, spinner);
         shell.appendChild(step);
         shell.classList.add('dg-auth-is-success');
         title.focus({ preventScroll: true });
