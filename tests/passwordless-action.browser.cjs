@@ -579,7 +579,7 @@ async function checkStoryDrawer(browser, direction, labels) {
         });
         const grip = await toggle.boundingBox();
         const closedCard = await shell.boundingBox();
-        assert.ok(Math.abs(grip.x + grip.width / 2 - closedCard.x) <= 1, 'The reopen handle straddles the left edge');
+        assert.ok(Math.abs(grip.x + grip.width / 2 - closedCard.x - closedCard.width) <= 1, 'The reopen handle straddles the right edge');
         assert.ok(Math.abs(grip.y + grip.height / 2 - closedCard.y - closedCard.height / 2) <= 1, 'The reopen handle is vertically centered');
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
