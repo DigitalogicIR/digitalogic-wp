@@ -977,7 +977,6 @@ body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phon
     justify-content: center;
     padding-inline: 0 5px !important;
     border: 0 !important;
-    border-inline-end: 1px solid var(--dg-border) !important;
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
@@ -2035,7 +2034,7 @@ body.login.dg-login-submitting * {
     cursor: wait !important;
 }
 
-body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading {
+body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading {
     position: relative;
     overflow: hidden !important;
     background-image: linear-gradient(135deg, var(--dg-accent) 0%, var(--dg-accent-strong) 100%) !important;
@@ -2047,13 +2046,13 @@ body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-for
     text-shadow: none !important;
 }
 
-body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading:disabled {
+body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading:disabled {
     background-image: linear-gradient(135deg, var(--dg-accent) 0%, var(--dg-accent-strong) 100%) !important;
     color: transparent !important;
     filter: none !important;
 }
 
-body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading::before {
+body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::before {
     content: "";
     position: absolute;
     inset: -45% -20%;
@@ -2066,12 +2065,12 @@ body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-for
     will-change: transform;
 }
 
-body.rtl.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading::before,
-html[dir="rtl"] body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading::before {
+body.rtl.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::before,
+html[dir="rtl"] body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::before {
     animation-name: dg-loading-stripes-rtl !important;
 }
 
-body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading::after {
+body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading::after {
     content: "";
     display: block;
     inline-size: 18px;
@@ -2106,11 +2105,18 @@ body.login :is(.digits-form_submit-btn, .digits-form_submit, .digits-form_button
     visibility: hidden !important;
 }
 
-body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn).is-loading > * {
+body.login :is(#wp-submit, .button-primary, .digits-form_submit-btn, .digits-form_submit, .digits-form_button, .digits-social-btn, .dg-auth-primary).is-loading > * {
     position: relative;
     z-index: 1;
     opacity: 0 !important;
     visibility: hidden !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.login .dg-auth-primary.is-loading::before,
+    body.login .dg-auth-primary.is-loading::after {
+        animation: none !important;
+    }
 }
 
 body.login form.dg-form-pending {
@@ -2391,7 +2397,7 @@ body.login :is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_h
     margin-block-end: 20px;
 }
 
-body.login .digits-form_heading > .dg-auth-icon {
+body.login .digits-form_heading > :is(.dg-auth-icon, .digitalogic-call-icon) {
     box-sizing: content-box;
     padding: 10px;
     border-radius: 14px;
@@ -2827,32 +2833,75 @@ body.login .dg-call-steps li::marker {
     color: var(--dg-accent-strong);
     font-weight: 700;
 }
-body.login .dg-call-steps strong {
+body.login .dg-call-unified strong {
     font-weight: 750;
     color: var(--dg-heading);
 }
-body.login .dg-call-steps p {
+body.login .dg-call-unified :is(.dg-call-steps, .dg-call-copy) p {
     color: var(--dg-text-soft);
     font-size: 14px;
 }
-body.login .dg-call-number {
-    display: inline-block;
-    margin-block: 3px;
-    color: var(--dg-accent-strong);
-    font: 700 22px/1.4 var(--dg-font, system-ui);
+body.login .dg-call-caller:not([hidden]) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding: 10px 13px;
+    color: var(--dg-text-soft);
+    font-size: 13px;
+}
+body.login .dg-call-caller bdi {
+    color: var(--dg-heading);
+    font: 750 16px/1.4 var(--dg-auth-digits, var(--dg-font, system-ui));
+    font-variant-numeric: tabular-nums;
+}
+body.login .dg-call-line:not([hidden]) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px 14px;
+}
+body.login .dg-call-copy {
+    flex: 1 1 10.5rem;
+    min-inline-size: 0;
+    order: 0;
+}
+body.login #login .dg-call-unified a.dg-call-number {
+    order: 1;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 7px;
+    min-block-size: 44px;
+    margin-left: auto;
+    padding: 3px 9px;
+    border-radius: 10px;
+    color: #16191d;
+    font: 750 clamp(18px, 2.5vw, 22px)/1.3 var(--dg-auth-digits, var(--dg-font, system-ui));
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
-    text-decoration: underline;
-    text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
-    text-underline-offset: .16em;
+    text-decoration: none;
     white-space: nowrap;
+    transition: background-color 160ms ease;
 }
-body.login .dg-call-number:hover {
-    text-decoration-color: currentColor;
+body.login #login .dg-call-line:dir(rtl) > a.dg-call-number {
+    margin: 0 auto 0 0;
 }
-body.login [data-call-preview-dial] {
-    display: block;
-    inline-size: fit-content;
+body.login[data-dg-theme="dark"] #login .dg-call-unified a.dg-call-number {
+    color: var(--dg-heading);
+}
+body.login #login .dg-call-unified a.dg-call-number:hover {
+    background: color-mix(in srgb, var(--dg-heading) 8%, transparent);
+}
+body.login #login .dg-call-unified a.dg-call-number:focus-visible {
+    outline: 2px solid var(--dg-accent);
+    outline-offset: 2px;
+}
+body.login .dg-call-unified .dg-call-number > .digitalogic-call-icon {
+    inline-size: 16px;
+    block-size: 16px;
+    flex-basis: 16px;
 }
 body.login .dg-call-unified .digitalogic-call-icon {
     inline-size: 20px;
@@ -3227,7 +3276,13 @@ body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-butt
 body.login .dg-login-preferences .dg-theme-toggle-button { width: auto; box-shadow: none; }
 body.login .dg-login-preferences:has(.dg-language-picker.is-open) { z-index: 80; }
 body.login .dg-login-preferences .dg-language-picker { min-width: 120px; }
-body.login .dg-login-preferences .dg-language-menu { min-inline-size: 160px; }
+body.login .dg-login-preferences .dg-language-menu {
+    box-sizing: border-box;
+    inset-inline: auto 0;
+    inline-size: max-content;
+    min-inline-size: 160px;
+    max-inline-size: calc(100vw - 28px);
+}
 body.login .dg-login-preferences :is(.dg-language-trigger, .dg-theme-toggle-button):hover {
     border-color: var(--dg-border-strong);
     background: var(--dg-accent-soft);

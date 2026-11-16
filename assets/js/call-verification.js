@@ -103,12 +103,15 @@
 		const dial = widget.querySelector('[data-call-dial]');
 		const dialNumber = dial?.querySelector('[data-call-dial-number]') || dial;
 		const previewDial = widget.querySelector('[data-call-preview-dial]');
+		const previewNumber = previewDial?.querySelector('[data-call-dial-number]') || previewDial;
+		const callerSummaries = widget.querySelectorAll('[data-call-caller]');
 		const lanAction = widget.closest('.dg-digits-login-shell')?.querySelector('[data-call-lan-action]');
-		const publicDial = { href: previewDial?.getAttribute('href'), display: previewDial?.textContent };
+		const publicDial = { href: previewDial?.getAttribute('href'), display: previewNumber?.textContent };
 		const entry = widget.querySelector('[data-call-entry]');
 		const countdown = widget.querySelector('[data-call-countdown]');
 		const codeTitle = widget.querySelector('[data-call-code-title]');
 		const preview = widget.querySelector('[data-call-preview]');
+		const previewTitle = preview?.querySelector('[data-call-preview-title]');
 		const confirm = widget.querySelector('[data-call-confirm]');
 		const outbound = widget.querySelector('[data-call-outbound]');
 		const back = widget.querySelector('[data-call-back]');
@@ -145,6 +148,13 @@
 		let delivery = 'incoming';
 		let remember = false;
 
+		function setConfirmLoading(loading) {
+			if (!confirm) { return; }
+			confirm.classList.toggle('is-loading', loading);
+			if (loading) { confirm.setAttribute('aria-busy', 'true'); }
+			else { confirm.removeAttribute('aria-busy'); }
+		}
+
 		function finish(destination) {
 			const navigate = () => destination ? window.location.assign(destination) : window.location.reload();
 			if (isBrandedLogin() && window.DigitalogicAuthSuccess) {
@@ -169,12 +179,12 @@
 				panel.hidden = step === 'entry';
 				widget.closest('.dg-digits-login-shell')?.classList.toggle('dg-call-code-active', step !== 'entry');
 				widget.dataset.callStep = step;
-				const title = step === 'preview' ? preview?.querySelector('[data-call-preview-title]') : codeTitle;
+				const title = step === 'preview' ? previewTitle : codeTitle;
 				if (title?.id) { panel.setAttribute('aria-labelledby', title.id); }
 				if (step === 'code') {
 					codeTitle.focus();
 				} else if (step === 'preview') {
-					preview.querySelector('[data-call-preview-title]').focus();
+					previewTitle?.focus();
 				} else {
 					widget.closest('.dg-digits-login-shell')?.querySelector('form.digloginpage [name="digits_phone"]')?.focus();
 				}
@@ -251,6 +261,7 @@
 			start.disabled = false;
 			if (confirm) { confirm.disabled = false; }
 			if (outbound) { outbound.disabled = false; }
+			setConfirmLoading(false);
 			if (cancel) {
 				cancel.disabled = false;
 			}
@@ -465,6 +476,7 @@
 			start.disabled = true;
 			if (confirm) { confirm.disabled = true; }
 			if (outbound) { outbound.disabled = true; }
+			setConfirmLoading(delivery !== 'outgoing');
 			if (cancel) {
 				cancel.disabled = false;
 			}
@@ -519,6 +531,7 @@
 				if (outboundPrompt) { outboundPrompt.hidden = delivery !== 'outgoing'; }
 				updateCountdown(expectedGeneration);
 				showStep('code');
+				setConfirmLoading(false);
 				busyRegion.removeAttribute('aria-busy');
 				if (back) {
 					back.disabled = false;
@@ -531,6 +544,7 @@
 				start.disabled = false;
 				if (confirm) { confirm.disabled = false; }
 				if (outbound) { outbound.disabled = false; }
+				setConfirmLoading(false);
 				if (back) {
 					back.disabled = false;
 				}
@@ -540,8 +554,11 @@
 		});
 
 		if (unified) {
+			addIcon(previewTitle, 'phone');
 			addIcon(codeTitle, 'keypad');
 			addIcon(cancel, 'back');
+			addIcon(previewDial, 'phone');
+			addIcon(dial, 'phone');
 			// The branded auth component supplies the forward arrow and direction.
 			confirm?.addEventListener('click', () => {
 				start.click();
@@ -567,9 +584,13 @@
 					if (!start.disabled) {
 						phone.value = internal ? '' : value;
 						delivery = internal ? 'extension' : 'incoming';
+						callerSummaries.forEach((summary) => {
+							summary.querySelector('[data-call-caller-number]').textContent = phone.value;
+							summary.hidden = !phone.value;
+						});
 						if (previewDial) {
 							previewDial.href = internal ? `tel:${lanAction.dataset.extension}` : publicDial.href;
-							previewDial.textContent = internal ? lanAction.dataset.extension : publicDial.display;
+							previewNumber.textContent = internal ? lanAction.dataset.extension : publicDial.display;
 							const lanNote = widget.querySelector('[data-call-lan-note]');
 							const publicNote = widget.querySelector('[data-call-public-note]');
 							if (lanNote) { lanNote.hidden = !internal; }
@@ -599,6 +620,7 @@
 			start.disabled = false;
 			if (confirm) { confirm.disabled = false; }
 			if (outbound) { outbound.disabled = false; }
+			setConfirmLoading(false);
 			error.hidden = true;
 			busyRegion.removeAttribute('aria-busy');
 			showStep('entry');
