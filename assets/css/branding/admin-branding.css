@@ -379,9 +379,8 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
 
     body.login .dg-digits-login-shell.dg-has-story-drawer {
         --dg-story-fold: -22deg;
-        --dg-story-toggle-inset: clamp(10px, 1.6vw, 18px);
         --dg-story-toggle-width: 32px;
-        --dg-story-toggle-left: calc(-1 * var(--dg-story-toggle-width) - 10px);
+        --dg-story-toggle-offset: calc(var(--dg-story-toggle-width) / -2);
         position: relative;
         grid-template-columns: var(--dg-story-form-width) minmax(0, 1fr);
         gap: 0;
@@ -433,10 +432,13 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     }
 
     body.login .dg-story-drawer-toggle {
+        --dg-story-grip-opacity: 1;
+        --dg-story-chevron-opacity: 0;
         position: absolute;
-        z-index: 2;
-        top: var(--dg-story-toggle-inset);
-        left: var(--dg-story-toggle-left);
+        z-index: 10; /* Above the Digits form grid item at the shared edge. */
+        top: 50%;
+        left: var(--dg-story-toggle-offset);
+        translate: 0 -50%;
         display: grid;
         place-items: center;
         box-sizing: border-box;
@@ -456,25 +458,37 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
     }
 
     body.login .dg-has-story-drawer[data-drawer-open] > .dg-story-drawer-toggle {
-        top: 50%;
-        right: calc(var(--dg-story-toggle-width) / -2);
+        right: var(--dg-story-toggle-offset);
         left: auto;
-        translate: 0 -50%;
     }
 
     body.login .dg-has-story-drawer[data-drawer-dragging]:not([data-drawer-open]) > .dg-story-drawer-toggle {
-        left: calc(var(--dg-story-toggle-left) + var(--dg-story-reveal));
+        left: calc(var(--dg-story-toggle-offset) + var(--dg-story-reveal));
     }
 
     body.login .dg-story-drawer-toggle:disabled { visibility: hidden; }
 
-    body.login .dg-story-drawer-toggle:hover {
-        background: var(--dg-accent-soft);
-        border-color: var(--dg-accent);
+    @media (hover: hover) {
+        body.login .dg-story-drawer-toggle:hover {
+            --dg-story-grip-opacity: 0;
+            --dg-story-chevron-opacity: 1;
+            background: color-mix(in srgb, var(--dg-panel-strong) 90%, var(--dg-accent));
+            border-color: var(--dg-accent);
+        }
+    }
+
+    body.login .dg-story-drawer-toggle:is(:focus-visible, :active) {
+        --dg-story-grip-opacity: 0;
+        --dg-story-chevron-opacity: 1;
+    }
+
+    body.login .dg-has-story-drawer[data-drawer-dragging] > .dg-story-drawer-toggle {
+        --dg-story-grip-opacity: 1;
+        --dg-story-chevron-opacity: 0;
     }
 
     body.login .dg-story-drawer-toggle:active {
-        background: color-mix(in srgb, var(--dg-accent-soft) 78%, var(--dg-accent));
+        background: color-mix(in srgb, var(--dg-panel-strong) 82%, var(--dg-accent));
     }
 
     body.login .dg-story-drawer-toggle:focus-visible {
@@ -482,13 +496,28 @@ body.login[data-dg-theme="dark"] .dg-login-stories {
         outline-offset: -3px;
     }
 
-    body.login .dg-story-drawer-toggle > .dg-auth-icon {
+    body.login .dg-story-drawer-toggle > span {
+        grid-area: 1 / 1;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+        transition: opacity 140ms ease;
+    }
+
+    body.login .dg-story-drawer-toggle .dg-auth-icon {
         inline-size: 19px;
         block-size: 19px;
         stroke-width: 1.8;
     }
 
-    body.login .dg-story-drawer-toggle[aria-expanded="false"] > .dg-auth-icon { scale: -1 1; }
+    body.login .dg-story-toggle-grip { opacity: var(--dg-story-grip-opacity); }
+    body.login .dg-story-toggle-grip .dg-auth-icon { stroke-width: 2.8; }
+    body.login .dg-story-toggle-chevron { opacity: var(--dg-story-chevron-opacity); rotate: -90deg; }
+    body.login .dg-story-drawer-toggle[aria-expanded="true"] .dg-story-toggle-chevron { rotate: 90deg; }
+
+    @media (prefers-reduced-motion: reduce) {
+        body.login .dg-story-drawer-toggle > span { transition: none; }
+    }
 
     body.login .dg-story-drawer[aria-busy="true"] .dg-story-loading {
         position: absolute;
