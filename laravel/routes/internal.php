@@ -38,6 +38,8 @@ Route::post( '/mobile/checkout', array( MobileCheckoutController::class, 'submit
 Route::post( '/mobile/checkout/quote', array( MobileCheckoutController::class, 'quote' ) );
 Route::get( '/mobile/checkout/operations/{id}', array( MobileCheckoutController::class, 'lookup' ) );
 Route::get( '/mobile/bootstrap', array( MobileCatalogController::class, 'bootstrap' ) );
+Route::get( '/mobile/release/manifest', array( \Digitalogic\Laravel\Http\Controllers\MobileReleaseController::class, 'manifest' ) );
+Route::get( '/mobile/release/apk', array( \Digitalogic\Laravel\Http\Controllers\MobileReleaseController::class, 'apk' ) );
 Route::get( '/mobile/links/resolve', array( MobileCatalogController::class, 'resolveLink' ) );
 Route::get( '/mobile/categories', array( MobileCatalogController::class, 'categories' ) );
 Route::get( '/mobile/products', array( MobileCatalogController::class, 'products' ) );

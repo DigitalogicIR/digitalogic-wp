@@ -32,11 +32,10 @@ final class MobileCatalogController {
 			$request,
 			'bootstrap',
 			array(),
-			function (): array {
-				$release             = \Digitalogic\Laravel\Services\MobileRelease::advertised();
-				$configured_manifest = (string) get_option( 'digitalogic_mobile_update_manifest', '' );
-				$update_manifest     = '' === $configured_manifest ? '' : ( $release['manifest_url'] ?? $configured_manifest );
-				$featured            = $this->productsData(
+			function ( array $publication ): array {
+				$release         = $publication['release'];
+				$update_manifest = $publication['enabled'] ? \Digitalogic\Laravel\Services\MobileRelease::manifestUrl() : '';
+				$featured        = $this->productsData(
 					self::normalizeQuery(
 						array(
 							'per_page'     => 10,
@@ -801,6 +800,15 @@ final class MobileCatalogController {
 	 * @return Response Native adapter result.
 	 */
 	private function cached( Request $request, string $route, array $query, callable $build ): Response {
+		$publication = null;
+		if ( 'bootstrap' === $route ) {
+			try {
+				$publication                   = \Digitalogic\Laravel\Services\MobileRelease::publication();
+				$query['publication_revision'] = $publication['revision'];
+			} catch ( \RuntimeException $error ) {
+				return $this->catalogError( new \WP_Error( 'release_unavailable', '', array( 'status' => 503 ) ) );
+			}
+		}
 		$generation = $this->generation();
 		if ( is_wp_error( $generation ) ) {
 			return $this->catalogError( $generation );
@@ -819,13 +827,13 @@ final class MobileCatalogController {
 				)
 			);
 		}
-		$key     = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_update_manifest', '' ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_issued_release' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), get_option( 'digitalogic_mobile_account_activity', false ), 'account-activity-1', 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
+		$key     = 'catalog-' . md5( wp_json_encode( array( $route, $query, $generation, get_woocommerce_currency(), get_option( 'digitalogic_mobile_merchandising', array() ), get_option( 'digitalogic_mobile_native_auth', false ), get_option( 'digitalogic_mobile_google_android_client', '' ), get_option( 'digitalogic_mobile_websocket', false ), get_option( 'digitalogic_mobile_forms', false ), get_option( 'digitalogic_mobile_cloud_cart', false ), get_option( 'digitalogic_mobile_native_checkout', false ), get_option( 'digitalogic_mobile_registration_schema' ), get_option( 'digitalogic_mobile_woo_favorites' ), get_option( 'digitalogic_mobile_android_sms', array() ), get_option( 'digitalogic_mobile_otp_format_schema' ), get_option( 'digitalogic_mobile_device_reports', false ), get_option( 'digitalogic_mobile_device_report_schema' ), get_option( 'digitalogic_mobile_browser_auth', false ), get_option( 'digitalogic_mobile_webotp_sms', array() ), get_option( 'digitalogic_mobile_account_activity', false ), 'account-activity-1', 'browser-session-1', 'device-report-automatic-1', 'availability-12', 'public-title-1' ) ) );
 		$private = get_current_user_id() > 0;
 		$data    = $private ? null : MobileCatalogCache::get( $key );
 		$hit     = is_array( $data );
 		if ( ! $hit ) {
 			try {
-				$data = $build();
+				$data = null === $publication ? $build() : $build( $publication );
 			} catch ( \Throwable $error ) {
 				return $this->catalogError( new \WP_Error( 'catalog_unavailable', '', array( 'status' => 503 ) ) );
 			}
@@ -843,6 +851,16 @@ final class MobileCatalogController {
 				)
 			);
 		}
+		if ( null !== $publication ) {
+			try {
+				$current_publication = \Digitalogic\Laravel\Services\MobileRelease::publication();
+				if ( ! hash_equals( $publication['revision'], $current_publication['revision'] ) ) {
+					return $this->catalogError( new \WP_Error( 'release_changed_during_read', '', array( 'status' => 503 ) ) );
+				}
+			} catch ( \RuntimeException $error ) {
+				return $this->catalogError( new \WP_Error( 'release_unavailable', '', array( 'status' => 503 ) ) );
+			}
+		}
 		if ( is_wp_error( $data ) ) {
 			return $this->catalogError( $data );
 		}
@@ -855,7 +873,7 @@ final class MobileCatalogController {
 			$data,
 			200,
 			array(
-				'Cache-Control'                 => $private ? 'private, no-store' : 'public, max-age=0, must-revalidate',
+				'Cache-Control'                 => $private || 'bootstrap' === $route ? 'private, no-store' : 'public, max-age=0, must-revalidate',
 				'X-Digitalogic-Cache'           => $hit ? 'HIT' : 'MISS',
 				'X-Digitalogic-Revision'        => $revision,
 				'X-Content-Type-Options'        => 'nosniff',

@@ -31,12 +31,47 @@ final class MobileRelease {
 			|| ( $data['version_code'] ?? null ) !== $version || ( $data['apk_url'] ?? null ) !== $url
 			|| ! is_string( $data['version_name'] ?? null ) || ! preg_match( '/\A[0-9A-Za-z.+_-]{1,64}\z/D', $data['version_name'] )
 			|| ! is_int( $data['min_sdk'] ?? null ) || $data['min_sdk'] < 24 || $data['min_sdk'] > 100
-			|| ! is_int( $data['bytes'] ?? null ) || $data['bytes'] < 1024 || $data['bytes'] > 209715200
+			|| ! is_int( $data['bytes'] ?? null ) || $data['bytes'] < 1024 || $data['bytes'] > 268435456
 			|| ! is_string( $data['sha256'] ?? null ) || ! preg_match( '/\A[a-f0-9]{64}\z/D', $data['sha256'] )
+			|| ( array_key_exists( 'source_commit', $data ) && ( ! is_string( $data['source_commit'] ) || ! preg_match( '/\A[a-f0-9]{40}\z/D', $data['source_commit'] ) ) )
 			|| ( $require_certificate && ( $data['signing_cert_sha256'] ?? null ) !== self::CERTIFICATE ) ) {
 			throw new \UnexpectedValueException( 'invalid_release_manifest' );
 		}
-		return array_intersect_key( $data, array_flip( array( 'package', 'version_code', 'version_name', 'min_sdk', 'apk_url', 'sha256', 'bytes', 'signing_cert_sha256' ) ) );
+		$result = array_intersect_key( $data, array_flip( array( 'package', 'version_code', 'version_name', 'min_sdk', 'apk_url', 'sha256', 'bytes', 'signing_cert_sha256', 'source_commit' ) ) );
+		if ( array_key_exists( 'deltas', $data ) ) {
+			if ( ! is_array( $data['deltas'] ) || ! array_is_list( $data['deltas'] ) || count( $data['deltas'] ) > 8 ) {
+				throw new \UnexpectedValueException( 'invalid_release_deltas' );
+			}
+			$result['deltas'] = array();
+			$seen             = array();
+			foreach ( $data['deltas'] as $delta ) {
+				if ( ! is_array( $delta ) || ( $delta['algorithm'] ?? null ) !== 'digitalogic-copy-v1+gzip'
+					|| ! is_int( $delta['from_version_code'] ?? null ) || $delta['from_version_code'] < 1 || $delta['from_version_code'] >= $version
+					|| ! is_string( $delta['from_sha256'] ?? null ) || ! preg_match( '/\A[a-f0-9]{64}\z/D', $delta['from_sha256'] )
+					|| ! is_string( $delta['sha256'] ?? null ) || ! preg_match( '/\A[a-f0-9]{64}\z/D', $delta['sha256'] )
+					|| ! is_int( $delta['bytes'] ?? null ) || $delta['bytes'] < 1 || $delta['bytes'] >= $data['bytes'] ) {
+					throw new \UnexpectedValueException( 'invalid_release_deltas' );
+				}
+				$name = self::deltaName( $delta, $version );
+				if ( ( $delta['url'] ?? null ) !== home_url( '/apps/digitalogic/' . $name, 'https' ) || isset( $seen[ $name ] ) ) {
+					throw new \UnexpectedValueException( 'invalid_release_deltas' );
+				}
+				$seen[ $name ]      = true;
+				$result['deltas'][] = array_intersect_key( $delta, array_flip( array( 'algorithm', 'from_version_code', 'from_sha256', 'url', 'sha256', 'bytes' ) ) );
+			}
+		}
+		return $result;
+	}
+
+	/**
+	 * Derive the only accepted immutable patch filename from validated metadata.
+	 *
+	 * @param array $delta Validated patch metadata.
+	 * @param int   $version Target build.
+	 * @return string Fixed basename without user path components.
+	 */
+	private static function deltaName( array $delta, int $version ): string {
+		return 'digitalogic-' . $delta['from_version_code'] . '-' . $version . '-' . substr( $delta['from_sha256'], 0, 12 ) . '-arm64.delta.gz';
 	}
 
 	/**
@@ -79,31 +114,65 @@ final class MobileRelease {
 	}
 
 	/**
-	 * Refuse stale activation, including a newer already-published latest manifest.
+	 * Refuse activation below the single authoritative issued build.
 	 *
 	 * @param int $candidate Selected build.
 	 * @param int $issued Currently issued build.
-	 * @param int $latest Current publisher latest build.
 	 * @return bool Monotonic release selection.
 	 */
-	public static function mayIssue( int $candidate, int $issued, int $latest ): bool {
-		return $candidate >= max( $issued, $latest );
+	public static function mayIssue( int $candidate, int $issued ): bool {
+		return $candidate >= $issued;
 	}
 
-	/** Return only the last explicitly issued public release, without filesystem work. */
+	/** Return only the authoritative issued release, without stale option-cache reads. */
 	public static function advertised(): ?array {
-		$state = get_option( self::OPTION, null );
-		if ( ! is_array( $state ) || ! is_int( $state['version_code'] ?? null ) ) {
-			return null;
-		}
 		try {
-			$data = self::validate( $state, $state['version_code'] );
-		} catch ( \UnexpectedValueException $error ) {
+			return self::publication()['release'];
+		} catch ( \RuntimeException $error ) {
 			return null;
 		}
-		$data['manifest_url'] = self::url( $data['version_code'] );
-		$data['issued_at']    = $state['issued_at'] ?? null;
-		return $data;
+	}
+
+	/**
+	 * One database statement captures the issued release and independent offer switch.
+	 *
+	 * Immutable files are staged inputs, never another promotion authority.
+	 *
+	 * @return array Public release, offer state and cache identity.
+	 * @throws \RuntimeException When authoritative state cannot be read.
+	 */
+	public static function publication(): array {
+		global $wpdb;
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT option_name,option_value FROM {$wpdb->options} WHERE option_name IN (%s,%s)", self::OPTION, 'digitalogic_mobile_update_manifest' ), ARRAY_A );
+		if ( ! is_array( $rows ) || $wpdb->last_error ) {
+			throw new \RuntimeException( 'release_storage_unavailable' );
+		}
+		$values = array();
+		foreach ( $rows as $row ) {
+			$values[ $row['option_name'] ] = maybe_unserialize( $row['option_value'] );
+		}
+		$state   = $values[ self::OPTION ] ?? null;
+		$release = null;
+		if ( is_array( $state ) && is_int( $state['version_code'] ?? null ) ) {
+			try {
+				$release                 = self::validate( $state, $state['version_code'] );
+				$release['manifest_url'] = self::url( $release['version_code'] );
+				$release['issued_at']    = is_string( $state['issued_at'] ?? null ) ? $state['issued_at'] : null;
+			} catch ( \UnexpectedValueException $error ) {
+				$release = null;
+			}
+		}
+		$enabled = is_string( $values['digitalogic_mobile_update_manifest'] ?? null ) && '' !== $values['digitalogic_mobile_update_manifest'] && null !== $release;
+		return array(
+			'release'  => $release,
+			'enabled'  => $enabled,
+			'revision' => hash( 'sha256', wp_json_encode( array( $release, $enabled ) ) ),
+		);
+	}
+
+	/** The stable public download entry; only the issued database row selects its build. */
+	public static function manifestUrl(): string {
+		return home_url( '/apps/digitalogic/latest.json', 'https' );
 	}
 
 	/**
@@ -138,6 +207,12 @@ final class MobileRelease {
 		list( $output, $exit_code ) = self::runVerifier( array( $tool, 'dump', 'badging', $apk ) );
 		if ( ! self::packageMatches( $output, $exit_code, $data ) ) {
 			throw new \RuntimeException( 'release_package_mismatch' );
+		}
+		foreach ( $data['deltas'] ?? array() as $delta ) {
+			$patch = self::local( $root, self::deltaName( $delta, $version ) );
+			if ( filesize( $patch ) !== $delta['bytes'] || ! hash_equals( $delta['sha256'], hash_file( 'sha256', $patch ) ) ) {
+				throw new \RuntimeException( 'release_delta_mismatch' );
+			}
 		}
 		$data['manifest_sha256'] = hash( 'sha256', $bytes );
 		return $data;
@@ -248,7 +323,7 @@ final class MobileRelease {
 			return new \WP_Error( 'invalid_release_request', 'Select a published build and a stable request ID.', array( 'status' => 400 ) );
 		}
 		$key = '_digitalogic_release_issue_' . hash( 'sha256', $operation_id );
-		// The publisher takes this same stable inode lock before replacing latest.json.
+		// The publisher stages immutable files under this lock, then releases it before issuance.
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- Read-only access to a fixed local coordination lock, not a client path.
 		$publication_lock = fopen( defined( 'DIGITALOGIC_APP_RELEASE_LOCK' ) ? DIGITALOGIC_APP_RELEASE_LOCK : '/run/lock/digitalogic-app-release.lock', 'r' );
 		if ( ! is_resource( $publication_lock ) ) {
@@ -274,17 +349,15 @@ final class MobileRelease {
 				self::invalidate();
 				return $receipt;
 			}
-			$data        = self::load( $version );
-			$current     = self::read( self::OPTION );
-			$root        = realpath( ABSPATH . 'apps/digitalogic' );
-			$latest_path = self::local( $root, 'latest.json' );
-			if ( filesize( $latest_path ) > 32768 ) {
-				throw new \UnexpectedValueException( 'invalid_release_manifest' );
+			$data    = self::load( $version );
+			$current = self::read( self::OPTION );
+			if ( null !== $current ) {
+				if ( ! is_array( $current ) || ! is_int( $current['version_code'] ?? null ) ) {
+					throw new \UnexpectedValueException( 'invalid_issued_release' );
+				}
+				self::validate( $current, $current['version_code'] );
 			}
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Canonical fixed local latest manifest, never a client URL.
-			$latest = json_decode( file_get_contents( $latest_path ), true, 32, JSON_THROW_ON_ERROR );
-			$latest = self::validate( $latest, $latest['version_code'] ?? 0, false );
-			if ( ! self::mayIssue( $version, (int) ( $current['version_code'] ?? 0 ), $latest['version_code'] ) ) {
+			if ( ! self::mayIssue( $version, (int) ( $current['version_code'] ?? 0 ) ) ) {
 				throw new \UnexpectedValueException( 'release_downgrade_rejected' );
 			}
 			if ( is_array( $current ) && ( $current['version_code'] ?? null ) === $version && ( $current['manifest_sha256'] ?? '' ) !== $data['manifest_sha256'] ) {
@@ -304,7 +377,7 @@ final class MobileRelease {
 			);
 			foreach ( array(
 				self::OPTION                         => $data,
-				'digitalogic_mobile_update_manifest' => $data['manifest_url'],
+				'digitalogic_mobile_update_manifest' => self::manifestUrl(),
 				$key                                 => $receipt,
 			) as $name => $value ) {
 				if ( false === $wpdb->query( $wpdb->prepare( "INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'off') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value),autoload='off'", $name, maybe_serialize( $value ) ) ) ) {
@@ -322,7 +395,7 @@ final class MobileRelease {
 			if ( $transaction ) {
 				$wpdb->query( 'ROLLBACK' );
 			}
-			$known = array( 'release_not_published', 'release_apk_mismatch', 'release_signature_verifier_unavailable', 'release_signature_verification_failed', 'release_package_verifier_unavailable', 'release_package_mismatch', 'release_storage_unavailable', 'release_result_uncertain' );
+			$known = array( 'release_not_published', 'release_apk_mismatch', 'release_delta_mismatch', 'release_signature_verifier_unavailable', 'release_signature_verification_failed', 'release_package_verifier_unavailable', 'release_package_mismatch', 'release_storage_unavailable', 'release_result_uncertain' );
 			$code  = $error instanceof \UnexpectedValueException || in_array( $error->getMessage(), $known, true ) ? $error->getMessage() : 'release_not_issued';
 			if ( 'release_result_uncertain' === $code ) {
 				self::invalidate();

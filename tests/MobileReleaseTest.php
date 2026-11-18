@@ -21,6 +21,7 @@ final class MobileReleaseFixtureDatabase {
 		if(str_contains($q['sql'],'SELECT option_value'))return isset($this->values[$q['args'][0]])?maybe_serialize($this->values[$q['args'][0]]):null;
 		throw new LogicException('Unexpected release fixture query.');
 	}
+	public function get_results($q,$format=ARRAY_A){$rows=[];foreach($q['args'] as $name)if(array_key_exists($name,$this->values))$rows[]=['option_name'=>$name,'option_value'=>maybe_serialize($this->values[$name])];return $rows;}
 	public function query($q){$this->writes[]=$q;throw new LogicException('Replay must never mutate issuance.');}
 }
 
@@ -44,7 +45,7 @@ final class MobileReleaseTest extends TestCase {
 	}
 	public function test_manifest_is_fixed_package_path_signer_and_bounded_types():void {
 		self::assertSame($this->manifest(),Release::validate($this->manifest(),16));
-		foreach([['package'=>'other'],['version_code'=>15],['apk_url'=>'https://attacker.test/app.apk'],['apk_url'=>Release::url(16,'apk').'?override=1'],['bytes'=>'2048'],['bytes'=>209715201],['min_sdk'=>23],['sha256'=>str_repeat('g',64)],['version_name'=>'../16'],['signing_cert_sha256'=>str_repeat('b',64)]]as$change){
+		foreach([['package'=>'other'],['version_code'=>15],['apk_url'=>'https://attacker.test/app.apk'],['apk_url'=>Release::url(16,'apk').'?override=1'],['bytes'=>'2048'],['bytes'=>268435457],['min_sdk'=>23],['sha256'=>str_repeat('g',64)],['version_name'=>'../16'],['signing_cert_sha256'=>str_repeat('b',64)]]as$change){
 			try{Release::validate(array_replace($this->manifest(),$change),16);self::fail('Invalid release accepted.');}catch(UnexpectedValueException $error){self::assertSame('invalid_release_manifest',$error->getMessage());}
 		}
 		$old=$this->manifest();unset($old['signing_cert_sha256']);self::assertSame($old,Release::validate($old,16,false));
@@ -55,9 +56,9 @@ final class MobileReleaseTest extends TestCase {
 		self::assertFalse(Release::signatureMatches($valid,1));self::assertFalse(Release::signatureMatches($valid."\n".$valid,0));
 		self::assertFalse(Release::signatureMatches('Signer #1 certificate SHA-256 digest: '.str_repeat('b',64),0));self::assertFalse(Release::signatureMatches('checksum only',0));
 	}
-	public function test_stale_admin_cannot_issue_below_current_or_publisher_latest():void {
-		self::assertTrue(Release::mayIssue(16,15,16));self::assertTrue(Release::mayIssue(16,16,16));self::assertTrue(Release::mayIssue(17,16,17));
-		self::assertFalse(Release::mayIssue(15,16,14));self::assertFalse(Release::mayIssue(16,15,17));
+	public function test_stale_admin_cannot_issue_below_current_authority():void {
+		self::assertTrue(Release::mayIssue(16,15));self::assertTrue(Release::mayIssue(16,16));self::assertTrue(Release::mayIssue(17,16));
+		self::assertFalse(Release::mayIssue(15,16));self::assertFalse(Release::mayIssue(16,17));
 	}
 	public function test_actual_apk_metadata_must_match_manifest_not_only_certificate():void {
 		$output="package: name='ir.digitalogic.app' versionCode='16' versionName='0.1.0' platformBuildVersionName='15'\nsdkVersion:'24'\n";
@@ -68,7 +69,7 @@ final class MobileReleaseTest extends TestCase {
 	}
 	public function test_only_valid_issued_state_is_projected_publicly():void {
 		self::assertNull(Release::advertised());
-		$GLOBALS['digitalogic_test_options'][Release::OPTION]=$this->manifest()+['issued_at'=>'2026-11-15T00:00:00+00:00','manifest_sha256'=>str_repeat('b',64),'internal_field'=>'never-public'];
+		$GLOBALS['wpdb']->values[Release::OPTION]=$this->manifest()+['issued_at'=>'2026-11-15T00:00:00+00:00','manifest_sha256'=>str_repeat('b',64),'internal_field'=>'never-public'];
 		$r=Release::advertised();self::assertSame(Release::url(16),$r['manifest_url']);self::assertSame(16,$r['version_code']);self::assertArrayNotHasKey('internal_field',$r);self::assertArrayNotHasKey('manifest_sha256',$r);
 	}
 	public function test_same_uuid_recovery_heals_cache_without_downgrading_newer_state():void {

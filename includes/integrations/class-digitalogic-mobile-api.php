@@ -268,6 +268,15 @@ final class Digitalogic_Mobile_API {
 	 * @return string|null Native adapter result.
 	 */
 	public static function route( string $path ): ?string {
+		$release = array(
+			'/apps/digitalogic/latest.json' => '/_digitalogic/mobile/release/manifest',
+			'/apps/digitalogic/latest.apk'  => '/_digitalogic/mobile/release/apk',
+			'/app-api/release/manifest'     => '/_digitalogic/mobile/release/manifest',
+			'/app-api/release/apk'          => '/_digitalogic/mobile/release/apk',
+		);
+		if ( isset( $release[ $path ] ) ) {
+			return $release[ $path ];
+		}
 		if ( preg_match( '~^/app-api/products/([1-9][0-9]{0,9})/models/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/products/' . $matches[1] . '/models';
 		}
@@ -352,13 +361,18 @@ final class Digitalogic_Mobile_API {
 		if ( '' !== $base && str_starts_with( $path, $base . '/' ) ) {
 			$path = substr( $path, strlen( $base ) );
 		}
-		if ( ! str_starts_with( $path, '/app-api/' ) ) {
+		if ( ! str_starts_with( $path, '/app-api/' ) && ! in_array( $path, array( '/apps/digitalogic/latest.json', '/apps/digitalogic/latest.apk' ), true ) ) {
 			return;
 		}
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
 			define( 'DONOTCACHEPAGE', true );
 		}
 		$route = self::route( $path );
+		if ( str_starts_with( (string) $route, '/_digitalogic/mobile/release/' ) ) {
+			// Include method/dispatch errors in the permanent aliases' no-store policy.
+			nocache_headers();
+			header( 'Cache-Control: private, no-store, max-age=0' );
+		}
 		if ( null === $route ) {
 			wp_send_json(
 				array(
@@ -479,21 +493,12 @@ final class Digitalogic_Mobile_API {
 		if ( '' === $url ) {
 			return '';
 		}
-		$valid    = wp_parse_url( $url, PHP_URL_HOST ) === wp_parse_url( home_url(), PHP_URL_HOST );
-		$response = $valid ? wp_safe_remote_get(
-			$url,
-			array(
-				'timeout'             => 8,
-				'redirection'         => 0,
-				'limit_response_size' => 32768,
-			)
-		) : null;
-		$data     = $response && ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ? json_decode( wp_remote_retrieve_body( $response ), true ) : null;
-		if ( ! is_array( $data ) || ! is_numeric( $data['version_code'] ?? null ) || (int) $data['version_code'] < 1 || ! is_string( $data['version_name'] ?? null ) || ! preg_match( '/\A[a-fA-F0-9]{64}\z/D', $data['sha256'] ?? '' ) || wp_parse_url( $data['apk_url'] ?? '', PHP_URL_SCHEME ) !== 'https' || wp_parse_url( $data['apk_url'] ?? '', PHP_URL_HOST ) !== wp_parse_url( home_url(), PHP_URL_HOST ) ) {
+		$release = \Digitalogic\Laravel\Services\MobileRelease::advertised();
+		if ( ! $release || ! in_array( $url, array( \Digitalogic\Laravel\Services\MobileRelease::manifestUrl(), $release['manifest_url'] ), true ) ) {
 			add_settings_error( 'digitalogic_mobile_update_manifest', 'invalid_manifest', 'فایل انتشار معتبر و قابل دسترس نیست. ابتدا انتشار امضاشده را روی سرور قرار دهید.' );
 			return (string) get_option( 'digitalogic_mobile_update_manifest', '' );
 		}
-		return $url;
+		return \Digitalogic\Laravel\Services\MobileRelease::manifestUrl();
 	}
 
 	/**

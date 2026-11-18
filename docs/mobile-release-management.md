@@ -1,6 +1,6 @@
 # Android release issuing and compatibility reports
 
-The publisher owns immutable signed APK/manifest files. This adapter only advertises a previously published build; Android still requires the user's normal installation confirmation.
+The publisher owns immutable signed APK/manifest files. The issued WordPress database row is the sole public release authority; staging a file does not promote it. Android still requires the user's normal installation confirmation.
 
 Initial deployment: **live on2026-11-15** from runtime commit `970df32`; reporting policy was subsequently updated in `7d83674`. Build17 was issued at11:58:45UTC through the owner command. The operational report schema/cleanup are active; no synthetic production report was submitted. Physical-device receipt is a separate app-owner acceptance step.
 
@@ -16,9 +16,37 @@ wp digitalogic-mobile-release issue 17 --request-id=<stable UUID> --allow-root
 
 The service accepts a build number, never an arbitrary URL, APK upload or command. It checks the fixed same-origin manifest, complete APK bytes and SHA-256, the actual permanent signing certificate with `apksigner`, and actual package/version/minimum SDK with `aapt`. Both fixed tools have a 15-second timeout and bounded output.
 
-Publisher and issuer hold the same stable `/run/lock/digitalogic-app-release.lock` inode. Deployment installs a narrow `tmpfiles.d` rule to recreate it as root:root0644 after reboot; it is never removed or replaced during an uptime. A database advisory lock and InnoDB transaction protect the issued option and UUID receipt. Neither a stale administrator action nor the current publisher `latest.json` can downgrade the advertised build. Replaying an old operation returns its historical receipt without replacing a newer issue.
+Publisher and issuer hold the same stable `/run/lock/digitalogic-app-release.lock` inode. Deployment installs a narrow `tmpfiles.d` rule to recreate it as root:root0644 after reboot; it is never removed or replaced during an uptime. The publisher stages and validates immutable artifacts while holding the lock, releases it, then invokes the issuer with its stable operation UUID. A database advisory lock and InnoDB transaction protect the issued option, offer switch and UUID receipt. A stale administrator action cannot downgrade the issued build. Replaying an old operation returns its historical receipt without replacing a newer issue. No static `latest.json` is read as an issuance or advertisement authority.
 
-The existing `digitalogic_mobile_update_manifest` option becomes the fixed immutable manifest URL. Bootstrap adds the validated `release` object and preserves `self_update`/`update_manifest`. Clearing the existing manifest option still disables update offers. No native bearer endpoint can issue releases.
+The existing `digitalogic_mobile_update_manifest` option enables the permanent `https://digitalogic.ir/apps/digitalogic/latest.json` channel. Bootstrap adds the validated `release` object, including its exact immutable `manifest_url`, and preserves `self_update`/`update_manifest`. Clearing the option disables update offers; it does not remove the already issued public download. The settings field can enable the permanent channel or accept the current issued immutable URL for compatibility, but cannot select a different build. No native bearer endpoint can issue releases.
+
+## One permanent release channel
+
+The canonical Apache vhosts send only the exact `/apps/digitalogic/latest.json` and `/apps/digitalogic/latest.apk` paths to the existing WordPress front controller. The plugin reads the original request path and dispatches its existing Laravel gateway. Equivalent public routes are `/app-api/release/manifest` and `/app-api/release/apk`. GET/HEAD are allowed; other methods return405. Query parameters cannot select a build or redirect destination.
+
+- `latest.json` returns the validated issued manifest, including optional `source_commit` and `deltas`.
+- `latest.apk` returns307 to the exact immutable issued APK URL, preserving normal Range download semantics at that destination.
+- Both aliases return `Cache-Control: private, no-store, max-age=0` on success, redirect and unavailable outcomes. They never return304. Missing, corrupt or unreadable authority returns503 instead of a static fallback.
+- Bootstrap reads the issued row and offer switch in one direct database statement, uses their normalized revision in its bounded cache key, and checks that revision again after cache lookup/build. Concurrent changes return503 for retry instead of a mixed release snapshot. Bootstrap is also `private, no-store`; stale WordPress option caches and intermediary snapshots cannot choose the release.
+
+Promotion changes one transaction. Independent publisher acceptance must compare permanent JSON, immutable JSON, bootstrap release/build/hash and permanent APK redirect/full hash. The legacy physical `latest.json` may be quarantined only after the dynamic route is verified; its file contents have no authority after routing is active.
+
+### Optional delta metadata
+
+The full immutable APK URL, checksum, byte count and permanent signature are always required. Optional `deltas` is a sequential list of at most eight entries, each containing only `algorithm`, `from_version_code`, `from_sha256`, `url`, `sha256` and `bytes`. The sole algorithm is `digitalogic-copy-v1+gzip`; the source build must be positive and lower than the target. Hashes are64 lowercase hex characters, patch bytes must be positive and smaller than the full APK, and duplicate patch names are rejected.
+
+Each URL must exactly equal the same-origin `/apps/digitalogic/digitalogic-FROM-TO-BASE12-arm64.delta.gz` path, where BASE12 is the first12 characters of `from_sha256`. No arbitrary path, host, query, symlink or alternate ABI is accepted. Issuance verifies every local patch's complete byte count and hash while holding the publisher lock. It does not execute or apply patches. Clients verify the reconstructed full APK and retain the full-download fallback; old clients can ignore the optional list. `source_commit`, when present, must be a full40-character lowercase hexadecimal commit.
+
+### Guarded channel deployment
+
+The2026-11-18 repair was prompted by observed issued build18 versus stale static latest build16. Source and fixture acceptance are recorded independently from live deployment:
+
+1. Deploy the release service, controller, route table and exact WordPress dispatcher after their expected live hashes match. Keep the old bootstrap controller temporarily advertising its existing immutable issued manifest.
+2. Enable the two exact Apache aliases and verify DB-selected JSON plus307 APK behavior before quarantining the old static file.
+3. Deploy the bootstrap snapshot/cache fence and verify its permanent channel URL and issued manifest agree through apex and PWA.
+4. Only then run the publisher's explicit issue operation. A lost reply is recovered with the identical UUID, never a newly invented retry operation.
+
+Containment preserves immutable artifacts and receipts. Disable new offers if necessary; do not lower the active build or replace signed artifacts in place. A corrected higher build is the normal release repair. Runtime rollback backups must retain the exact predeploy hashes; reverting routes must not expose the obsolete static file as a silent authority.
 
 Release rollback readiness: prior immutable artifacts and UUID receipts remain preserved. The issuer deliberately refuses downgrade; to contain a faulty offer, an authorized operator can clear the existing manifest option, then publish and issue a higher corrected build. This does not silently downgrade or uninstall devices. No rollback was performed during build18 acceptance.
 
