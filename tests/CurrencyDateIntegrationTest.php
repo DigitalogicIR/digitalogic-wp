@@ -73,6 +73,36 @@ final class CurrencyDateIntegrationTest extends TestCase {
         );
     }
 
+    public function test_currency_cards_use_their_independent_canonical_effective_dates(): void {
+        $GLOBALS['digitalogic_test_options']['options_update_date'] = '261004';
+        $GLOBALS['digitalogic_test_options']['digitalogic_pricing_settings'] = array(
+            'usd_effective_date' => '2026-11-17',
+            'cny_effective_date' => '2026-10-04',
+        );
+        $markup = array(
+            'schema' => Digitalogic_Shipping_Method_Service::DEFAULT_MARKUP_SCHEMA,
+            'configured' => true,
+            'type' => 'percentage',
+            'source' => 'global_default',
+            'profit_percent' => '30',
+        );
+        $GLOBALS['digitalogic_test_options'][Digitalogic_Shipping_Method_Service::DEFAULT_MARKUP_OPTION] = $markup + array(
+            'revision' => 'sha256:' . hash('sha256', wp_json_encode($markup, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
+            'updated_at' => '2026-10-04 00:00:00',
+            'updated_by' => 0,
+        );
+        $GLOBALS['digitalogic_test_options'][Digitalogic_Shipping_Method_Service::METHODS_OPTION] = array(
+            'air_express' => array('id' => 'air_express', 'name' => 'Air (Express)', 'enabled' => true, 'currency' => 'CNY', 'price_per_kg' => '120'),
+        );
+
+        $shortcodes = Digitalogic_Currency_Shortcodes::instance();
+        $this->assertStringContainsString('data-digitalogic-currency-date>2026/11/17</div>', $shortcodes->render_dollar_rate());
+        $this->assertStringContainsString('data-digitalogic-currency-date>2026/10/04</div>', $shortcodes->render_yuan_rate());
+        $GLOBALS['digitalogic_test_locale'] = 'fa_IR';
+        $this->assertStringContainsString('data-digitalogic-currency-date>۱۴۰۵/۰۸/۲۶</div>', $shortcodes->render_dollar_rate());
+        $this->assertStringContainsString('data-digitalogic-currency-date>۱۴۰۵/۰۷/۱۲</div>', $shortcodes->render_yuan_rate());
+    }
+
     public function test_currency_cards_keep_live_markup_and_use_site_relative_flag_assets(): void {
         $output = Digitalogic_Currency_Shortcodes::instance()->render_dollar_rate();
 

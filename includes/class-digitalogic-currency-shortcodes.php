@@ -93,7 +93,12 @@ final class Digitalogic_Currency_Shortcodes {
 	 */
 	private function render_card( $currency, $rate, $symbol, $flag ) {
 		$date_format = apply_filters( 'digitalogic_currency_card_date_format', 'Y/m/d', $currency );
-		$date        = $this->options->get_update_date_formatted( $date_format );
+		$data        = Digitalogic_Command_Dispatcher::instance()->get_currency();
+		$date_field  = 'USD' === $currency ? 'usd_effective_date' : 'cny_effective_date';
+		$effective   = (string) ( $data[ $date_field ] ?? '' );
+		$date        = '' === $effective
+			? $this->options->get_update_date_formatted( $date_format )
+			: Digitalogic_Currency_Date_Formatter::instance()->format( $effective, $date_format );
 		$flag_url    = content_url( '/uploads/2025/10/' . $flag );
 		$flag_url    = apply_filters( 'digitalogic_currency_card_flag_url', $flag_url, $currency );
 
