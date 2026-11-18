@@ -174,6 +174,7 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-label-overrides.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-ux.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-topology-guard.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-icons.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-variation-selector.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-auth-realtime.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-oidc-token.php';
@@ -240,6 +241,7 @@ final class Digitalogic {
             require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-product-research-cli.php';
             require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-seo-monitor-status-cli.php';
 			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-order-document-cli.php';
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-chip-reference-cli.php';
 			if ( ! class_exists( 'Digitalogic_Human_Contacts_CLI', false ) ) {
 				require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-human-contacts-cli.php';
 			}

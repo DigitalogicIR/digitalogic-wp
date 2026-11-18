@@ -9,6 +9,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+if ( ! class_exists( 'Digitalogic_Storefront_Icons', false ) ) {
+	require_once __DIR__ . '/class-digitalogic-storefront-icons.php';
+}
+
 /** Keep WooCommerce's select as the only variation selection authority. */
 final class Digitalogic_Variation_Selector {
 	/** Register presentation hooks, including dynamically rendered product forms. */
@@ -101,17 +105,18 @@ final class Digitalogic_Variation_Selector {
 			);
 		}
 		$data = array(
-			'items'       => $items,
-			'label'       => $label,
+			'items'           => $items,
+			'label'           => $label,
 			/* translators: %s: variation attribute label, for example model or RAM. */
-			'placeholder' => sprintf( __( 'انتخاب %s', 'digitalogic' ), $label ),
+			'placeholder'     => sprintf( __( 'انتخاب %s', 'digitalogic' ), $label ),
 			/* translators: %s: variation attribute label, for example model or RAM. */
-			'search'      => sprintf( __( 'جستجوی %s، توضیحات یا کد کالا…', 'digitalogic' ), $label ),
+			'search'          => sprintf( __( 'جستجوی %s، توضیحات یا کد کالا…', 'digitalogic' ), $label ),
 			/* translators: %s: variation attribute label, for example model or RAM. */
-			'empty'       => sprintf( __( '%s با این مشخصات پیدا نشد.', 'digitalogic' ), $label ),
-			'skuLabel'    => __( 'کد کالا', 'digitalogic' ),
-			'unavailable' => __( 'ناموجود', 'digitalogic' ),
-			'imageLabel'  => __( 'تصویر مدل', 'digitalogic' ),
+			'empty'           => sprintf( __( '%s با این مشخصات پیدا نشد.', 'digitalogic' ), $label ),
+			'skuLabel'        => __( 'کد کالا', 'digitalogic' ),
+			'unavailable'     => __( 'ناموجود', 'digitalogic' ),
+			'imageLabel'      => __( 'تصویر مدل', 'digitalogic' ),
+			'barcodeIconPath' => Digitalogic_Storefront_Icons::barcode_path(),
 		);
 		return '<div class="digitalogic-model-selector" data-digitalogic-model-selector="' . esc_attr( wp_json_encode( $data ) ) . '">' . $html . '</div>';
 	}

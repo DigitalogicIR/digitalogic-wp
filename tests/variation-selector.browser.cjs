@@ -19,7 +19,7 @@ const { chromium } = require('playwright');
         const root = document.createElement('div');
         root.className = 'digitalogic-model-selector';
         root.dataset.digitalogicModelSelector = JSON.stringify({
-            label: 'مدل', placeholder: 'انتخاب مدل', search: 'جستجوی مدل، توضیحات یا کد کالا…', empty: 'مدلی با این مشخصات پیدا نشد.', skuLabel: 'کد کالا', unavailable: 'ناموجود', imageLabel: 'تصویر مدل',
+            label: 'مدل', placeholder: 'انتخاب مدل', search: 'جستجوی مدل، توضیحات یا کد کالا…', empty: 'مدلی با این مشخصات پیدا نشد.', skuLabel: 'کد کالا', unavailable: 'ناموجود', imageLabel: 'تصویر مدل', barcodeIconPath: 'M3 5v14M7 5v14M10 5v14M14 5v14M17 5v14M21 5v14',
             items: [
                 { value: 'standard', attributes: {}, title: 'ماژول NRF24L01 استاندارد', description: 'ماژول بی‌سیم با آنتن روی برد\nفرکانس ۲٫۴ گیگاهرتز', productCode: '113008001', priceRaw: '120000', priceText: '120,000 تومان', image: 'https://fixture.test/module.svg', available: true },
                 { value: 'mini', attributes: {}, title: 'ماژول NRF24L01 MINI', description: 'ابعاد کوچک برای پروژه‌های فشرده', productCode: '113008002', priceRaw: '125000', priceText: '125,000 تومان', image: 'https://fixture.test/module.svg', available: true },
@@ -44,6 +44,12 @@ const { chromium } = require('playwright');
 	assert.match(await page.locator('[role=option]').last().textContent(), /ناموجود/);
 	assert.doesNotMatch(await page.locator('[role=option]').last().textContent(), /180,000/);
 	assert.equal(await page.locator('[role=option]').last().locator('.digitalogic-model-image--placeholder').count(), 1);
+	assert.deepEqual(
+		await page.locator('[role=option] .digitalogic-barcode-icon path').evaluateAll(paths => paths.map(path => path.getAttribute('d'))),
+		Array(3).fill('M3 5v14M7 5v14M10 5v14M14 5v14M17 5v14M21 5v14')
+	);
+	assert.equal(await page.locator('[role=option] .digitalogic-barcode-icon').first().getAttribute('aria-hidden'), 'true');
+	assert.equal(await page.locator('[role=option] .digitalogic-barcode-icon').first().getAttribute('focusable'), 'false');
     await search.fill('۱۱۳۰۰۸۰۰۲');
     assert.equal(await page.locator('[role=option]:visible').count(), 1);
     await search.press('Enter');
