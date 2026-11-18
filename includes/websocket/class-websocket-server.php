@@ -49,6 +49,7 @@ class Digitalogic_WebSocket_Server {
 				return;
 			}
             $this->maybe_connect_redis_subscriber();
+			$this->publish_auth_state();
 
             $read = array($server);
             if (is_resource($this->redis_socket)) {
@@ -119,6 +120,9 @@ class Digitalogic_WebSocket_Server {
 			$plugin_dir . 'digitalogic.php',
 			__FILE__,
 			$receiver->getFileName(),
+			$plugin_dir . 'includes/integrations/class-digitalogic-auth-realtime.php',
+			$plugin_dir . 'includes/integrations/class-auth-page.php',
+			$plugin_dir . 'includes/integrations/class-call-verification.php',
 		);
 
 		$release_marker = $plugin_dir . '.digitalogic-release';
@@ -252,6 +256,24 @@ class Digitalogic_WebSocket_Server {
 		$this->clients[ $id ]['principal']              = (string) ( $auth['principal'] ?? '' );
 		$this->clients[ $id ]['source']                 = isset($auth['source']) && is_array($auth['source']) ? $auth['source'] : array();
 		$this->clients[ $id ]['credential_fingerprint'] = (string) ( $auth['credential_fingerprint'] ?? '' );
+		if ( 'public' === $this->clients[ $id ]['principal'] ) {
+			$this->clients[ $id ]['auth_origin'] = (string) ( $headers['origin'] ?? '' );
+			if ( '1' === ( $query['auth'] ?? '' ) && class_exists( Digitalogic_Auth_Realtime::class )
+				&& Digitalogic_Auth_Realtime::origin() === $this->clients[ $id ]['auth_origin'] ) {
+				$cookies = (string) ( $headers['cookie'] ?? '' );
+				if ( preg_match( '/(?:^|;\s*)' . Digitalogic_Auth_Realtime::COOKIE . '=([^;]+)/', $cookies, $auth_cookie ) ) {
+					$this->clients[ $id ]['auth_binding'] = $auth_cookie[1];
+
+					$pattern = '/(?:^|;\s*)' . preg_quote( LOGGED_IN_COOKIE, '/' ) . '=([^;]+)/';
+					if ( preg_match( $pattern, $cookies, $logged_in ) ) {
+						$this->clients[ $id ]['auth_session_cookie'] = rawurldecode( $logged_in[1] );
+					}
+				}
+			}
+			if ( preg_match( '/(?:^|;\s*)digitalogic_call_binding=([A-Za-z0-9_-]{43})(?:;|$)/', (string) ( $headers['cookie'] ?? '' ), $binding ) ) {
+				$this->clients[ $id ]['call_binding'] = $binding[1];
+			}
+		}
 		if ( ! empty( $auth['pricing_commands'] ) ) {
 			$this->clients[ $id ]['headers'] = '';
 			return; // Command sessions have responses only, no event-stream hello/replay.
@@ -405,6 +427,43 @@ class Digitalogic_WebSocket_Server {
 			return;
 		}
 
+		if ( in_array( $command, array( 'digitalogic_auth_watch', 'digitalogic_auth_email_domain', 'digitalogic_auth_completion', 'digitalogic_auth_call_watch', 'digitalogic_auth_call_unwatch' ), true ) ) {
+			$result = $this->handle_auth_command( $id, $command, $data );
+			if ( is_wp_error( $result ) ) {
+				$this->send_error( $id, $request_id, $result->get_error_code(), $result->get_error_message() );
+			} else {
+				$this->send_json(
+					$id,
+					array(
+						'id'      => $request_id,
+						'success' => true,
+						'data'    => $result,
+					)
+				);
+			}
+			return;
+		}
+
+		if ( 'digitalogic_call_status' === $command ) {
+			$client = $this->clients[ $id ];
+			$result = 'public' === $client['principal'] && class_exists( 'Digitalogic_Call_Verification' )
+				? Digitalogic_Call_Verification::instance()->socket_challenge_status( $data, $client['auth_origin'], $client['call_binding'] ?? '' )
+				: new WP_Error( 'digitalogic_call_missing', __( 'Verification not found.', 'digitalogic' ) );
+			if ( is_wp_error( $result ) ) {
+				$this->send_error( $id, $request_id, $result->get_error_code(), $result->get_error_message() );
+				return;
+			}
+			$this->send_json(
+				$id,
+				array(
+					'id'      => $request_id,
+					'success' => true,
+					'data'    => $result->get_data(),
+				)
+			);
+			return;
+		}
+
         wp_set_current_user(max(0, (int) $this->clients[$id]['user_id']));
         if ($command === 'digitalogic_panel_events' && class_exists('Digitalogic_Panel')) {
             if ( ! Digitalogic_Access_Control::can_access_panel() ) {
@@ -529,6 +588,129 @@ class Digitalogic_WebSocket_Server {
 				'data'    => $result,
 			)
 		);
+	}
+
+	/**
+	 * Dispatch only the commands explicitly permitted for a bound login browser.
+	 *
+	 * @param int    $id      Connection ID.
+	 * @param string $command Command name.
+	 * @param array  $data    Command body.
+	 */
+	private function handle_auth_command( int $id, string $command, array $data ) {
+		$client  = $this->clients[ $id ];
+		$binding = class_exists( Digitalogic_Auth_Realtime::class ) ? Digitalogic_Auth_Realtime::binding( $client['auth_binding'] ?? '' ) : '';
+		if ( ! $binding ) {
+			return new WP_Error( 'auth_binding_required', __( 'The login browser could not be verified.', 'digitalogic' ) );
+		}
+
+		$now    = time();
+		$budget = $client['auth_budget'] ?? array( 0, 0 );
+		$count  = $budget[0] === $now ? $budget[1] : 0;
+		if ( $count >= 8 ) {
+			return new WP_Error( 'auth_rate_limit', __( 'Too many login state requests.', 'digitalogic' ) );
+		}
+		$this->clients[ $id ]['auth_budget'] = array( $now, $count + 1 );
+
+		if ( 'digitalogic_auth_email_domain' === $command ) {
+			$value = $data['domain'] ?? '';
+			$valid = Digitalogic_Plugin_Auth_Routes::email_domain_accepts_mail( is_string( $value ) ? strtolower( trim( $value ) ) : '', false );
+			return array( 'valid' => $valid );
+		}
+		if ( 'digitalogic_auth_completion' === $command ) {
+			$attempt = Digitalogic_Auth_Realtime::flow( $data['attempt'] ?? '' );
+			$cookie  = $client['auth_session_cookie'] ?? '';
+			$user    = $attempt && $cookie ? wp_validate_auth_cookie( $cookie, 'logged_in' ) : false;
+			$parsed  = $user ? wp_parse_auth_cookie( $cookie, 'logged_in' ) : false;
+			return $parsed
+				? Digitalogic_Plugin_Auth_Routes::read_otp_completion( $attempt, $parsed['token'], (int) $user )
+				: array( 'pending' => true );
+		}
+		if ( 'digitalogic_auth_call_unwatch' === $command ) {
+			unset( $this->clients[ $id ]['auth_call'] );
+			return array();
+		}
+		if ( 'digitalogic_auth_call_watch' === $command ) {
+			$existing = $client['auth_call'] ?? array();
+			if ( $existing && ( $data['challenge_id'] ?? null ) === $existing['challenge_id']
+				&& hash_equals( $existing['csrf_token'], is_string( $data['csrf_token'] ?? null ) ? $data['csrf_token'] : '' ) ) {
+				return $existing['state'];
+			}
+			$result = Digitalogic_Call_Verification::instance()->socket_challenge_status( $data, $client['auth_origin'], $client['call_binding'] ?? '' );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			$state = $result->get_data();
+
+			$this->clients[ $id ]['auth_call'] = array(
+				'challenge_id' => $data['challenge_id'],
+				'csrf_token'   => $data['csrf_token'],
+				'state'        => $state,
+			);
+			return $state;
+		}
+
+		$key = Digitalogic_Auth_Realtime::key( $binding, Digitalogic_Auth_Realtime::flow( $data['flow'] ?? '' ) );
+		if ( ! $key ) {
+			return new WP_Error( 'auth_flow_required', __( 'The login step could not be matched.', 'digitalogic' ) );
+		}
+		$this->clients[ $id ]['auth_flow'] = $key;
+		Digitalogic_Auth_Realtime::update( $key, $data['step'] ?? null );
+		$state = Digitalogic_Auth_Realtime::snapshot( $key );
+
+		$this->clients[ $id ]['auth_revision'] = $state['revision'];
+		return $state;
+	}
+
+	/** Deliver private changes to the subscribed browser, at a bounded cadence. */
+	private function publish_auth_state(): void {
+		static $next = 0;
+		if ( time() < $next ) {
+			return;
+		}
+		$next = time() + 1;
+		foreach ( $this->clients as $id => $client ) {
+			if ( empty( $client['auth_flow'] ) && empty( $client['auth_call'] ) ) {
+				continue;
+			}
+			if ( ! Digitalogic_Auth_Realtime::binding( $client['auth_binding'] ) ) {
+				unset( $this->clients[ $id ]['auth_flow'], $this->clients[ $id ]['auth_call'] );
+				continue;
+			}
+			if ( ! empty( $client['auth_flow'] ) ) {
+				$state = Digitalogic_Auth_Realtime::snapshot( $client['auth_flow'] );
+				if ( $state['revision'] !== $client['auth_revision'] ) {
+					$this->clients[ $id ]['auth_revision'] = $state['revision'];
+					$this->send_json(
+						$id,
+						array(
+							'event' => 'auth_snapshot',
+							'data'  => $state,
+						)
+					);
+				}
+				if ( $state['authenticated'] && isset( $this->clients[ $id ] ) ) {
+					unset( $this->clients[ $id ]['auth_flow'] );
+				}
+			}
+			if ( empty( $client['auth_call'] ) || ! isset( $this->clients[ $id ] ) ) {
+				continue;
+			}
+			$watch  = $client['auth_call'];
+			$result = Digitalogic_Call_Verification::instance()->socket_challenge_status( $watch, $client['auth_origin'], $client['call_binding'] ?? '' );
+			if ( is_wp_error( $result ) ) {
+				unset( $this->clients[ $id ]['auth_call'] );
+				$this->send_json( $id, array( 'event' => 'auth_call_changed' ) );
+				continue;
+			}
+			$state = $result->get_data();
+			if ( $state['status'] !== $watch['state']['status'] ) {
+				$this->send_json( $id, array( 'event' => 'auth_call_changed' ) );
+			}
+			if ( isset( $this->clients[ $id ] ) ) {
+				$this->clients[ $id ]['auth_call']['state'] = $state;
+			}
+		}
 	}
 
     private function send_error($id, $request_id, $code, $message) {

@@ -696,7 +696,7 @@ class Digitalogic_Panel {
             'orders' => array_map(function($order) {
                 return array(
                     'id' => $order->get_id(),
-                    'status' => wc_get_order_status_name($order->get_status()),
+                    'status' => Digitalogic_Order_Fulfillment::label($order),
                     'total' => $order->get_total(),
                     'currency' => $order->get_currency(),
                     'date_created' => $order->get_date_created() ? $order->get_date_created()->date_i18n('Y-m-d H:i:s') : '',
