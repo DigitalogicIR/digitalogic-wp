@@ -46,5 +46,13 @@ class QueueWorkerTest(unittest.TestCase):
             self.assertTrue(result['result']['currently_indexed'])
             self.assertFalse(result['result']['latest_copy_crawled'])
 
+    def test_unverified_source_blocks_without_publication(self):
+        draft = {'action': 'publish', 'evidence': [{'url': 'https://manufacturer.example/source'}]}
+        with patch.object(worker, 'generate', return_value=draft), patch.object(worker, 'source_evidence', side_effect=ValueError('Manufacturer host needs review')), patch.object(worker, 'wp') as wp:
+            result = worker.content(self.job())
+            self.assertEqual('blocked', result['status'])
+            self.assertEqual('source_verification_required', result['result']['reason'])
+            wp.assert_not_called()
+
 
 if __name__ == '__main__': unittest.main()
