@@ -391,11 +391,11 @@ class Digitalogic_Panel {
     public function ajax_command() {
         check_ajax_referer('digitalogic_nonce', 'nonce');
 
-        $command = isset($_POST['command']) ? Digitalogic_Command_Dispatcher::normalize_command_name(wp_unslash($_POST['command'])) : '';
+        $command = isset($_POST['command']) ? Digitalogic_Command_Dispatcher::normalize_command_name(sanitize_text_field(wp_unslash($_POST['command']))) : '';
         $data = array();
 
         if (isset($_POST['data'])) {
-            $decoded = json_decode(wp_unslash((string) $_POST['data']), true);
+            $decoded = json_decode(wp_unslash((string) $_POST['data']), true); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Decoded JSON is validated by the command handler; the AJAX nonce is checked first.
             $data = is_array($decoded) ? $decoded : array();
         }
 

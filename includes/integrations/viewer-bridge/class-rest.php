@@ -54,11 +54,11 @@ final class Rest {
 		if ( $available ) {
 			return true;
 		}
-		$method = strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) );
+		$method = strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		$host   = strtolower(
-			preg_replace( '/:\d+$/', '', trim( (string) ( $_SERVER['HTTP_HOST'] ?? '' ) ) )
+			preg_replace( '/:\d+$/', '', trim( (string) ( $_SERVER['HTTP_HOST'] ?? '' ) ) ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		);
-		$path   = wp_parse_url( (string) ( $_SERVER['REQUEST_URI'] ?? '' ), PHP_URL_PATH );
+		$path   = wp_parse_url( (string) ( $_SERVER['REQUEST_URI'] ?? '' ), PHP_URL_PATH ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		if (
 			! in_array( $method, array( 'GET', 'POST' ), true )
 			|| ! in_array( $host, array( 'digitalogic.ir', 'www.digitalogic.ir' ), true )

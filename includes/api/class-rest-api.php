@@ -48,7 +48,7 @@ class Digitalogic_REST_API {
 			return false;
 		}
 
-		$request_uri  = (string) $_SERVER['REQUEST_URI'];
+		$request_uri  = (string) $_SERVER['REQUEST_URI']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		$request_path = parse_url( $request_uri, PHP_URL_PATH );
 		if ( ! is_string( $request_path ) ) {
 			return false;
@@ -157,7 +157,7 @@ class Digitalogic_REST_API {
 			return null;
 		}
 
-		$script_path = parse_url( $_SERVER['SCRIPT_NAME'], PHP_URL_PATH );
+		$script_path = parse_url( $_SERVER['SCRIPT_NAME'], PHP_URL_PATH ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		if ( ! is_string( $script_path ) || '' === $script_path ) {
 			return null;
 		}

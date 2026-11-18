@@ -26,7 +26,7 @@ class Digitalogic_WebSocket_Server {
     public function run($host = '127.0.0.1', $port = 8090) {
         $server = @stream_socket_server('tcp://' . $host . ':' . $port, $errno, $errstr);
         if (!$server) {
-            throw new RuntimeException($errstr, $errno);
+            throw new RuntimeException($errstr, $errno); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
         }
 
         stream_set_blocking($server, false);

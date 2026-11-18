@@ -121,7 +121,7 @@ final class Digitalogic_Product_Sync_JSON_Decoder {
             }
             $key = $this->parse_string();
             if (array_key_exists($key, $result)) {
-                throw new RuntimeException('Duplicate JSON object key: ' . $key);
+                throw new RuntimeException('Duplicate JSON object key: ' . $key); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
             }
             $this->skip_whitespace();
             if (!$this->consume_character(':')) {
@@ -181,7 +181,7 @@ final class Digitalogic_Product_Sync_JSON_Decoder {
                 try {
                     return json_decode($token, true, 2, JSON_THROW_ON_ERROR);
                 } catch (JsonException $exception) {
-                    throw new RuntimeException('Invalid JSON string.', 0, $exception);
+                    throw new RuntimeException('Invalid JSON string.', 0, $exception); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
                 }
             }
             if (ord($character) < 0x20) {

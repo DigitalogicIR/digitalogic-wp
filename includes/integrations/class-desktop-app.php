@@ -209,7 +209,7 @@ class Digitalogic_Desktop_App {
     }
 
     public function serve_runtime_files() {
-        $path = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
+        $path = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server value is only parsed or compared and is never stored or output.
         $path = strtok($path, '?');
 
         if ($path === '/digitalogic-service-worker.js') {
@@ -256,13 +256,13 @@ class Digitalogic_Desktop_App {
     }
 
     private function is_panel_request() {
-        $path = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
+        $path = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server value is only parsed or compared and is never stored or output.
 
         return (bool) preg_match('#/panel(?:/|$)#', $path);
     }
 
     private function is_desktop_request() {
-        if (isset($_GET['digitalogic_desktop'])) {
+        if (isset($_GET['digitalogic_desktop'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
             return true;
         }
 
@@ -271,13 +271,13 @@ class Digitalogic_Desktop_App {
         }
 
         $header = isset($_SERVER['HTTP_X_DIGITALOGIC_DESKTOP'])
-            ? (string) wp_unslash($_SERVER['HTTP_X_DIGITALOGIC_DESKTOP'])
+            ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_X_DIGITALOGIC_DESKTOP']))
             : '';
         if ($header !== '') {
             return true;
         }
 
-        $agent = isset($_SERVER['HTTP_USER_AGENT']) ? (string) wp_unslash($_SERVER['HTTP_USER_AGENT']) : '';
+        $agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])) : '';
 
         return stripos($agent, 'DigitalogicDesktop/') !== false || stripos($agent, 'Electron') !== false;
     }

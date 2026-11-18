@@ -68,7 +68,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 	 * @param WP_User|WP_Error|null $user Existing authentication result.
 	 */
 	public static function start_branded_email_login( $user ) {
-		if ( '1' === ( $_POST['dg_branded_email'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- WordPress sign-in POST.
+		if ( '1' === ( $_POST['dg_branded_email'] ?? '' ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.NonceVerification.Missing -- Value is bounded and validated before use; the caller verifies the request.
 			self::$email_attempt_started = microtime( true );
 		}
 		return $user;
@@ -82,7 +82,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 	 * @return WP_User|WP_Error|null
 	 */
 	public static function validate_branded_email_login( $user, string $identity ) {
-		if ( '1' !== ( $_POST['dg_branded_email'] ?? '' ) || ! is_wp_error( $user ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- WordPress sign-in POST.
+		if ( '1' !== ( $_POST['dg_branded_email'] ?? '' ) || ! is_wp_error( $user ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.NonceVerification.Missing -- Value is bounded and validated before use; the caller verifies the request.
 			|| ! in_array( $user->get_error_code(), array( 'invalid_username', 'invalid_email', 'incorrect_password', 'authentication_failed' ), true ) ) {
 			return $user;
 		}
@@ -156,7 +156,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 	/** Carry legacy recovery links into the normal sign-in flow. */
 	public static function redirect_recovery_entry(): void {
-		if ( 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || ! function_exists( 'df_digits_form_login' ) ) {
+		if ( 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || ! function_exists( 'df_digits_form_login' ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 			return;
 		}
 		$redirect = isset( $_GET['redirect_to'] ) ? esc_url_raw( wp_unslash( $_GET['redirect_to'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only navigation.
@@ -179,8 +179,8 @@ final class Digitalogic_Plugin_Auth_Routes {
 	public static function record_recovery_session( string $cookie, int $expire, int $expiration, int $user_id, string $scheme, string $token ): void {
 		// Digits owns OTP validation. This hook runs when it issues the authenticated session.
 		// phpcs:disable WordPress.Security.NonceVerification.Missing -- Digits validates the authentication request.
-		if ( ! wp_doing_ajax() || 'digits_forms_ajax' !== ( $_POST['action'] ?? '' )
-			|| '1' !== ( $_POST['dg_recovery'] ?? '' )
+		if ( ! wp_doing_ajax() || 'digits_forms_ajax' !== ( $_POST['action'] ?? '' ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Value is bounded and validated before use; the caller verifies the request.
+			|| '1' !== ( $_POST['dg_recovery'] ?? '' ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Value is bounded and validated before use; the caller verifies the request.
 			|| ! self::has_submitted_recovery_code()
 			|| ! empty( $_POST['password'] ) || ! empty( $_POST['pwd'] ) ) {
 			return;
@@ -294,8 +294,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 	/** Read the per-tab correlation ID. It cannot authenticate a request. */
 	private static function otp_attempt_id(): string {
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- This only identifies a result within an authenticated session.
-		$value = $_POST['dg_otp_attempt'] ?? '';
+		$value = $_POST['dg_otp_attempt'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- This only identifies a result within an authenticated session.
 		return is_string( $value ) && wp_is_uuid( $value, 4 ) ? $value : '';
 	}
 
@@ -566,7 +565,7 @@ final class Digitalogic_Plugin_Auth_Routes {
             return;
         }
 
-        $redirect_to = isset($_GET['redirect_to']) ? esc_url_raw(wp_unslash($_GET['redirect_to'])) : '';
+        $redirect_to = isset($_GET['redirect_to']) ? esc_url_raw(wp_unslash($_GET['redirect_to'])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
         wp_safe_redirect(self::login_url(wp_login_url($redirect_to), $redirect_to, false), 301);
         exit;
     }
@@ -576,17 +575,17 @@ final class Digitalogic_Plugin_Auth_Routes {
             return;
         }
 
-        $method = strtoupper((string) $_SERVER['REQUEST_METHOD']);
+        $method = strtoupper((string) $_SERVER['REQUEST_METHOD']); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
         if ($method !== 'GET' && $method !== 'HEAD') {
             return;
         }
 
-        $path = (string) wp_parse_url((string) wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_PATH);
+        $path = (string) wp_parse_url((string) wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_PATH); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server value is only parsed or compared and is never stored or output.
         if (basename($path) !== 'wp-login.php') {
             return;
         }
 
-        $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : 'login';
+        $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : 'login'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
         $allowed_actions = ['login', 'register', 'lostpassword', 'rp', 'resetpass'];
 
         if (!in_array($action, $allowed_actions, true)) {
@@ -595,8 +594,8 @@ final class Digitalogic_Plugin_Auth_Routes {
 
         $args = [];
         foreach ( array( 'action', 'redirect_to', 'reauth', 'wp_lang', 'login', 'loggedout', 'interim-login', 'recover' ) as $key ) {
-            if (isset($_GET[$key]) && $_GET[$key] !== '') {
-                $args[$key] = sanitize_text_field(wp_unslash($_GET[$key]));
+            if (isset($_GET[$key]) && $_GET[$key] !== '') { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
+                $args[$key] = sanitize_text_field(wp_unslash($_GET[$key])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
             }
         }
 
@@ -610,8 +609,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 	/** Serve the public worker from the login path so it only controls the login page. */
 	public static function serve_auth_asset_worker(): void {
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route marker with a fixed value.
-		if ( ! self::is_canonical_login_request() || 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || 'worker' !== ( $_GET['dg_auth_assets'] ?? '' ) ) {
+		if ( ! self::is_canonical_login_request() || 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || 'worker' !== ( $_GET['dg_auth_assets'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Read-only route marker with a fixed value.
 			return;
 		}
 
@@ -629,7 +627,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 	}
 
     public static function render_digits_login(): void {
-        if (isset($_SERVER['REQUEST_METHOD']) && strtoupper((string) $_SERVER['REQUEST_METHOD']) !== 'GET') {
+        if (isset($_SERVER['REQUEST_METHOD']) && strtoupper((string) $_SERVER['REQUEST_METHOD']) !== 'GET') { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
             return;
         }
 
@@ -654,7 +652,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 		Digitalogic_Auth_Realtime::bind_browser();
 		login_header( __( 'Log In' ) );
 
-        if (isset($_GET['login']) && sanitize_key(wp_unslash($_GET['login'])) === 'failed') {
+        if (isset($_GET['login']) && sanitize_key(wp_unslash($_GET['login'])) === 'failed') { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
             echo '<div id="login_error" class="notice notice-error"><p>';
             echo esc_html(self::failed_login_message());
             echo '</p></div>';
@@ -701,15 +699,15 @@ final class Digitalogic_Plugin_Auth_Routes {
             return;
         }
 
-        $redirect_to = isset($_REQUEST['redirect_to']) ? esc_url_raw(wp_unslash($_REQUEST['redirect_to'])) : '';
+        $redirect_to = isset($_REQUEST['redirect_to']) ? esc_url_raw(wp_unslash($_REQUEST['redirect_to'])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
         $args = ['login' => 'failed'];
 
         if ($redirect_to !== '') {
             $args['redirect_to'] = $redirect_to;
         }
 
-        if (isset($_REQUEST['wp_lang']) && $_REQUEST['wp_lang'] !== '') {
-            $args['wp_lang'] = sanitize_text_field(wp_unslash($_REQUEST['wp_lang']));
+        if (isset($_REQUEST['wp_lang']) && $_REQUEST['wp_lang'] !== '') { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
+            $args['wp_lang'] = sanitize_text_field(wp_unslash($_REQUEST['wp_lang'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
         }
 
         wp_safe_redirect(add_query_arg($args, self::canonical_login_url()), 302);
@@ -972,7 +970,7 @@ final class Digitalogic_Plugin_Auth_Routes {
             return $required;
         }
 
-        $action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
+        $action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
 
         if (str_starts_with($action, 'digits_')) {
             return false;
@@ -1068,6 +1066,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 
     private static function is_canonical_login_request(): bool {
         $path = isset($_SERVER['REQUEST_URI'])
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Server value is only parsed or compared and is never stored or output.
             ? (string) wp_parse_url((string) wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_PATH)
             : '';
 

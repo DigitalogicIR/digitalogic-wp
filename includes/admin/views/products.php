@@ -1,5 +1,5 @@
 <div class="wrap digitalogic-products">
-	<h1><?php _e( 'Product Management', 'digitalogic' ); ?></h1>
+	<h1><?php esc_html_e( 'Product Management', 'digitalogic' ); ?></h1>
 	
 	<?php if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) : ?>
 	<div class="notice notice-info" id="digitalogic-debug-info">
@@ -27,23 +27,23 @@
 	<?php endif; ?>
 	
 	<div class="digitalogic-toolbar">
-		<input type="text" id="product-search" placeholder="<?php _e( 'Search products...', 'digitalogic' ); ?>">
+		<input type="text" id="product-search" placeholder="<?php esc_attr_e( 'Search products...', 'digitalogic' ); ?>">
 	</div>
 	
 	<table id="products-table" class="display" style="width:100%">
 		<thead>
 			<tr>
 				<th><input type="checkbox" id="select-all"></th>
-				<th><?php _e( 'ID', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Image', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Name', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'ID', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Image', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Name', 'digitalogic' ); ?></th>
 				<th><?php echo esc_html( is_rtl() ? 'کد کالا' : __( 'Product Code', 'digitalogic' ) ); ?></th>
 				<th><?php echo esc_html__( 'SKU', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Regular Price', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Sale Price', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Stock', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Weight', 'digitalogic' ); ?></th>
-				<th><?php _e( 'Actions', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Regular Price', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Sale Price', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Stock', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Weight', 'digitalogic' ); ?></th>
+				<th><?php esc_html_e( 'Actions', 'digitalogic' ); ?></th>
 			</tr>
 		</thead>
 		<tbody>
@@ -53,7 +53,7 @@
 	
 	<noscript>
 		<div class="notice notice-error">
-			<p><?php _e( 'JavaScript is required for this page to function properly. Please enable JavaScript in your browser.', 'digitalogic' ); ?></p>
+			<p><?php esc_html_e( 'JavaScript is required for this page to function properly. Please enable JavaScript in your browser.', 'digitalogic' ); ?></p>
 		</div>
 	</noscript>
 </div>

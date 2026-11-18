@@ -390,7 +390,7 @@ final class Digitalogic_Storefront_Product_Table {
 	 * @return array
 	 */
 	private function request_filters( $source = null ) {
-		$source        = is_array( $source ) ? $source : $_GET;
+		$source        = is_array( $source ) ? $source : $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only request value; it changes no state and is sanitized before use.
 		$allowed_sorts = array( 'recommended', 'popular', 'newest', 'name', 'price-low', 'price-high' );
 		$sort          = isset( $source['dgl_sort'] ) && is_scalar( $source['dgl_sort'] ) ? sanitize_key( wp_unslash( $source['dgl_sort'] ) ) : 'recommended';
 		$search        = isset( $source['dgl_search'] ) && is_scalar( $source['dgl_search'] ) ? sanitize_text_field( wp_unslash( $source['dgl_search'] ) ) : '';

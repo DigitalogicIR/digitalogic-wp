@@ -596,7 +596,7 @@ final class Digitalogic {
     public function woocommerce_missing_notice() {
         ?>
         <div class="error">
-            <p><?php _e('Digitalogic requires WooCommerce to be installed and activated.', 'digitalogic'); ?></p>
+            <p><?php esc_html_e('Digitalogic requires WooCommerce to be installed and activated.', 'digitalogic'); ?></p>
         </div>
         <?php
     }

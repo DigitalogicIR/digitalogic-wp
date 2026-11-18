@@ -76,8 +76,8 @@ class Digitalogic_Comment_Guard {
     }
 
     private function client_ip() {
-        $remote = isset($_SERVER['REMOTE_ADDR']) ? trim((string) $_SERVER['REMOTE_ADDR']) : '';
-        $cf_ip = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? trim((string) $_SERVER['HTTP_CF_CONNECTING_IP']) : '';
+        $remote = isset($_SERVER['REMOTE_ADDR']) ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['REMOTE_ADDR']))) : '';
+        $cf_ip = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? trim(sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_CF_CONNECTING_IP']))) : '';
 
         if ($cf_ip && filter_var($cf_ip, FILTER_VALIDATE_IP) && $this->is_cloudflare_ip($remote)) {
             return $cf_ip;
