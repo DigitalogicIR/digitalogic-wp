@@ -41,6 +41,10 @@ final class StorefrontPageCacheTest extends TestCase {
 		$this->assertContains( 'https://example.test/product_cat/2/', $urls );
 		$this->assertContains( 'https://example.test/custom/', $urls );
 		$this->assertNotContains( 'https://example.test/', $urls );
+		$this->assertNotContains( 'https://example.test/?post_type=product&p=14701', $urls );
+		$this->assertNotContains( 'https://example.test?post_type=product&p=14701#preview', $urls );
+		$this->assertNotContains( 'https://example.test/#fragment', $urls );
+		$this->assertNotContains( 'https://example.test/%2F?draft=1', $urls );
 		$this->assertNotContains( 'https://example.test/product_visibility/99/', $urls );
 	}
 

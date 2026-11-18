@@ -81,15 +81,28 @@ final class Digitalogic_Storefront_Page_Cache {
 				$urls[] = wc_get_page_permalink( 'shop' );
 			}
 			$urls[] = home_url( '/catalog/' );
-			// A bare homepage passed to clean_files recursively removes the whole domain.
+			// Rocket resolves the directory from path alone, ignoring query/fragment.
+			// Draft/plain permalinks must never turn into recursive homepage purges.
 			// Its dedicated API removes only homepage files, parameters and pagination.
-			$home = untrailingslashit( home_url( '/' ) );
+			$home = wp_parse_url( home_url( '/' ) );
 			$urls = array_values(
 				array_unique(
 					array_filter(
 						$urls,
 						static function ( $url ) use ( $home ) {
-							return is_string( $url ) && '' !== $url && untrailingslashit( $url ) !== $home;
+							if ( ! is_string( $url ) || '' === $url ) {
+								return false;
+							}
+							$parsed = wp_parse_url( $url );
+							if ( ! is_array( $parsed ) || empty( $parsed['host'] ) ) {
+								return false;
+							}
+							$path = rtrim( rawurldecode( $parsed['path'] ?? '/' ), '/' );
+							if ( '' === $path ) {
+								return false;
+							}
+							return strtolower( $parsed['host'] ) !== strtolower( $home['host'] ?? '' )
+								|| $path !== rtrim( rawurldecode( $home['path'] ?? '/' ), '/' );
 						}
 					)
 				)

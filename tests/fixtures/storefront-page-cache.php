@@ -42,7 +42,9 @@ function get_post( $id ) {
 	);
 }
 function apply_filters( $hook, $urls, $post ) {
-	return array_merge( $urls, array( 'https://example.test/custom/', 'https://example.test/' ) ); }
+	return array_merge( $urls, array( 'https://example.test/custom/', 'https://example.test/', 'https://example.test/?post_type=product&p=14701', 'https://example.test?post_type=product&p=14701#preview', 'https://example.test/#fragment', 'https://example.test/%2F?draft=1' ) ); }
+function wp_parse_url( $url ) {
+	return parse_url( $url ); } // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url -- Isolated WordPress API double.
 function get_object_taxonomies( $type ) {
 	return array( 'product_cat', 'product_visibility' ); }
 function get_taxonomy( $taxonomy ) {
