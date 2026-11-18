@@ -47,6 +47,7 @@ phpunit.xml
 __pycache__/
 
 # Temporary files
+/ops/product-content/__pycache__/
 *.tmp
 *.bak
 *.bak*

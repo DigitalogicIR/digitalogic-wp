@@ -3,6 +3,11 @@
 
 	const config = window.DigitalogicCallVerification || {};
 	const messages = config.messages || {};
+	const tehranTimeZone = ['Asia/Tehran', 'Iran'].includes(Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+	function displayCallNumber(number, country) {
+		return country === 'IR' || tehranTimeZone ? number.replace(/^\+98\s*(?=[1-9])/, '0') : number;
+	}
 
 	async function request(url, options = {}) {
 		const response = await window.fetch(url, {
@@ -102,11 +107,12 @@
 		const error = widget.querySelector('[data-call-error]');
 		const dial = widget.querySelector('[data-call-dial]');
 		const dialNumber = dial?.querySelector('[data-call-dial-number]') || dial;
-		const previewDial = widget.querySelector('[data-call-preview-dial]');
-		const previewNumber = previewDial?.querySelector('[data-call-dial-number]') || previewDial;
 		const callerSummary = widget.querySelector('[data-call-caller]');
+		const callerNumber = callerSummary?.querySelector('[data-call-caller-number]');
 		const lanAction = widget.closest('.dg-digits-login-shell')?.querySelector('[data-call-lan-action]');
-		const publicDial = { href: previewDial?.getAttribute('href'), display: previewNumber?.textContent };
+		const publicDial = { href: dial?.getAttribute('href'), display: dialNumber?.textContent };
+		const lanNote = widget.querySelector('[data-call-lan-note]');
+		const publicNote = widget.querySelector('[data-call-public-note]');
 		const entry = widget.querySelector('[data-call-entry]');
 		const countdown = widget.querySelector('[data-call-countdown]');
 		const codeTitle = widget.querySelector('[data-call-code-title]');
@@ -202,8 +208,16 @@
 			}
 		}
 
+		function renderFeedback(node, message, tone) {
+			if (isBrandedLogin() && window.DigitalogicAuthFeedback) {
+				window.DigitalogicAuthFeedback(node, message, tone);
+			} else {
+				node.textContent = message;
+			}
+		}
+
 		function showError(value) {
-			error.textContent = value || messages.error || 'Verification failed.';
+			renderFeedback(error, value || messages.error || 'Verification failed.', 'error');
 			error.hidden = false;
 			if (unified && (!preview || preview.hidden)) {
 				widget.dispatchEvent(new CustomEvent('digitalogic:call-error', { bubbles: true, detail: error.textContent }));
@@ -211,6 +225,7 @@
 		}
 
 		function stopPolling() {
+			if (useRealtime) { window.DigitalogicAuthRealtime?.stopCall?.(); }
 			stopped = true;
 			window.clearTimeout(pollTimer);
 			window.clearTimeout(countdownTimer);
@@ -266,7 +281,6 @@
 				cancel.disabled = false;
 			}
 			busyRegion.removeAttribute('aria-busy');
-			status.parentElement?.removeAttribute('data-verifying');
 			showStep(preview ? 'preview' : 'entry');
 			showError(message);
 		}
@@ -277,6 +291,8 @@
 				const redirect = new URLSearchParams(window.location.search).get('redirect_to');
 				if (redirect) { body.redirect_to = redirect; }
 				if (unified && remember) { body.rememberme = true; }
+				const flow = window.DigitalogicAuthRealtime?.flowId?.();
+				if (flow) { body.dg_auth_flow = flow; }
 			}
 			const data = await request(`${config.challengeUrl}/${encodeURIComponent(expectedChallengeId)}/consume`, {
 				method: 'POST',
@@ -309,12 +325,11 @@
 			try {
 				pollController = new AbortController();
 				const realtime = useRealtime && window.DigitalogicAuthRealtime;
-				let data = realtime ? await realtime.callStatus(expectedChallengeId, expectedCsrfToken) : null;
+				let data = realtime ? await realtime.callStatus(expectedChallengeId, expectedCsrfToken, pollController.signal) : null;
 				if (stopped || consuming || expectedGeneration !== attemptGeneration || expectedChallengeId !== challengeId) {
 					return;
 				}
 				if (!data) {
-					useRealtime = false;
 					data = await request(`${config.challengeUrl}/${encodeURIComponent(expectedChallengeId)}`, {
 						method: 'GET',
 						headers: headers(expectedCsrfToken),
@@ -332,15 +347,17 @@
 				}
 				if (data.status === 'verified') {
 					consuming = true;
+					if (useRealtime) { realtime?.stopCall?.(); }
 					window.clearTimeout(pollTimer);
 					window.clearTimeout(countdownTimer);
+					if (countdown) { countdown.hidden = true; }
 					if (cancel) {
 						cancel.disabled = true;
 					}
-					status.textContent = isBrandedLogin()
+					const finishing = isBrandedLogin()
 						? (messages.finishing || 'Code confirmed. Finishing sign-in…')
 						: (messages.verified || 'Phone number verified. Finishing…');
-					status.parentElement?.setAttribute('data-verifying', '');
+					renderFeedback(status, finishing, 'progress');
 					try {
 						await consume(expectedGeneration, expectedChallengeId, expectedCsrfToken);
 					} catch (consumeError) {
@@ -392,6 +409,10 @@
 			}
 			schedulePoll(expectedGeneration);
 		}
+
+		window.addEventListener('digitalogic:auth-call-changed', () => {
+			if (useRealtime && !pollController) { schedulePoll(attemptGeneration, 0); }
+		});
 
 		document.addEventListener('visibilitychange', () => {
 			if (stopped || consuming || !challengeId || !widget.isConnected) {
@@ -515,19 +536,22 @@
 				if (dialNumber && data.dial) {
 					const display = String(data.dial.display || '');
 					const tel = String(data.dial.tel || '');
-					if (display) { dialNumber.textContent = display; }
-				if (dial.matches('a') && /^\+?[0-9]+$/.test(tel)) {
+					if (display) { dialNumber.textContent = displayCallNumber(display, data.request_country); }
+					if (dial.matches('a') && /^\+?[0-9]+$/.test(tel)) {
 						dial.setAttribute('href', `tel:${tel}`);
 					}
 				}
+				if (callerNumber) { callerNumber.textContent = displayCallNumber(phone.value, data.request_country); }
 				expiresAt = Date.now() + (Math.max(0, Number(data.expires_in) || 0) * 1000);
 				if (countdown) {
-					status.textContent = unified && document.documentElement.lang.startsWith('fa')
+					countdown.hidden = false;
+					const waiting = unified && document.documentElement.lang.startsWith('fa')
 						? 'در انتظار تماس شما…'
 						: (messages.waiting || 'Waiting for your call…');
+					renderFeedback(status, waiting, 'progress');
 				}
 				if (delivery === 'outgoing') {
-					status.textContent = messages.outboundWaiting || 'Waiting for the PBX to call your phone…';
+					renderFeedback(status, messages.outboundWaiting || 'Waiting for the PBX to call your phone…', 'progress');
 				}
 				const prompt = widget.querySelector('[data-call-code-prompt]');
 				if (prompt) { prompt.hidden = delivery === 'outgoing'; }
@@ -561,7 +585,6 @@
 			addIcon(previewTitle, 'phone');
 			addIcon(codeTitle, 'keypad');
 			addIcon(cancel, 'back');
-			addIcon(previewDial, 'phone');
 			addIcon(dial, 'phone');
 			addIcon(callerSummary?.querySelector('.dg-auth-identity-mark'), 'phone');
 			// The branded auth component supplies the forward arrow and direction.
@@ -590,17 +613,15 @@
 						phone.value = internal ? '' : value;
 						delivery = internal ? 'extension' : 'incoming';
 						if (callerSummary) {
-							callerSummary.querySelector('[data-call-caller-number]').textContent = phone.value;
+							if (callerNumber) { callerNumber.textContent = displayCallNumber(phone.value); }
 							callerSummary.hidden = !phone.value;
 						}
-						if (previewDial) {
-							previewDial.href = internal ? `tel:${lanAction.dataset.extension}` : publicDial.href;
-							previewNumber.textContent = internal ? lanAction.dataset.extension : publicDial.display;
-							const lanNote = widget.querySelector('[data-call-lan-note]');
-							const publicNote = widget.querySelector('[data-call-public-note]');
-							if (lanNote) { lanNote.hidden = !internal; }
-							if (publicNote) { publicNote.hidden = Boolean(internal); }
+						if (dial && dialNumber) {
+							dial.href = internal ? 'tel:' + lanAction.dataset.extension : publicDial.href;
+							dialNumber.textContent = internal ? lanAction.dataset.extension : publicDial.display;
 						}
+						if (lanNote) { lanNote.hidden = !internal; }
+						if (publicNote) { publicNote.hidden = Boolean(internal); }
 						remember = Boolean(widget.closest('.dg-digits-login-shell').querySelector('form.digloginpage input[name="rememberme"]:checked'));
 						error.hidden = true;
 						if (outbound) { outbound.hidden = !/^\+98[1-9]\d{9}$/.test(value); }

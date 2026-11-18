@@ -50,7 +50,7 @@ test('the call alternative is disclosure-safe and makes no request until start',
 });
 
 test('server-returned dial number and code populate shortcut instructions without an invented IVR digit', () => {
-	assert.match(source, /dialNumber\.textContent = display/);
+	assert.match(source, /dialNumber\.textContent = displayCallNumber\(display, data\.request_country\)/);
 	assert.match(source, /dial\.setAttribute\('href', `tel:\$\{tel\}`\)/);
 	assert.match(source, /code\.textContent = data\.code/);
 	assert.match(source, /body: JSON\.stringify\([^\n]+\{ phone: phone\.value, purpose \}\)/);
@@ -103,7 +103,7 @@ test('cancel is disabled once verified proof consumption becomes irreversible', 
 	assert.ok(disableCancel > verifiedBranch);
 	assert.ok(consumeCall > disableCancel);
 	assert.ok(retryReset > -1);
-	assert.match(source.slice(disableCancel, consumeCall), /status\.textContent = isBrandedLogin\(\)/);
+	assert.match(source.slice(verifiedBranch, consumeCall), /countdown\.hidden = true/);
 });
 
 test('a lost consume response recovers the server-confirmed return for the same challenge', () => {

@@ -59,6 +59,7 @@ final class Digitalogic_Plugin_Admin_Branding {
         $storage_key = wp_json_encode(self::THEME_STORAGE_KEY);
         $initial_theme = wp_json_encode(self::current_user_theme());
         $admin_color = wp_json_encode(self::current_user_admin_color());
+        $is_login = wp_json_encode(current_filter() === 'login_head');
 
         echo <<<HTML
 <script>
@@ -67,6 +68,19 @@ final class Digitalogic_Plugin_Admin_Branding {
     var root = document.documentElement;
     var theme = {$initial_theme};
     var adminColor = {$admin_color};
+
+    if ({$is_login}) {
+        var mode = 'auto';
+        try {
+            var preference = window.localStorage.getItem(key + ':login');
+            if (preference === 'light' || preference === 'dark') { mode = preference; }
+        } catch (error) {}
+        root.setAttribute('data-dg-theme-mode', mode);
+        root.setAttribute('data-dg-theme', mode === 'auto'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : mode);
+        return;
+    }
 
     if (adminColor !== 'digitalogic-light' && adminColor !== 'digitalogic-dark') {
         try {
@@ -124,37 +138,43 @@ HTML;
 		$configured = get_option( 'digitalogic_login_story_cards', array() );
 		$cards      = array(
 			array(
-				'id'          => 'components',
-				'image'       => $images . 'components.webp',
-				'image_light' => $images . 'components-aluminum-light.webp',
-				'tab'         => $fa ? 'قطعات و ماژول‌ها' : 'Components',
-				'title'       => $fa ? 'از ایده تا اولین مدار' : 'From idea to first circuit',
-				'description' => $fa ? 'بردهای توسعه، حسگرها و نمایشگرها را پیدا کنید و مشخصاتشان را برای پروژهٔ بعدی مقایسه کنید.' : 'Find development boards, sensors, and displays. Compare specifications for your next project.',
-				'notes'       => $fa ? array( 'بردهای توسعه', 'حسگر و نمایشگر' ) : array( 'Development boards', 'Sensors and displays' ),
-				'link'        => home_url( '/catalog/' ),
-				'action'      => $fa ? 'دیدن محصولات' : 'Browse components',
+				'id'              => 'components',
+				'image'           => $images . 'components.webp',
+				'image_light'     => $images . 'components-aluminum-light.webp',
+				'thumbnail_light' => $images . 'components-aluminum-light-thumb.webp',
+				'thumbnail_dark'  => $images . 'components-thumb.webp',
+				'tab'             => $fa ? 'قطعات و ماژول‌ها' : 'Components',
+				'title'           => $fa ? 'از ایده تا اولین مدار' : 'From idea to first circuit',
+				'description'     => $fa ? 'بردهای توسعه، حسگرها و نمایشگرها را پیدا کنید و مشخصاتشان را برای پروژهٔ بعدی مقایسه کنید.' : 'Find development boards, sensors, and displays. Compare specifications for your next project.',
+				'notes'           => $fa ? array( 'بردهای توسعه', 'حسگر و نمایشگر' ) : array( 'Development boards', 'Sensors and displays' ),
+				'link'            => home_url( '/catalog/' ),
+				'action'          => $fa ? 'دیدن محصولات' : 'Browse components',
 			),
 			array(
-				'id'          => 'pcb',
-				'image'       => $images . 'pcb-branded.webp',
-				'image_light' => $images . 'pcb-branded-light.webp',
-				'tab'         => $fa ? 'ساخت PCB' : 'PCB fabrication',
-				'title'       => $fa ? 'طرح شما، روی برد' : 'Turn your layout into a board',
-				'description' => $fa ? 'فایل Gerber را برای ساخت برد دو یا چهار لایه بفرستید و هزینه و زمان تحویل را بررسی کنید.' : 'Send your Gerber files for two or four layer fabrication and check the cost and lead time.',
-				'notes'       => $fa ? array( 'برد دو و چهار لایه', 'فایل Gerber' ) : array( 'Two and four layers', 'Gerber files' ),
-				'link'        => home_url( '/سفارش-چاپ-برد-pcb/' ),
-				'action'      => $fa ? 'سفارش ساخت برد' : 'Explore PCB fabrication',
+				'id'              => 'pcb',
+				'image'           => $images . 'pcb-branded.webp',
+				'image_light'     => $images . 'pcb-branded-light.webp',
+				'thumbnail_light' => $images . 'pcb-branded-light-thumb.webp',
+				'thumbnail_dark'  => $images . 'pcb-branded-thumb.webp',
+				'tab'             => $fa ? 'ساخت PCB' : 'PCB fabrication',
+				'title'           => $fa ? 'طرح شما، روی برد' : 'Turn your layout into a board',
+				'description'     => $fa ? 'فایل Gerber را برای ساخت برد دو یا چهار لایه بفرستید و هزینه و زمان تحویل را بررسی کنید.' : 'Send your Gerber files for two or four layer fabrication and check the cost and lead time.',
+				'notes'           => $fa ? array( 'برد دو و چهار لایه', 'فایل Gerber' ) : array( 'Two and four layers', 'Gerber files' ),
+				'link'            => home_url( '/سفارش-چاپ-برد-pcb/' ),
+				'action'          => $fa ? 'سفارش ساخت برد' : 'Explore PCB fabrication',
 			),
 			array(
-				'id'          => 'sourcing',
-				'image'       => $images . 'sourcing-labelled.webp',
-				'image_light' => $images . 'sourcing-labelled-light.webp',
-				'tab'         => $fa ? 'تأمین قطعه' : 'Sourcing',
-				'title'       => $fa ? 'قطعهٔ خاص، سفارش مستقیم' : 'Source hard-to-find parts',
-				'description' => $fa ? 'برای قطعات کمیاب یا سفارش تعداد بالا، شمارهٔ قطعه یا لینک محصول را برای تأمین مستقیم از چین بفرستید.' : 'Share a part number or product link for direct sourcing from China, including scarce parts and volume orders.',
-				'notes'       => $fa ? array( 'شمارهٔ قطعه', 'سفارش تعداد بالا' ) : array( 'Part number', 'Volume orders' ),
-				'link'        => home_url( '/import-of-electronic-products/' ),
-				'action'      => $fa ? 'ثبت درخواست تأمین' : 'Request sourcing',
+				'id'              => 'sourcing',
+				'image'           => $images . 'sourcing-labelled.webp',
+				'image_light'     => $images . 'sourcing-labelled-light.webp',
+				'thumbnail_light' => $images . 'sourcing-labelled-light-thumb.webp',
+				'thumbnail_dark'  => $images . 'sourcing-labelled-thumb.webp',
+				'tab'             => $fa ? 'تأمین قطعه' : 'Sourcing',
+				'title'           => $fa ? 'قطعهٔ خاص، سفارش مستقیم' : 'Source hard-to-find parts',
+				'description'     => $fa ? 'برای قطعات کمیاب یا سفارش تعداد بالا، شمارهٔ قطعه یا لینک محصول را برای تأمین مستقیم از چین بفرستید.' : 'Share a part number or product link for direct sourcing from China, including scarce parts and volume orders.',
+				'notes'           => $fa ? array( 'شمارهٔ قطعه', 'سفارش تعداد بالا' ) : array( 'Part number', 'Volume orders' ),
+				'link'            => home_url( '/import-of-electronic-products/' ),
+				'action'          => $fa ? 'ثبت درخواست تأمین' : 'Request sourcing',
 			),
 		);
 		if ( is_array( $configured[ $locale ] ?? null ) ) {
@@ -203,7 +223,7 @@ HTML;
 		}
 
 		$persian = str_starts_with( strtolower( determine_locale() ), 'fa' );
-		echo '<details><summary>' . esc_html( $persian ? 'مدیریت کلیدهای عبور' : __( 'Manage passkeys', 'digitalogic' ) ) . '</summary>';
+		echo '<details><summary>' . esc_html( $persian ? 'مدیریت Passkeyها' : __( 'Manage passkeys', 'digitalogic' ) ) . '</summary>';
 		echo $settings; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Markup from the installed Digits account shortcode.
 		echo '</details>';
 	}
@@ -220,14 +240,14 @@ HTML;
 			return $translation;
 		}
 		$labels = array(
-			'Passkey'                       => 'کلید عبور',
-			'Passkeys'                      => 'کلیدهای عبور',
-			'Passwordless login'            => 'ورود با کلید عبور',
-			'Sign in with a passkey'        => 'ورود با کلید عبور',
-			'Set up a passkey'              => 'تنظیم کلید عبور',
-			'Create a passkey'              => 'ایجاد کلید عبور',
-			'Add a passkey'                 => 'افزودن کلید عبور',
-			'Passkey authentication failed' => 'ورود با کلید عبور انجام نشد.',
+			'Passkey'                       => 'Passkey',
+			'Passkeys'                      => 'Passkeyها',
+			'Passwordless login'            => 'ورود با Passkey',
+			'Sign in with a passkey'        => 'ورود با Passkey',
+			'Set up a passkey'              => 'تنظیم Passkey',
+			'Create a passkey'              => 'ایجاد Passkey',
+			'Add a passkey'                 => 'افزودن Passkey',
+			'Passkey authentication failed' => 'ورود با Passkey انجام نشد.',
 		);
 		return $labels[ $original ] ?? $translation;
 	}
@@ -453,6 +473,11 @@ HTML;
         $config = self::client_config($is_login, $is_frontend_auth);
 		if ( $is_login ) {
 			$config['loginAssetFontsAndLogos'] = array_values( array_merge( self::auth_font_urls(), self::logo_urls() ) );
+			if ( class_exists( Digitalogic_Federated_Login::class ) && function_exists( 'df_digits_form_login' ) ) {
+				$browser_signin           = 'assets/js/branding/browser-signin.js';
+				$config['federatedLogin'] = Digitalogic_Federated_Login::client_config();
+				wp_enqueue_script( 'digitalogic-browser-signin', DIGITALOGIC_PLUGIN_URL . $browser_signin, array( self::SCRIPT_HANDLE ), (string) filemtime( DIGITALOGIC_PLUGIN_DIR . $browser_signin ), true );
+			}
 		}
         wp_add_inline_script(
             self::SCRIPT_HANDLE,
@@ -614,12 +639,19 @@ JS;
         $config['labels'] = self::client_labels();
 		if ( $is_login ) {
 			$config['showLoginThemeSwitcher'] = (bool) apply_filters( 'digitalogic_login_show_theme_switcher', true );
-			$config['otpCursor']          = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
-			$config['emailDomainNonce']   = wp_create_nonce( 'digitalogic_email_domain' );
-			$config['loginSlidesUrl']     = rest_url( 'digitalogic/v1/login-slides' );
-			$config['authWebSocket']      = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
-			$config['rememberedAccount'] = Digitalogic_Plugin_Auth_Routes::remembered_account();
-			$config['rememberedAccounts'] = Digitalogic_Plugin_Auth_Routes::remembered_accounts();
+			$config['otpCursor']              = 'circle' === apply_filters( 'digitalogic_otp_cursor', 'bar' ) ? 'circle' : 'bar';
+			$config['emailDomainNonce']       = wp_create_nonce( 'digitalogic_email_domain' );
+			$config['emailKnownDomains']      = Digitalogic_Plugin_Auth_Routes::EMAIL_PROVIDERS;
+			$config['loginSlidesUrl']         = rest_url( 'digitalogic/v1/login-slides' );
+			$config['loginStoryProgress']     = 'edge' === apply_filters( 'digitalogic_login_story_progress', 'button' ) ? 'edge' : 'button';
+			$config['loginStoryNavThumbs']    = (bool) get_option( 'digitalogic_login_story_nav_thumbnails', true );
+			$config['authEventsUrl']         = rest_url( ltrim( Digitalogic_Auth_Realtime::ROUTE, '/' ) );
+			$config['authWebSocket']          = class_exists( 'Digitalogic_WebSocket' ) ? Digitalogic_WebSocket::instance()->get_public_client_config() : array();
+			$config['rememberedAccount']      = Digitalogic_Plugin_Auth_Routes::remembered_account();
+			$config['rememberedAccounts']     = Digitalogic_Plugin_Auth_Routes::remembered_accounts();
+			if ( $config['rememberedAccount'] || $config['rememberedAccounts'] ) {
+				$config['forgetAccountNonce'] = wp_create_nonce( 'digitalogic_forget_account_hint' );
+			}
 			$config['digitsSignupNotice'] = __( 'Please signup before logging in.', 'digits' ); // phpcs:ignore WordPress.WP.I18n.TextDomainMismatch -- Match the native Digits response.
 		}
 
@@ -633,6 +665,7 @@ JS;
         if (!$is_fa) {
             return [
                 'theme'                 => 'Theme',
+                'auto'                  => 'Auto',
                 'dark'                  => 'Dark',
                 'light'                 => 'Light',
                 'toggleToDark'          => 'Switch to dark mode',
@@ -659,7 +692,6 @@ JS;
 				'smsIdentity'           => 'Enter your email address or phone number to receive a code.',
 				'sendSmsCode'           => 'Send SMS code',
 				'sendEmailCode'         => 'Send email code',
-				'enterPassword'         => 'Enter password',
 				'getCallCode'           => 'Get call code',
 				'continueBySms'         => 'Continue by SMS',
 				'verifyCode'            => 'Verify code',
@@ -691,6 +723,7 @@ JS;
 
         return [
             'theme'                 => 'قالب',
+            'auto'                  => 'خودکار',
             'dark'                  => 'تاریک',
             'light'                 => 'روشن',
             'toggleToDark'          => 'تغییر به حالت تاریک',
@@ -707,7 +740,7 @@ JS;
             'password'              => 'رمز عبور',
 			'skipPassword'          => 'ورود بدون رمز عبور',
 			'passkeyOptions'        => 'روش‌های دیگر ورود',
-			'passkeyLogin'          => 'ورود با کلید عبور',
+			'passkeyLogin'          => 'ورود با Passkey',
 			'otpCode'               => 'کد تأیید',
 			'otpDigit'              => 'رقم %d',
 			'otpIncomplete'         => 'کد تأیید را کامل وارد کنید.',
@@ -717,7 +750,6 @@ JS;
 			'smsIdentity'           => 'برای دریافت کد، ایمیل یا شماره تلفن خود را وارد کنید.',
 			'sendSmsCode'           => 'ارسال کد پیامکی',
 			'sendEmailCode'         => 'ارسال کد به ایمیل',
-			'enterPassword'         => 'وارد کردن رمز عبور',
 			'getCallCode'           => 'دریافت کد تماس',
 			'continueBySms'         => 'ادامه با پیامک',
 			'verifyCode'            => 'تأیید کد',

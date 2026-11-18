@@ -12,11 +12,115 @@
     var digitsOtpStorageKey = 'digitalogic-login-otp-v1';
     var digitsResendTimers = new WeakMap();
     var digitsEmailChecks = new WeakMap();
+    var loginAccountPickers = new WeakMap();
     var digitsSmsSelections = new WeakSet();
     var authRecovery = false;
+    var passkeySupport;
     var authSocket = null;
     var authSocketSequence = 0;
+    var authSocketRetryAt = 0;
     var authSocketPending = new Map();
+    var authFlow = '';
+    var authStep = '';
+    var authStepSent = '';
+    var authStream = null;
+    var authRevision = null;
+    var authSynchronizing = false;
+    var authRetryTimer = null;
+
+    if (config.authEventsUrl && window.crypto?.randomUUID) {
+        authFlow = window.crypto.randomUUID();
+        try {
+            var storedFlow = window.sessionStorage.getItem('digitalogic-auth-flow');
+            var loginParams = new URLSearchParams(window.location.search);
+            if (storedFlow && !loginParams.has('loggedout') && !loginParams.has('reauth')) { authFlow = storedFlow; }
+            window.sessionStorage.setItem('digitalogic-auth-flow', authFlow);
+        } catch (error) { /* The page can still use a new flow if storage is disabled. */ }
+    }
+
+    function authEventsUrl() {
+        var url = new URL(config.authEventsUrl, window.location.href);
+        if (url.origin !== window.location.origin || !authFlow) { return null; }
+        url.searchParams.set('flow', authFlow);
+        return url;
+    }
+
+    function receiveAuthSnapshot(state) {
+        if (!state || typeof state.revision !== 'string' || state.revision === authRevision) { return; }
+        authRevision = state.revision;
+        if (state.authenticated) {
+            try { window.sessionStorage.removeItem('digitalogic-auth-flow'); } catch (error) { /* Storage is optional. */ }
+        }
+        window.dispatchEvent(new CustomEvent('digitalogic:auth-state', { detail: state }));
+    }
+
+    function retryAuthState(delay = 4500) {
+        window.clearTimeout(authRetryTimer);
+        authRetryTimer = window.setTimeout(function () {
+            authRetryTimer = null;
+            void synchronizeAuth();
+        }, delay);
+    }
+
+    async function synchronizeAuth() {
+        if (!authFlow || !authStep || authSynchronizing) { return; }
+        authSynchronizing = true;
+        var step = authStep;
+        try {
+            var state = await authSocketRequest('digitalogic_auth_watch', { flow: authFlow, step: step });
+            if (state) {
+                authStream?.close();
+                authStream = null;
+                authStepSent = step;
+                receiveAuthSnapshot(state);
+                if (!state.authenticated) { retryAuthState(25000); }
+            } else {
+                var url = authEventsUrl();
+                if (!url) { return; }
+                if (step !== authStepSent) {
+                    var response = await window.fetch(url, {
+                        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                        body: new URLSearchParams({ step: step }),
+                        signal: window.AbortSignal?.timeout?.(4000)
+                    });
+                    if (response.ok) {
+                        authStepSent = step;
+                        receiveAuthSnapshot(await response.json());
+                    }
+                }
+                if (!authStream && window.EventSource) {
+                    authStream = new window.EventSource(url);
+                    authStream.addEventListener('snapshot', function (event) {
+                        try { receiveAuthSnapshot(JSON.parse(event.data)); } catch (error) { /* Ignore malformed snapshots. */ }
+                    });
+                }
+                retryAuthState();
+            }
+        } catch (error) {
+            retryAuthState();
+        } finally {
+            authSynchronizing = false;
+            if (step !== authStep) { void synchronizeAuth(); }
+        }
+    }
+
+    async function readCallEvent(id, proof, signal) {
+        var url = authEventsUrl();
+        if (!url) { return null; }
+        url.searchParams.set('call', id);
+        try {
+            var response = await window.fetch(url, {
+                credentials: 'same-origin', cache: 'no-store', signal: signal,
+                headers: { Accept: 'text/event-stream', 'X-Digitalogic-CSRF': proof }
+            });
+            if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) { return null; }
+            var line = (await response.text()).split('\n').find(function (entry) { return entry.startsWith('data: '); });
+            return line ? JSON.parse(line.slice(6)).call : null;
+        } catch (error) {
+            if (signal?.aborted) { throw error; }
+            return null;
+        }
+    }
 
     function openAuthSocket() {
         var settings = config.authWebSocket;
@@ -26,16 +130,22 @@
         if (authSocket && authSocket.readyState < 2) {
             return authSocket;
         }
+        if (Date.now() < authSocketRetryAt) { return null; }
         var url = new window.URL(settings.url, window.location.href);
         if (url.protocol !== 'wss:' || url.host !== window.location.host) {
             return null;
         }
         url.searchParams.set(settings.token ? 'token' : 'nonce', settings.token || settings.nonce);
+        if (authFlow) { url.searchParams.set('auth', '1'); }
         var socket = new window.WebSocket(url);
         authSocket = socket;
         socket.addEventListener('message', function (event) {
             try {
                 var response = JSON.parse(event.data);
+                if (socket === authSocket && response.event === 'auth_snapshot') { receiveAuthSnapshot(response.data); }
+                if (socket === authSocket && response.event === 'auth_call_changed') {
+                    window.dispatchEvent(new Event('digitalogic:auth-call-changed'));
+                }
                 var pending = authSocketPending.get(response.id);
                 if (pending && pending.socket === socket) {
                     pending.finish(response.success ? response.data : null);
@@ -43,6 +153,10 @@
             } catch (error) { /* Other events are irrelevant to this request. */ }
         });
         socket.addEventListener('close', function () {
+            if (socket === authSocket) {
+                authSocketRetryAt = Date.now() + 3000;
+                if (authStep) { retryAuthState(); }
+            }
             authSocketPending.forEach(function (pending) {
                 if (pending.socket === socket) {
                     pending.finish(null);
@@ -61,7 +175,10 @@
                 return;
             }
             var id = 'auth-' + (++authSocketSequence);
-            var timeout = window.setTimeout(function () { finish(null); }, 1500);
+            var timeout = window.setTimeout(function () {
+                finish(null);
+                if (socket === authSocket && socket.readyState < 2) { socket.close(); }
+            }, 1500);
             function finish(result) {
                 window.clearTimeout(timeout);
                 socket.removeEventListener('open', send);
@@ -84,9 +201,20 @@
     // The first call challenge sets a new HttpOnly cookie. Reconnect so the
     // server sees it in the handshake rather than sharing it with JavaScript.
     window.DigitalogicAuthRealtime = {
-        refreshBinding: function () { if (authSocket) { authSocket.close(); authSocket = null; } },
-        callStatus: function (id, proof) {
-            return authSocketRequest('digitalogic_call_status', { challenge_id: id, csrf_token: proof });
+        refreshBinding: function () {
+            if (authSocket) { authSocket.close(); authSocket = null; }
+            authSocketRetryAt = 0;
+            if (authStep) { void synchronizeAuth(); }
+        },
+        flowId: function () { return authFlow; },
+        callStatus: async function (id, proof, signal) {
+            var command = authFlow ? 'digitalogic_auth_call_watch' : 'digitalogic_call_status';
+            var state = await authSocketRequest(command, { challenge_id: id, csrf_token: proof });
+            if (signal?.aborted) { throw new DOMException('Aborted', 'AbortError'); }
+            return state || readCallEvent(id, proof, signal);
+        },
+        stopCall: function () {
+            if (authFlow && authSocket?.readyState === 1) { void authSocketRequest('digitalogic_auth_call_unwatch', {}); }
         }
     };
     var feedbackSelector = [
@@ -229,6 +357,29 @@
         syncToggleLabels(value);
     }
 
+    function setLoginTheme(mode, persist) {
+        var scheme = window.matchMedia('(prefers-color-scheme: dark)');
+        root.setAttribute('data-dg-theme-mode', mode);
+        setTheme(mode === 'auto' ? (scheme.matches ? 'dark' : 'light') : mode, false);
+        if (persist) {
+            try { window.localStorage.setItem(storageKey + ':login', mode); } catch (error) {}
+        }
+    }
+
+    function bindLoginTheme() {
+        var stored;
+        try { stored = window.localStorage.getItem(storageKey + ':login'); } catch (error) {}
+        setLoginTheme(stored === 'light' || stored === 'dark' ? stored : 'auto', false);
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+            if (root.getAttribute('data-dg-theme-mode') === 'auto') { setLoginTheme('auto', false); }
+        });
+        window.addEventListener('storage', function (event) {
+            if (event.key === storageKey + ':login') {
+                setLoginTheme(event.newValue === 'light' || event.newValue === 'dark' ? event.newValue : 'auto', false);
+            }
+        });
+    }
+
     function toggleTheme(event) {
         if (event) {
             event.preventDefault();
@@ -270,7 +421,7 @@
         });
 
         document.querySelectorAll('[data-dg-theme-choice]').forEach(function (node) {
-            node.setAttribute('aria-pressed', String(node.dataset.dgThemeChoice === theme));
+            node.setAttribute('aria-pressed', String(node.dataset.dgThemeChoice === (root.getAttribute('data-dg-theme-mode') || theme)));
         });
     }
 
@@ -290,15 +441,56 @@
 
         var toast = document.createElement('div');
         toast.className = 'dg-toast dg-toast--' + (tone || 'warning');
-        toast.textContent = message;
+        var text = document.createElement('p');
+        text.className = 'dg-toast__message';
+        text.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+        toast.appendChild(text);
         container.appendChild(toast);
+        text.textContent = message;
+        enhanceToast(toast);
+    }
 
-        window.setTimeout(function () {
+    function enhanceToast(toast) {
+        var icon = document.createElement('span');
+        icon.className = 'dg-toast__icon';
+        putAuthIcon(icon, toast.classList.contains('dg-toast--success') ? 'check' : 'info');
+        toast.prepend(icon);
+
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'dg-toast__close';
+        close.setAttribute('aria-label', authRequestLabel('Dismiss notification', 'بستن اعلان'));
+        putAuthIcon(close, 'close');
+        toast.appendChild(close);
+
+        var timer;
+        function dismiss() {
+            window.clearTimeout(timer);
+            if (toast.classList.contains('is-leaving')) { return; }
             toast.classList.add('is-leaving');
             window.setTimeout(function () {
+                var stack = toast.parentElement;
                 toast.remove();
-            }, 220);
-        }, 5200);
+                if (stack && !stack.firstElementChild) { stack.remove(); }
+            }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200);
+        }
+
+        function scheduleDismissal() {
+            window.clearTimeout(timer);
+            if (!toast.matches(':hover, :focus-within')) {
+                timer = window.setTimeout(dismiss, 6500);
+            }
+        }
+
+        close.addEventListener('click', dismiss);
+        close.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') { dismiss(); }
+        });
+        toast.addEventListener('pointerenter', scheduleDismissal);
+        toast.addEventListener('pointerleave', scheduleDismissal);
+        toast.addEventListener('focusin', scheduleDismissal);
+        toast.addEventListener('focusout', function () { queueMicrotask(scheduleDismissal); });
+        scheduleDismissal();
     }
 
     function observeInlineMessages() {
@@ -372,14 +564,19 @@
         caption.className = 'dg-theme-caption';
         caption.textContent = picker.trigger.textContent;
         picker.panel.appendChild(caption);
-        ['light', 'dark'].forEach(function (theme) {
+        var choices = [
+            ['auto', 'device', fa ? 'خودکار' : 'Auto'],
+            ['light', 'sun', fa ? 'روشن' : 'Light'],
+            ['dark', 'moon', fa ? 'تاریک' : 'Dark']
+        ];
+        choices.forEach(function ([theme, icon, label]) {
             var choice = document.createElement('button');
             choice.type = 'button';
             choice.dataset.dgThemeChoice = theme;
-            choice.textContent = getLabel(theme, theme === 'dark' ? (fa ? 'تاریک' : 'Dark') : (fa ? 'روشن' : 'Light'));
-            putAuthIcon(choice, theme === 'dark' ? 'moon' : 'sun');
+            choice.textContent = getLabel(theme, label);
+            putAuthIcon(choice, icon);
             choice.addEventListener('click', function () {
-                if (theme !== currentTheme()) { setTheme(theme); }
+                setLoginTheme(theme, true);
                 picker.disclosure.open = false;
                 picker.trigger.focus();
             });
@@ -765,7 +962,8 @@
             return '';
         }
         var local = value.split('@', 1)[0];
-        return /(^\.|\.\.|\.$)/.test(local) ? '' : value.slice(local.length + 1).toLowerCase();
+        var domain = value.slice(local.length + 1).toLowerCase();
+        return /(^\.|\.\.|\.$)/.test(local) || !/\.(?:[a-z]{2,63}|xn--[a-z0-9-]{1,58}[a-z0-9])$/.test(domain) ? '' : domain;
     }
 
     function phonePartsFromValue(value, selectedCountry) {
@@ -882,7 +1080,28 @@
 
     function sanitizeIdentityValue(value) {
         var normalized = normalizeDigits(value).replace(/\s/gu, '');
-        return normalized.includes('@') ? normalized.toLowerCase() : normalized;
+        var at = normalized.indexOf('@');
+        if (at < 0) { return normalized; }
+        var domain = normalized.slice(at + 1).replace(/[^a-z0-9.-]/gi, '');
+        return (normalized.slice(0, at + 1) + domain).toLowerCase();
+    }
+
+    function preventInvalidEmailInsertion(input, event, data = event.data) {
+        if (!data || event.isComposing || input.selectionStart === null) { return; }
+        var at = input.value.indexOf('@');
+        if (at < 0) { return; }
+
+        var text = normalizeDigits(data);
+        if (input.selectionStart <= at) {
+            if (input.selectionEnd <= at && /^@+$/.test(text)) { event.preventDefault(); }
+            return;
+        }
+        var isAppending = input.selectionStart === input.value.length;
+        var verified = config.emailKnownDomains?.includes(emailDomain(input.value))
+            || digitsEmailChecks.get(input.form)?.isVerified(input.value);
+        if (!/[a-z0-9.-]/i.test(text) || (isAppending && verified && /^[^a-z.-]+$/i.test(text))) {
+            event.preventDefault();
+        }
     }
 
     function normalizePhoneOnBlur(input) {
@@ -1159,7 +1378,7 @@
         });
 
         document.querySelectorAll('[data-dg-disabled-by-branding="true"]').forEach(function (button) {
-            button.disabled = button.dataset.dgIdentityBlocked === 'true';
+            button.disabled = false;
             delete button.dataset.dgDisabledByBranding;
         });
     }
@@ -1215,7 +1434,7 @@
             button.classList.remove('is-loading');
             button.removeAttribute('aria-busy');
             if (button.matches('#wp-submit') || button.dataset.dgDisabledByBranding === 'true') {
-                button.disabled = button.dataset.dgIdentityBlocked === 'true';
+                button.disabled = false;
             }
         });
     }
@@ -1254,7 +1473,21 @@
         return fallback;
     }
 
-    function showDigitsInlineMessage(form, message, tone) {
+    function renderAuthMessage(box, message, tone, action) {
+        box.classList.add('dg-auth-message');
+        box.dataset.tone = tone;
+        box.replaceChildren();
+        if (!message) { return; }
+        var text = document.createElement('span');
+        text.textContent = message;
+        box.appendChild(text);
+        putAuthIcon(box, tone === 'success' ? 'check' : tone === 'progress' ? 'clock' : 'info');
+        if (action) { box.appendChild(action); }
+    }
+
+    window.DigitalogicAuthFeedback = renderAuthMessage;
+
+    function showDigitsInlineMessage(form, message, tone, anchor) {
         message = cleanText(message, '');
 
         if (!message) {
@@ -1271,7 +1504,9 @@
             box.className = 'dg-digits-inline-message';
             box.setAttribute('role', 'alert');
 
-            if (!otpRow && host && host.parentNode) {
+            if (anchor) {
+                anchor.after(box);
+            } else if (!otpRow && host && host.parentNode) {
                 host.parentNode.insertBefore(box, host.nextSibling);
             } else if (!otpRow) {
                 form.prepend(box);
@@ -1281,9 +1516,8 @@
         if (box) {
             if (otpRow && box.previousElementSibling !== otpRow) { otpRow.after(box); }
             box.classList.toggle('dg-otp-feedback', !!otpRow);
-            box.classList.toggle('dg-digits-inline-message--error', tone !== 'success');
-            box.classList.toggle('dg-digits-inline-message--success', tone === 'success');
-            box.textContent = message;
+            if (anchor && box.previousElementSibling !== anchor) { anchor.after(box); }
+            renderAuthMessage(box, message, tone);
         }
     }
 
@@ -1453,6 +1687,17 @@
         showRecoveryDialog(data.redirect, loginForm);
         return true;
     }
+
+    window.DigitalogicFinishBrowserPasskey = function (form, data) {
+        if (!data?.process || data.process_type !== 'login') { return false; }
+        finishBrandedDigitsLogin(form, data);
+        try {
+            var destination = new URL(data.redirect || config.loginUrl || '/', window.location.href);
+            if (destination.origin !== window.location.origin || destination.username || destination.password) { return false; }
+            showAuthSuccess(function () { window.location.assign(destination.href); });
+            return true;
+        } catch (error) { return false; }
+    };
 
     async function showRecoveryDialog(destination, loginForm) {
         var endpoint = config.ajaxUrl || '/wp-admin/admin-ajax.php';
@@ -1669,9 +1914,7 @@
         if (!button) { return; }
         var action = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         var label = getLabel('continue', 'Continue');
-        if (action?.type === 'password' && form.closest('.dg-digits-login-shell')?.dataset.dgIdentity === 'username') {
-            label = getLabel('enterPassword', 'Enter password');
-        } else if (action?.type === 'email') {
+        if (action?.type === 'email') {
             label = getLabel('sendEmailCode', 'Send email code');
         } else if (action?.type === 'call') {
             label = getLabel('continueByCall', isPersianLocale() ? 'ادامه با تماس تلفنی' : 'Continue by phone call');
@@ -1686,14 +1929,50 @@
         if (text && text.textContent !== label) { text.textContent = label; }
         if (action && !action.enabled) {
             button.dataset.dgIdentityBlocked = 'true';
-            button.disabled = true;
         } else if (button.dataset.dgIdentityBlocked === 'true') {
             delete button.dataset.dgIdentityBlocked;
-            if (form.dataset.dgPending === 'true') {
-                button.dataset.dgDisabledByBranding = 'true';
-            } else {
-                button.disabled = false;
-            }
+        }
+    }
+
+    function reportInvalidDigitsIdentity(form, action) {
+        var mode = form.closest('.dg-digits-login-shell').dataset.dgIdentity;
+        if (mode === 'email') {
+            digitsEmailChecks.get(form).report();
+            return;
+        }
+
+        var input = form.querySelector('input[name="digits_phone"]');
+        var prefix = form.querySelector('[name="login_digt_countrycode"]');
+        var invalidPrefix = mode === 'phone' && prefix && !isCountryCallingCode(prefix.value);
+        var message = invalidPrefix
+            ? authRequestLabel('Select a valid country code.', 'پیش‌شمارهٔ معتبر کشور را انتخاب کنید.')
+            : mode === 'phone'
+                ? getLabel('invalidPhone', 'Enter a valid phone number.')
+                : authRequestLabel('Enter your username, email, or phone number.', 'نام کاربری، ایمیل یا شماره تلفن خود را وارد کنید.');
+        if (form.dataset.dgSmsIdentity === 'true' && mode !== 'phone') {
+            message = getLabel('smsIdentity', 'Enter your email address or phone number to receive a verification code.');
+        }
+        if (action.type === 'call') {
+            message = getLabel('callLoadFailed', 'Phone call verification is currently unavailable.');
+        }
+        var field = invalidPrefix ? prefix : input;
+        var row = field?.closest('.digits-form_input_row') || field?.closest('.digits-mobile_wrapper');
+        var prefixStatus = invalidPrefix && form.querySelector('#dg-country-code-status');
+        if (prefixStatus) {
+            field.focus({ preventScroll: true });
+            field.setAttribute('aria-invalid', 'true');
+            renderAuthMessage(prefixStatus, message, 'error');
+            return;
+        }
+        showDigitsInlineMessage(form, message, 'error', row);
+        if (field) {
+            field.setAttribute('aria-invalid', 'true');
+            field.focus({ preventScroll: true });
+            var reset = function () {
+                field.removeAttribute('aria-invalid');
+                form.querySelector('.dg-digits-inline-message')?.remove();
+            };
+            field.addEventListener('input', reset, { once: true });
         }
     }
 
@@ -1815,9 +2094,26 @@
         window.addEventListener('pagehide', function () { stopDigitsSmsWait(form); });
     }
 
+    async function matchesWorkstationIdentity(value, workstation) {
+        if (!workstation?.login) { return false; }
+        var identity = value.toLowerCase();
+        if (identity === workstation.login.toLowerCase()) { return true; }
+        if (!workstation.emailDigest || !emailDomain(identity) || !window.crypto?.subtle) { return false; }
+        try {
+            var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
+            var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+            return hex === workstation.emailDigest;
+        } catch (_error) {
+            return false;
+        }
+    }
+
     function showDigitsUsernamePasswordStep(form, username) {
+        var shell = form.closest('.dg-digits-login-shell');
         var wrapper = form.querySelector('.digits-form_tab_wrapper') || form;
         var step = form.querySelector('.dg-username-password-step');
+        var lanAction = shell?.querySelector('[data-call-lan-action]');
+        var callWidget = shell?.querySelector('[data-call-unified]');
 
         hideDigitsIdentityContainer(form);
         form.dataset.dgUsernameStep = 'password';
@@ -1845,12 +2141,21 @@
             wrapper.appendChild(step);
             mountPasswordField(step.querySelector('.dg-username-password-input'));
 
-            step.querySelector('.dg-username-login-actions').appendChild(createPasswordlessAction('dg-identity-passwordless-caption', function () {
+            var passwordlessAction = createPasswordlessAction('dg-identity-passwordless-caption', function () {
                 authRecovery = true;
                 showDigitsSmsIdentity(form);
-            }));
+            });
+            step.querySelector('.dg-username-login-actions').appendChild(passwordlessAction);
+            if (lanAction && callWidget) {
+                putAuthIcon(lanAction, 'phone');
+                passwordlessAction.appendChild(lanAction);
+            }
 
             step.querySelector('.dg-username-login-back').addEventListener('click', function () {
+                if (lanAction && callWidget) {
+                    lanAction.hidden = true;
+                    callWidget.appendChild(lanAction);
+                }
                 // Digits counts every tab container when handling Back, including hidden ones.
                 step.remove();
                 delete form.dataset.dgUsernameStep;
@@ -1866,17 +2171,30 @@
 
         step.hidden = false;
         step.style.display = '';
-        var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
-        var account = [config.rememberedAccount].concat(accounts).find(function (candidate) {
-            return candidate && candidate.login === username;
-        });
-        var photo = account?.avatar;
+        var profile = step.querySelector('.dg-username-login-profile');
         var kind = emailDomain(username) ? 'email' : 'user';
-        var identity = createAuthIdentity(username, kind, photo);
-        identity.classList.add('dg-username-login-summary');
-        identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
-        identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
-        step.querySelector('.dg-username-login-profile').replaceChildren(identity);
+        function renderProfile(photo) {
+            var identity = createAuthIdentity(username, kind, photo);
+            identity.classList.add('dg-username-login-summary');
+            identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
+            identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
+            profile.replaceChildren(identity);
+        }
+        renderProfile();
+        var account = config.rememberedAccount;
+        if (account?.assigned && account.avatar) {
+            matchesWorkstationIdentity(username, account).then(function (match) {
+                if (match && step.isConnected && form.dataset.dgUsernameValue === username) { renderProfile(account.avatar); }
+            });
+        }
+        if (lanAction) {
+            lanAction.hidden = true;
+            matchesWorkstationIdentity(username, lanAction.dataset).then(function (match) {
+                if (step.isConnected && form.dataset.dgUsernameValue === username) {
+                    lanAction.hidden = !match || !callVerificationEnabled(shell);
+                }
+            });
+        }
         var password = step.querySelector('.dg-username-password-input');
         password.disabled = false;
         password.focus({ preventScroll: true });
@@ -1904,6 +2222,7 @@
             ['log', username],
             ['pwd', password.value],
             ['dg_branded_email', classifyIdentity(username) === 'email' ? '1' : ''],
+            ['dg_auth_flow', authFlow],
             ['rememberme', remember && remember.checked ? 'forever' : ''],
             ['redirect_to', digitsLoginRedirect(form)],
             ['wp-submit', 'Log In']
@@ -2061,14 +2380,19 @@
             digitsOtpChecking.add(form);
             setOtpProgress(form, 'verifying');
             try {
-                var response = await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
+                var completion;
+                if (authFlow && config.authWebSocket?.enabled) {
+                    window.DigitalogicAuthRealtime.refreshBinding();
+                    completion = await authSocketRequest('digitalogic_auth_completion', { attempt: state.id });
+                }
+                var response = completion?.redirect ? null : await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
                     method: 'POST',
                     credentials: 'same-origin',
                     cache: 'no-store',
                     signal: window.AbortSignal?.timeout?.(8000),
                     body: new URLSearchParams({ action: 'digitalogic_otp_completion', dg_otp_attempt: state.id })
                 });
-                var reply = response.ok ? await response.json() : null;
+                var reply = response?.ok ? await response.json() : { success: Boolean(completion?.redirect), data: completion };
                 if (digitsOtpContinuations.get(form) !== state) { return; }
                 if (reply?.success && reply.data?.redirect) {
                     var data = { process: true, process_type: 'login', redirect: reply.data.redirect };
@@ -2201,6 +2525,7 @@
     function sendDigitsAjaxFallback(form, button) {
         var endpoint = (window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php';
         var body = new FormData(form);
+        if (authFlow) { body.set('dg_auth_flow', authFlow); }
         var verifiesCode = Boolean(body.get('sms_otp') || body.get('email_otp'));
         if (verifiesCode) {
             var attempt = attachDigitsOtpAttempt(form);
@@ -2334,11 +2659,12 @@
         var status = form?.querySelector('.dg-otp-progress');
         if (!status || status.dataset.state === state) { return; }
         status.dataset.state = state;
-        status.textContent = state === 'verifying'
+        var message = state === 'verifying'
             ? authRequestLabel('Verifying your code…', 'در حال بررسی کد تأیید…')
             : state === 'ready'
                 ? authRequestLabel('Code entered. Select Verify code to continue.', 'کد وارد شد. برای ادامه «تأیید کد» را بزنید.')
                 : '';
+        renderAuthMessage(status, message, 'progress');
     }
 
     function submitCompletedOtp(input, count) {
@@ -2414,6 +2740,7 @@
                 ? authRequestLabel('Your email', 'ایمیل شما')
                 : authRequestLabel('Your phone number', 'شمارهٔ شما'));
             recipient.classList.add('dg-auth-identity--recipient');
+            if (!email) { recipient.classList.add('dg-auth-identity--phone'); }
             recipient.querySelector('bdi').dir = 'ltr';
             stack.appendChild(recipient);
         }
@@ -2823,6 +3150,10 @@
                         return field && ['sms_otp', 'email_otp'].includes(field.name) ? { name: field.name, value: '' } : field;
                     });
                 }
+                if (!checksStatus && fields.length && authFlow) {
+                    guardedSettings.data = (guardedSettings.data === settings.data ? fields.slice() : guardedSettings.data);
+                    guardedSettings.data.push({ name: 'dg_auth_flow', value: authFlow });
+                }
                 if (checksStatus) {
                     args[settingsIndex] = guardedSettings;
                     return originalAjax.apply(this, args);
@@ -3057,7 +3388,7 @@
         var identityAction = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
         if (identityAction) { digitsSmsSelections.delete(form); }
         if (identityAction && !identityAction.enabled) {
-            syncDigitsIdentityButton(form);
+            reportInvalidDigitsIdentity(form, identityAction);
             return;
         }
         var button = digitsSubmitButton(form);
@@ -3267,7 +3598,8 @@
             phoneInput.required = visibleMode === 'phone';
             phoneInput.type = nextMode === 'phone' ? 'tel' : 'text';
             phoneInput.setAttribute('inputmode', nextMode === 'phone' ? 'tel' : 'text');
-            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national' : 'username');
+            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national'
+                : phoneInput.dataset.dgPasskeyAutofill ? 'username webauthn' : 'username');
             var firstLetter = phoneInput.value.match(/\p{Letter}/u)?.[0] || '';
             phoneInput.dir = nextMode === 'username' && /[\p{Script=Arabic}\p{Script=Hebrew}]/u.test(firstLetter) ? 'rtl' : 'ltr';
         }
@@ -3296,6 +3628,7 @@
             holder.classList.add('dg-auth-input-icon');
             putAuthIcon(holder, nextMode === 'email' ? 'email' : nextMode === 'phone' ? 'phone' : 'user');
         });
+        loginAccountPickers.get(form)?.(visibleMode === 'email' ? emailInput : phoneInput, nextMode);
 
         if (focusInput) {
             var nextInput = visibleMode === 'email' ? emailInput : phoneInput;
@@ -3310,7 +3643,7 @@
         var row = input.closest('.digits-form_input_row') || input;
         var status = document.createElement('p');
         status.id = 'dg-email-domain-status';
-        status.className = 'dg-email-domain-status';
+        status.className = 'dg-auth-message';
         status.setAttribute('role', 'status');
         row.after(status);
         input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
@@ -3327,30 +3660,27 @@
         var pending;
         var failedDomain;
 
-        function render(state) {
+        function render(state, attempted) {
             input.setAttribute('aria-invalid', String(state === 'invalid' || state === 'format'));
             syncDigitsIdentityButton(form);
-            if (status.dataset.state === state) { return; }
+            var tone = ({ checking: attempted ? 'warning' : 'progress', valid: 'success', invalid: 'error', format: 'error', unavailable: 'warning' })[state];
+            if (status.dataset.state === state && status.dataset.tone === tone) { return; }
             status.dataset.state = state;
-            status.replaceChildren();
-            if (state) {
-                var text = document.createElement('span');
-                text.textContent = labels[state];
-                status.appendChild(text);
-                putAuthIcon(status, state === 'valid' ? 'check' : (state === 'checking' ? 'email' : 'info'));
-                if (state === 'unavailable') {
-                    var retry = document.createElement('button');
-                    retry.type = 'button';
-                    retry.className = 'dg-email-domain-retry';
-                    retry.textContent = persian ? 'تلاش دوباره' : 'Try again';
-                    retry.addEventListener('click', function () {
-                        failedDomain = null;
-                        input.focus();
-                        update(true);
-                    });
-                    status.appendChild(retry);
-                }
+            var retry;
+            if (state === 'unavailable') {
+                retry = document.createElement('button');
+                retry.type = 'button';
+                retry.textContent = persian ? 'تلاش دوباره' : 'Try again';
+                retry.addEventListener('click', function () {
+                    failedDomain = null;
+                    input.focus();
+                    update(true);
+                });
             }
+            var message = state === 'checking' && attempted
+                ? authRequestLabel('Wait for the email check to finish.', 'صبر کنید تا بررسی ایمیل تمام شود.')
+                : labels[state];
+            renderAuthMessage(status, message, tone || '', retry);
         }
 
         async function check(domain) {
@@ -3363,13 +3693,15 @@
                     nonce: config.emailDomainNonce,
                     domain: domain
                 });
-                var response = await window.fetch(config.ajaxUrl, {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    body: body,
-                    signal: request.controller.signal
-                });
-                var result = response.ok ? await response.json() : null;
+                var socketResult = authFlow ? await authSocketRequest('digitalogic_auth_email_domain', { domain: domain }) : null;
+                if (request.controller.signal.aborted) { return; }
+                var result = { success: true, data: socketResult };
+                if (typeof socketResult?.valid !== 'boolean') {
+                    var response = await window.fetch(config.ajaxUrl, {
+                        method: 'POST', credentials: 'same-origin', body: body, signal: request.controller.signal
+                    });
+                    result = response.ok ? await response.json() : null;
+                }
                 if (!result?.success || typeof result.data?.valid !== 'boolean') { throw new Error('Email domain check failed'); }
                 if (pending === request && !input.disabled && emailDomain(input.value) === domain) {
                     if (cache.size >= 24) { cache.clear(); }
@@ -3418,6 +3750,13 @@
         }
 
         digitsEmailChecks.set(form, {
+            report: function () {
+                form.querySelector('.dg-digits-inline-message')?.remove();
+                input.focus({ preventScroll: true });
+                update(true);
+                if (!emailDomain(input.value)) { render('format', true); }
+                else if (status.dataset.state === 'checking') { render('checking', true); }
+            },
             isVerified: function (value) { return cache.get(emailDomain(value)) === true; }
         });
         return update;
@@ -3516,7 +3855,7 @@
 
         var status = document.createElement('p');
         status.id = 'dg-country-code-status';
-        status.className = 'dg-country-code-status';
+        status.className = 'dg-auth-message';
         status.setAttribute('role', 'status');
         wrap.closest('.digits-mobile_wrapper')?.after(status);
         input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
@@ -3569,9 +3908,10 @@
         function showValidation(show) {
             var invalid = show && !isCountryCallingCode(input.value);
             input.setAttribute('aria-invalid', String(invalid));
-            status.textContent = invalid
+            var message = invalid
                 ? (persian ? 'پیش‌شمارهٔ معتبر وارد کنید یا کشوری از فهرست انتخاب کنید.' : 'Enter a valid calling code or choose a country from the list.')
                 : '';
+            if (status.textContent !== message) { renderAuthMessage(status, message, 'error'); }
         }
 
         function syncSelection() {
@@ -3717,9 +4057,10 @@
             input.setAttribute('autocorrect', 'off');
             input.spellcheck = false;
             input.addEventListener('beforeinput', function (event) {
-                if (event.data && /^\s+$/u.test(event.data) && !event.isComposing && input.value.includes('@')) {
-                    event.preventDefault();
-                }
+                preventInvalidEmailInsertion(input, event);
+            });
+            input.addEventListener('paste', function (event) {
+                preventInvalidEmailInsertion(input, event, event.clipboardData?.getData('text/plain'));
             });
         });
         phoneInput.dir = 'ltr';
@@ -3729,31 +4070,8 @@
         var updateEmailFeedback = bindEmailDomainFeedback(emailInput);
         var login = phoneInput.form;
         if (login) {
-            var lanAction = shell.querySelector('[data-call-lan-action]');
-            if (lanAction) {
-                var submit = login.querySelector('.digits-form_login > .digits-form_submit-btn');
-                submit?.after(lanAction);
-                putAuthIcon(lanAction, 'phone');
-                var updateLanAction = async function () {
-                    var identity = digitsIdentityValue(login).toLowerCase();
-                    var available = callVerificationEnabled(shell);
-                    lanAction.hidden = !available || identity !== lanAction.dataset.login.toLowerCase();
-                    if (!available || !emailDomain(identity) || !window.crypto?.subtle) { return; }
-                    try {
-                        var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
-                        var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-                        if (identity === digitsIdentityValue(login).toLowerCase()) {
-                            lanAction.hidden = hex !== lanAction.dataset.emailDigest;
-                        }
-                    } catch (_error) {
-                        // The assigned username remains available on browsers without digest support.
-                    }
-                };
-                login.addEventListener('input', updateLanAction);
-                updateLanAction();
-            }
             shell.addEventListener('digitalogic:call-error', function (event) {
-                showDigitsInlineMessage(login, event.detail, 'warning');
+                showDigitsInlineMessage(login, event.detail, 'error');
             });
         }
         var channels = document.createElement('fieldset');
@@ -3778,7 +4096,7 @@
                 ? getLabel('phoneSms', 'Text message') : getLabel('phoneCall', 'Phone call')));
             channels.appendChild(label);
         });
-        phoneInput.closest('.digits-mobile_wrapper')?.after(channels);
+        phoneInput.closest('.digits-form_tab_wrapper')?.append(channels);
         function updatePhoneChannels() {
             var number = phonePartsFromValue(phoneInput.value, countryCode?.value);
             channels.hidden = shell.dataset.dgIdentity !== 'phone' || !canChoosePhoneChannel(number, shell);
@@ -3887,6 +4205,7 @@
         countryCode?.addEventListener('input', updatePhoneChannels);
         countryCode?.addEventListener('change', updatePhoneChannels);
 
+        mountLoginIdentityPicker(phoneInput, emailInput);
         selectDigitsMode(classifyIdentity(phoneInput.value || emailInput.value), false);
         updatePhoneChannels();
         updateEmailFeedback?.(false);
@@ -3996,6 +4315,10 @@
             var step = currentStep();
             if (step === previous) { return; }
             previous = step;
+            if (step !== 'success') {
+                authStep = step;
+                void synchronizeAuth();
+            }
             var url = new URL(window.location.href);
             if (url.hash === '#' + step) { return; }
             url.hash = step;
@@ -4145,6 +4468,22 @@
         });
     }
 
+    function fitAdminToolbar() {
+        var toolbar = document.querySelector('body.wp-admin #wpadminbar');
+        if (!toolbar) { return; }
+        var root = document.documentElement;
+        function updateHeight() {
+            var height = Math.ceil(toolbar.getBoundingClientRect().height);
+            var property = '--wp-admin--admin-bar--height';
+            if (height && root.style.getPropertyValue(property) !== height + 'px') {
+                root.style.setProperty(property, height + 'px');
+            }
+        }
+        updateHeight();
+        if (window.ResizeObserver) { new ResizeObserver(updateHeight).observe(toolbar); }
+        else { window.addEventListener('resize', updateHeight); }
+    }
+
     function buildLoginStories() {
         var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
         if (!shell || !config.loginSlidesUrl || !document.body.classList.contains('login')) { return; }
@@ -4166,12 +4505,15 @@
                 var image = storyUrl(row.image);
                 var lightImage = storyUrl(row.image_light) || image;
                 var darkImage = storyUrl(row.image_dark) || image;
+                var thumbnail = storyUrl(row.thumbnail);
                 var link = storyUrl(row.link);
                 var title = typeof row.title === 'string' ? row.title.trim() : '';
                 if (!lightImage && !darkImage) { return []; }
                 return [{
                     lightImage: lightImage || darkImage,
                     darkImage: darkImage || lightImage,
+                    lightThumb: storyUrl(row.thumbnail_light) || thumbnail || lightImage || darkImage,
+                    darkThumb: storyUrl(row.thumbnail_dark) || thumbnail || darkImage || lightImage,
                     alt: typeof row.alt === 'string' ? row.alt : '',
                     link: link,
                     title: title,
@@ -4190,19 +4532,25 @@
             loading = true;
             var fa = /^fa(?:[-_]|$)/i.test(document.documentElement.lang);
             var locale = fa ? 'fa_IR' : 'en_US';
+            var drawer = shell.matches('.dg-digits-login-shell') ? createStoryDrawer(shell, fa) : null;
+            var mounted = false;
             try {
                 var response = await authSocketRequest('digitalogic_auth_presentation', { locale: locale });
                 var cards = readCards(response?.slides);
                 if (!cards.length) {
                     var url = new URL(config.loginSlidesUrl, window.location.href);
                     url.searchParams.set('locale', locale);
-                    var fallback = await window.fetch(url, { credentials: 'same-origin' });
+                    var fallback = await window.fetch(url, { credentials: 'same-origin', signal: window.AbortSignal?.timeout?.(10000) });
                     cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
-                if (cards.length && shell.isConnected) { mountLoginStories(shell, cards, wide, fa); }
+                if (cards.length && shell.isConnected) {
+                    mountLoginStories(shell, cards, wide, fa, drawer);
+                    mounted = true;
+                }
             } catch (_error) {
                 // The sign-in form and compact brand artwork remain available.
             } finally {
+                if (!mounted) { drawer?.remove(); }
                 loading = false;
             }
         }
@@ -4211,7 +4559,238 @@
         void loadCards();
     }
 
-    function mountLoginStories(shell, cards, wide, fa) {
+    function createStoryDrawer(shell, fa) {
+        var layout = shell.parentElement;
+        var drawer = document.createElement('div');
+        drawer.className = 'dg-story-drawer';
+        drawer.setAttribute('aria-busy', 'true');
+        var panel = document.createElement('aside');
+        panel.id = 'dg-story-drawer-panel';
+        panel.className = 'dg-login-stories';
+        panel.dir = fa ? 'rtl' : 'ltr';
+        panel.inert = true;
+        var loader = document.createElement('div');
+        loader.className = 'dg-story-loading';
+        loader.setAttribute('role', 'status');
+        loader.setAttribute('aria-label', fa ? 'در حال دریافت اطلاعات اسلایدها' : 'Loading carousel information');
+        var mark = document.createElement('span');
+        mark.setAttribute('aria-hidden', 'true');
+        loader.append(mark);
+        panel.append(loader);
+        var toggle = document.createElement('button');
+        toggle.className = 'dg-story-drawer-toggle';
+        toggle.type = 'button';
+        toggle.setAttribute('aria-controls', panel.id);
+        var grip = document.createElement('span');
+        grip.className = 'dg-story-toggle-grip';
+        putAuthIcon(grip, 'dragGrip');
+        var chevron = document.createElement('span');
+        chevron.className = 'dg-story-toggle-chevron';
+        putAuthIcon(chevron, 'chevronDown');
+        toggle.append(grip, chevron);
+        drawer.append(panel);
+        shell.prepend(toggle, drawer);
+        shell.classList.add('dg-has-login-stories', 'dg-has-story-drawer');
+
+        var storageKey = 'digitalogic-login-stories-collapsed';
+        var manual = false;
+        try { manual = window.localStorage.getItem(storageKey) === '1'; } catch (error) { /* Storage is optional. */ }
+        var open = false;
+        var drag;
+        var ignoreClick = false;
+        var panelWidth = 0;
+        var formWidth = 0;
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+        function measure() {
+            var width = Math.max(0, layout.clientWidth - 2);
+            panelWidth = Math.round(width / 2.08);
+            formWidth = width - panelWidth;
+            layout.style.setProperty('--dg-story-panel-width', panelWidth + 'px');
+            layout.style.setProperty('--dg-story-form-width', formWidth + 'px');
+        }
+
+        function changed() { shell.dispatchEvent(new Event('digitalogic:story-drawer-change')); }
+
+        function setOpen(value, userAction) {
+            open = value && !shell.classList.contains('dg-auth-is-success');
+            panel.inert = !open;
+            shell.toggleAttribute('data-drawer-open', open);
+            toggle.setAttribute('aria-expanded', String(open));
+            var label = open ? (fa ? 'جمع کردن پنل محصولات' : 'Collapse product panel') :
+                (fa ? 'باز کردن پنل محصولات' : 'Expand product panel');
+            toggle.setAttribute('aria-label', label);
+            toggle.title = label;
+            if (userAction) {
+                manual = true;
+                try { window.localStorage.setItem(storageKey, open ? '0' : '1'); } catch (error) { /* Storage is optional. */ }
+            }
+            changed();
+        }
+
+        function haptic(event, pattern) {
+            if (event.pointerType && event.pointerType !== 'mouse' && !reduced.matches) {
+                navigator.vibrate?.(pattern);
+            }
+        }
+
+        toggle.addEventListener('click', function (event) {
+            if (ignoreClick && event.detail) { return; }
+            if (toggle.disabled) { return; }
+            haptic(event, 14);
+            setOpen(!open, true);
+        });
+        toggle.addEventListener('pointerdown', function (event) {
+            if (toggle.disabled || event.button !== 0 || !event.isPrimary) { return; }
+            ignoreClick = false;
+            var left = shell.getBoundingClientRect().left;
+            var offset = left - layout.getBoundingClientRect().left;
+            drag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, offset: offset,
+                left: left, width: drawer.getBoundingClientRect().width, active: false, detent: false };
+            toggle.setPointerCapture(event.pointerId);
+        });
+        toggle.addEventListener('pointermove', function (event) {
+            if (!drag || drag.id !== event.pointerId) { return; }
+            var delta = event.clientX - drag.x;
+            if (!drag.active && (Math.abs(delta) < 5 || Math.abs(delta) <= Math.abs(event.clientY - drag.y))) { return; }
+            if (!drag.active) {
+                drag.active = true;
+                shell.setAttribute('data-drawer-dragging', '');
+                layout.style.setProperty('--dg-story-anchor', drag.offset + 'px');
+                haptic(event, 7);
+                changed();
+            }
+            var edgeInset = toggle.offsetWidth / 2 + 2;
+            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - edgeInset);
+            var width = Math.max(0, Math.min(limit, drag.width + delta));
+            layout.style.setProperty('--dg-story-reveal', width + 'px');
+            shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');
+            var atDetent = (open ? -delta : delta) >= 72;
+            if (atDetent && !drag.detent) { haptic(event, 11); }
+            drag.detent = atDetent;
+        });
+
+        function finishDrag(event) {
+            if (!drag || drag.id !== event.pointerId) { return; }
+            var gesture = drag;
+            drag = null;
+            if (!gesture.active) { return; }
+            ignoreClick = true;
+            shell.removeAttribute('data-drawer-dragging');
+            void shell.offsetWidth;
+            layout.style.removeProperty('--dg-story-anchor');
+            layout.style.removeProperty('--dg-story-reveal');
+            shell.style.removeProperty('--dg-story-fold');
+            var delta = (event.clientX - gesture.x) * (open ? -1 : 1);
+            var commit = event.type === 'pointerup' && (delta >= 72 || (delta > 24 && delta / Math.max(1, event.timeStamp - gesture.time) > 0.5));
+            if (commit) { haptic(event, [14, 24, 7]); }
+            setOpen(commit ? !open : open, commit);
+        }
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (name) { toggle.addEventListener(name, finishDrag); });
+
+        var resize = window.ResizeObserver ? new ResizeObserver(measure) : null;
+        if (resize) { resize.observe(layout); }
+        else { window.addEventListener('resize', measure); }
+        measure();
+        setOpen(false, false);
+        var success = new MutationObserver(function () {
+            if (!shell.classList.contains('dg-auth-is-success')) { return; }
+            if (drag) { finishDrag({ type: 'pointercancel', pointerId: drag.id }); }
+            toggle.disabled = true;
+            setOpen(false, false);
+        });
+        success.observe(shell, { attributes: true, attributeFilter: ['class'] });
+        window.requestAnimationFrame(function () {
+            window.requestAnimationFrame(function () {
+                if (drawer.isConnected && !manual && !drag) { setOpen(true, false); }
+            });
+        });
+
+        return {
+            panel: panel,
+            isOpen: function () { return open && !drag?.active && !drawer.hasAttribute('aria-busy'); },
+            ready: function () {
+                loader.hidden = true;
+                drawer.removeAttribute('aria-busy');
+                changed();
+            },
+            remove: function () {
+                resize?.disconnect();
+                window.removeEventListener('resize', measure);
+                success.disconnect();
+                toggle.remove();
+                drawer.remove();
+                shell.classList.remove('dg-has-login-stories', 'dg-has-story-drawer');
+                shell.removeAttribute('data-drawer-open');
+                shell.removeAttribute('data-drawer-dragging');
+                shell.style.removeProperty('--dg-story-fold');
+                ['--dg-story-panel-width', '--dg-story-form-width', '--dg-story-anchor',
+                    '--dg-story-reveal'].forEach(function (name) { layout.style.removeProperty(name); });
+            }
+        };
+    }
+
+    function createStoryAssetLoader(onChange) {
+        var assets = new Map();
+
+        async function load(url, asset) {
+            var source;
+            try {
+                var response = await window.fetch(url, {
+                    mode: 'same-origin', credentials: 'omit', headers: { Accept: 'image/*' },
+                    signal: window.AbortSignal?.timeout?.(30000)
+                });
+                var type = response.headers.get('Content-Type') || '';
+                if (!response.ok || !/^image\//i.test(type)) { throw new Error('Image response'); }
+                var encoding = response.headers.get('Content-Encoding');
+                var length = Number(response.headers.get('Content-Length'));
+                if ((!encoding || encoding === 'identity') && Number.isSafeInteger(length) && length > 0) {
+                    asset.total = length;
+                }
+                onChange();
+
+                var blob;
+                if (response.body) {
+                    var chunks = [];
+                    var reader = response.body.getReader();
+                    while (true) {
+                        var chunk = await reader.read();
+                        if (chunk.done) { break; }
+                        chunks.push(chunk.value);
+                        asset.bytes += chunk.value.byteLength;
+                        if (asset.total !== null && asset.bytes > asset.total) { asset.total = null; }
+                        onChange();
+                    }
+                    blob = new Blob(chunks, { type: type });
+                } else {
+                    blob = await response.blob();
+                    asset.bytes = blob.size;
+                }
+                asset.total = asset.bytes;
+                source = URL.createObjectURL(blob);
+                var image = new Image();
+                image.src = source;
+                await image.decode();
+                asset.src = source;
+            } catch (_error) {
+                if (source) { URL.revokeObjectURL(source); }
+                asset.failed = true;
+            } finally {
+                onChange();
+            }
+        }
+
+        return function (url) {
+            if (!assets.has(url)) {
+                var asset = { bytes: 0, total: null, src: '', failed: false };
+                assets.set(url, asset);
+                void load(url, asset);
+            }
+            return assets.get(url);
+        };
+    }
+
+    function mountLoginStories(shell, cards, wide, fa, drawer) {
         function element(tag, className, content) {
             var node = document.createElement(tag);
             node.className = className;
@@ -4219,9 +4798,10 @@
             return node;
         }
 
-        var region = element('aside', 'dg-login-stories');
+        var region = drawer?.panel || element('aside', 'dg-login-stories');
         var rtl = getComputedStyle(shell).direction === 'rtl';
         var multiple = cards.length > 1;
+        var showThumbnails = config.loginStoryNavThumbs !== false;
         region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
         if (multiple) { region.setAttribute('aria-roledescription', fa ? 'نمایش اسلاید' : 'carousel'); }
         var header = element('div', 'dg-story-header');
@@ -4237,18 +4817,31 @@
         announcement.setAttribute('aria-live', 'polite');
         var articles = [];
         var indicators = [];
+        var previews = [];
+        var percentFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en', { style: 'percent', maximumFractionDigits: 0 });
+        var bytesFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en');
 
         cards.forEach(function (card, index) {
             var article = element('article', 'dg-story-card');
             article.dir = rtl ? 'rtl' : 'ltr';
+            article.dataset.storyIndex = index;
             var figure = element('div', 'dg-story-figure');
+            var previewImage = element('img', 'dg-story-preview');
+            previewImage.alt = '';
+            previewImage.draggable = false;
+            previewImage.hidden = true;
             var photo = element('img', 'dg-story-image');
-            photo.dataset.lightImage = card.lightImage;
-            photo.dataset.darkImage = card.darkImage;
             photo.alt = card.alt;
             photo.decoding = 'async';
             photo.draggable = false;
-            figure.append(photo);
+            photo.setAttribute('aria-hidden', 'true');
+            var transfer = element('div', 'dg-story-transfer');
+            var caption = element('span', 'dg-story-transfer-label', fa ? 'دریافت تصویر' : 'Downloading artwork');
+            var readout = element('span', 'dg-story-transfer-readout');
+            var meter = element('progress', 'dg-story-download');
+            meter.setAttribute('aria-label', caption.textContent);
+            transfer.append(caption, readout, meter);
+            figure.append(previewImage, photo, transfer);
             card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
             var copy = element('div', 'dg-story-copy');
             if (card.title) { copy.append(element('h2', 'dg-story-title', card.title)); }
@@ -4270,6 +4863,18 @@
                 var dot = element('button', 'dg-story-dot');
                 dot.type = 'button';
                 dot.setAttribute('aria-label', card.tab ? position + ', ' + card.tab : position);
+                if (showThumbnails) {
+                    var tile = element('span', 'dg-story-thumb');
+                    tile.setAttribute('aria-hidden', 'true');
+                    var thumb = element('img', 'dg-story-thumb-image');
+                    thumb.alt = '';
+                    thumb.draggable = false;
+                    thumb.hidden = true;
+                    var thumbMeter = element('progress', 'dg-story-download');
+                    tile.append(thumb, thumbMeter);
+                    dot.append(tile);
+                    previews.push({ photo: thumb, meter: thumbMeter });
+                }
                 if (card.tab) { dot.append(element('span', 'dg-story-label', card.tab)); }
                 dot.addEventListener('click', function () { select(index, true); });
                 indicators.push(dot);
@@ -4292,19 +4897,90 @@
             track.append(wrapCopy(ordered[0]));
         }
 
-        var photos = track.querySelectorAll('.dg-story-image');
+        var figures = Array.from(track.querySelectorAll('.dg-story-figure'), function (figure) {
+            return {
+                index: Number(figure.closest('article').dataset.storyIndex),
+                root: figure,
+                preview: figure.querySelector('.dg-story-preview'),
+                photo: figure.querySelector('.dg-story-image'),
+                transfer: figure.querySelector('.dg-story-transfer'),
+                label: figure.querySelector('.dg-story-transfer-label'),
+                readout: figure.querySelector('.dg-story-transfer-readout'),
+                meter: figure.querySelector('progress')
+            };
+        });
+        var pictures = [];
+        var repaint = 0;
+        var getAsset = createStoryAssetLoader(function () {
+            if (!repaint) { repaint = window.requestAnimationFrame(renderImages); }
+        });
+
         function syncImages() {
-            var theme = document.body.dataset.dgTheme === 'dark' ? 'darkImage' : 'lightImage';
-            photos.forEach(function (photo) {
-                var next = photo.dataset[theme];
-                if (photo.getAttribute('src') !== next) { photo.src = next; }
+            var dark = document.body.dataset.dgTheme === 'dark';
+            pictures = cards.map(function (card) {
+                var preview = getAsset(dark ? card.darkThumb : card.lightThumb);
+                var main = getAsset(dark ? card.darkImage : card.lightImage);
+                return { preview: preview, main: main };
             });
+            if (timer !== undefined) { schedule(); }
+            renderImages();
         }
-        syncImages();
-        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
+
+        function setImage(photo, source) {
+            photo.hidden = !source;
+            if (source && photo.getAttribute('src') !== source) { photo.src = source; }
+        }
+
+        function setDownload(meter, state) {
+            meter.hidden = !state.loading;
+            if (state.loading && state.total > 0) {
+                meter.max = state.total;
+                meter.value = state.bytes;
+            } else {
+                meter.removeAttribute('value');
+            }
+        }
+
+        function renderImages() {
+            repaint = 0;
+            var states = pictures.map(function (picture) {
+                var assets = picture.preview === picture.main ? [picture.main] : [picture.preview, picture.main];
+                return {
+                    loading: assets.some(function (asset) { return !asset.src && !asset.failed; }),
+                    bytes: assets.reduce(function (sum, asset) { return sum + asset.bytes; }, 0),
+                    total: assets.every(function (asset) { return asset.total !== null && !asset.failed; })
+                        ? assets.reduce(function (sum, asset) { return sum + asset.total; }, 0) : null
+                };
+            });
+            figures.forEach(function (figure) {
+                var picture = pictures[figure.index];
+                var state = states[figure.index];
+                setImage(figure.preview, picture.preview === picture.main ? '' : picture.preview.src);
+                var source = picture.main.src;
+                if (source && figure.photo.getAttribute('src') !== source) { figure.photo.src = source; }
+                figure.root.toggleAttribute('data-artwork-ready', Boolean(source));
+                figure.photo.setAttribute('aria-hidden', String(!source));
+                figure.transfer.hidden = !state.loading && !picture.main.failed;
+                figure.label.textContent = picture.main.failed ? (fa ? 'تصویر باز نشد' : 'Artwork unavailable') :
+                    (fa ? 'دریافت تصویر' : 'Downloading artwork');
+                figure.readout.textContent = state.loading ? (state.total > 0 ? percentFormat.format(Math.floor(state.bytes * 100 / state.total) / 100) :
+                    (state.bytes ? bytesFormat.format(state.bytes) + (fa ? ' بایت' : ' bytes') : '')) : '';
+                setDownload(figure.meter, state);
+            });
+            previews.forEach(function (preview, index) {
+                var picture = pictures[index];
+                setImage(preview.photo, picture.preview.src || picture.main.src);
+                setDownload(preview.meter, states[index]);
+            });
+            if (multiple && timer === undefined) { schedule(); }
+        }
 
         var active = 0;
         var timer;
+        var interval = 9000;
+        var remaining = interval;
+        var startedAt;
+        var progressAnimation;
         var snapTimer;
         var drag;
         var hovering = false;
@@ -4313,12 +4989,40 @@
         var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
         var rotation = element('button', 'dg-story-rotation');
         rotation.type = 'button';
+        var progressOnEdge = config.loginStoryProgress === 'edge';
+        var progress = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        progress.setAttribute('class', 'dg-story-progress' + (progressOnEdge ? ' dg-story-progress--edge' : ''));
+        progress.setAttribute('aria-hidden', 'true');
+        progress.setAttribute('preserveAspectRatio', 'none');
+        progress.setAttribute('viewBox', progressOnEdge ? '0 0 400 4' : '0 0 40 40');
+        var progressLine = document.createElementNS(progress.namespaceURI, 'path');
+        progressLine.setAttribute('pathLength', '1');
+        progressLine.setAttribute('d', progressOnEdge ? 'M1 2H399' :
+            'M20 1h8a11 11 0 0 1 11 11v16a11 11 0 0 1-11 11H12A11 11 0 0 1 1 28V12A11 11 0 0 1 12 1Z');
+        progress.append(progressLine);
 
-        function schedule() {
-            window.clearTimeout(timer);
-            if (multiple && !drag && playing && !reduced.matches && wide.matches && onScreen &&
-                !document.hidden && !hovering && !region.contains(document.activeElement)) {
-                timer = window.setTimeout(function () { select(active + 1, false); }, 9000);
+        function schedule(reset) {
+            if (!multiple) { return; }
+            if (timer !== undefined) {
+                window.clearTimeout(timer);
+                timer = undefined;
+                remaining = Math.max(1, remaining - (performance.now() - startedAt));
+            }
+            if (reset === true) { remaining = interval; }
+            progressAnimation?.cancel();
+            var offset = String(remaining / interval);
+            progressLine.style.strokeDashoffset = offset;
+            var focused = document.activeElement;
+            var artwork = pictures[active]?.main;
+            if ((artwork?.src || artwork?.failed) && (!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
+                !document.hidden && !hovering && (focused === rotation || !region.contains(focused))) {
+                startedAt = performance.now();
+                progressAnimation = progressLine.animate?.([{ strokeDashoffset: offset }, { strokeDashoffset: '0' }],
+                    { duration: remaining, easing: 'linear', fill: 'forwards' });
+                timer = window.setTimeout(function () {
+                    timer = undefined;
+                    select(active + 1, false);
+                }, remaining);
             }
         }
 
@@ -4355,7 +5059,7 @@
                 indicators[position]?.setAttribute('aria-pressed', String(visible));
             });
             if (manual) { announcement.textContent = indicators[active]?.getAttribute('aria-label') || cards[active].title; }
-            schedule();
+            schedule(manual || previous !== active);
         }
 
         function syncRotation() {
@@ -4371,6 +5075,7 @@
         region.append(header, stage);
         if (multiple) {
             stage.dataset.draggable = '';
+            (progressOnEdge ? region : rotation).append(progress);
             var previous = storyArrow('back', fa ? 'اسلاید قبلی' : 'Previous slide', -1);
             var next = storyArrow('arrow', fa ? 'اسلاید بعدی' : 'Next slide', 1);
             navigation.append(previous, dots, next, rotation);
@@ -4436,6 +5141,7 @@
             region.addEventListener('pointerleave', function () { hovering = false; schedule(); });
             region.addEventListener('focusin', schedule);
             region.addEventListener('focusout', function () { window.setTimeout(schedule, 0); });
+            if (drawer) { shell.addEventListener('digitalogic:story-drawer-change', schedule); }
             document.addEventListener('visibilitychange', schedule);
             wide.addEventListener('change', schedule);
             reduced.addEventListener('change', syncRotation);
@@ -4448,9 +5154,14 @@
             syncRotation();
         }
 
+        if (drawer) { drawer.ready(); }
+        else {
+            shell.prepend(region);
+            shell.classList.add('dg-has-login-stories');
+        }
+        syncImages();
         select(0, false);
-        shell.prepend(region);
-        shell.classList.add('dg-has-login-stories');
+        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
     }
 
 
@@ -4664,20 +5375,24 @@
         mountLoginAlternatives();
         decorateAuthControls();
         prepareDigitsTextFields();
-        mountRememberedAccount();
         normalizeDigitsLoginFallback();
         normalizeRecoveryIdentity();
         prepareDigitsRegistrationAutofill();
     }
 
     var authIcons = {
+        device: 'M4 5h16v11H4z M8 20h8m-4-4v4',
         theme: 'M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 1.5-3.3A1 1 0 0 1 16.3 16H18a3 3 0 0 0 3-3c0-5.5-4-10-9-10Z M7.5 12h.01 M10 7.5h.01 M15 7.8h.01 M17 12h.01',
         moon: 'M20.8 14.1A9 9 0 0 1 9.9 3.2a9 9 0 1 0 10.9 10.9Z',
         sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
         ellipsis: 'M5 12h.01m6.99 0h.01m6.99 0h.01',
         user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+        userPlus: 'M15 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM19 8v6m-3-3h6',
+        chevronDown: 'M6 9l6 6 6-6',
+        dragGrip: 'M9 7h.01 M15 7h.01 M9 12h.01 M15 12h.01 M9 17h.01 M15 17h.01',
+        trash: 'M4 6h16M9 6V3h6v3m3 0-1 15H7L6 6m4 4v7m4-7v7',
         home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
-        email: 'M4 5h16v14H4z M4 6l8 6 8-6',
+        email: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z M3 7l9 6 9-6',
         eye: 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
         eyeOff: 'M3 3l18 18 M10.6 6.1 12 6c6.4 0 10 6 10 6a16 16 0 0 1-3.1 3.4 M6.1 7.9A16.4 16.4 0 0 0 2 12s3.6 6 10 6a11 11 0 0 0 4.1-.8',
         phone: 'M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M10 17h4',
@@ -4687,6 +5402,7 @@
         arrow: 'M5 12h14m-6-6 6 6-6 6',
         back: 'M19 12H5m6-6-6 6 6 6',
         check: 'M5 12l4 4L19 6',
+        close: 'M6 6l12 12M18 6 6 18',
         info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
         edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
         copy: 'M8 8h12v13H8z M16 5V3H4v14h2',
@@ -4721,6 +5437,7 @@
         if (photo) {
             var image = document.createElement('img');
             image.alt = '';
+            image.referrerPolicy = 'no-referrer';
             image.hidden = true;
             image.addEventListener('load', function () { image.hidden = false; }, { once: true });
             image.addEventListener('error', function () { image.remove(); }, { once: true });
@@ -4823,65 +5540,274 @@
         });
     }
 
-    function mountRememberedAccount() {
-        var assigned = config.rememberedAccount;
-        var accounts = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts : [];
-        var identity = document.querySelector('.dg-digits-login-shell input[name="digits_phone"]');
-        var tabs = identity?.closest('.digits-form_tab_container');
-        if ((!accounts.length && !assigned?.login) || !tabs || document.querySelector('.dg-account-hint')) { return; }
-        if (assigned?.login) {
-            accounts = [assigned].concat(accounts.filter(function (account) { return account.login !== assigned.login; }));
+    function mountLoginIdentityPicker(phone, email) {
+        var form = phone.form;
+        function fieldRow(input) {
+            return input.closest('.digits-form_input_row') || input.parentElement;
         }
-        var persian = isPersianLocale();
-        var hint = document.createElement('details');
-        hint.className = 'dg-account-hint';
-        var summary = document.createElement('summary');
-        var displayedAccount;
-        hint.appendChild(summary);
-        function showAccount(node, label, account) {
-            var identity = createAuthIdentity(label, 'user', account?.avatar);
-            identity.classList.add('dg-auth-identity--compact');
-            node.replaceChildren(identity);
-        }
-        function updateSummary(value) {
-            var selected = accounts.find(function (account) { return account.login === value; }) || null;
-            if (displayedAccount === selected) { return; }
-            displayedAccount = selected;
-            showAccount(summary, selected ? (selected.name || selected.login) : (persian ? 'انتخاب حساب' : 'Choose an account'), selected);
-        }
-        function selectAccount(value) {
-            selectDigitsMode('unknown', false);
-            identity.value = value;
-            identity.dispatchEvent(new Event('input', { bubbles: true }));
-            hint.open = false;
-            identity.closest('form').querySelector('.digits-tab_active input:is([name="digits_phone"], [name="digits_email"])')?.focus();
-        }
-        function addChoice(label, value, account) {
-            var choice = document.createElement('button');
-            choice.type = 'button';
-            showAccount(choice, label, account);
-            choice.addEventListener('click', function () { selectAccount(value); });
-            hint.appendChild(choice);
-        }
-        var heading = document.createElement('p');
-        heading.className = 'dg-account-hint-divider';
-        heading.textContent = persian ? 'حساب‌های خارج‌شده' : 'Signed out';
-        hint.appendChild(heading);
-        accounts.forEach(function (account) {
-            addChoice(account.name || account.login, account.login, account);
+        [phone, email].forEach(function (input) {
+            var row = fieldRow(input);
+            row.classList.add('dg-login-identity-field');
+            row.addEventListener('click', function (event) {
+                if (!event.target.closest('button, input, a, .dg-account-menu, .dg-country-code-control')) {
+                    input.focus({ preventScroll: true });
+                }
+            });
         });
-        addChoice(persian ? 'ورود با حساب دیگر' : 'Use another account', '');
-        tabs.before(hint);
-        tabs.addEventListener('input', function (event) {
-            if (event.target.matches('input[name="digits_phone"], input[name="digits_email"]')) {
-                updateSummary(event.target.value);
+        var assigned = config.rememberedAccount;
+        var saved = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts.filter(account => account?.login) : [];
+        if (!form || (!assigned?.login && !saved.length)) { return; }
+
+        var chooseLabel = authRequestLabel('Choose an account', 'انتخاب حساب');
+        var trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'dg-account-field-toggle';
+        trigger.setAttribute('aria-label', chooseLabel);
+        putAuthIcon(trigger, 'chevronDown');
+        var menu = document.createElement('div');
+        menu.id = 'dg-login-account-menu';
+        menu.className = 'dg-account-menu';
+        menu.dir = document.documentElement.dir || 'ltr';
+        menu.hidden = true;
+        menu.setAttribute('role', 'dialog');
+        menu.setAttribute('aria-label', chooseLabel);
+        var title = document.createElement('div');
+        title.id = 'dg-login-account-title';
+        title.className = 'dg-account-field-title';
+        var titleText = document.createElement('bdi');
+        title.appendChild(titleText);
+        var avatar = document.createElement('img');
+        avatar.alt = '';
+        avatar.referrerPolicy = 'no-referrer';
+        avatar.className = 'dg-account-field-avatar';
+        avatar.hidden = true;
+        avatar.addEventListener('load', function () { avatar.hidden = false; });
+        avatar.addEventListener('error', function () { avatar.hidden = true; });
+        var error = document.createElement('p');
+        error.className = 'dg-account-menu-error';
+        error.setAttribute('role', 'alert');
+        var activeInput;
+        var currentMode;
+        var forgetting = false;
+
+        function matchingAccount(value) {
+            return [assigned].concat(saved).find(account => account?.login.toLowerCase() === value.toLowerCase());
+        }
+
+        function closeMenu(restoreFocus) {
+            menu.hidden = true;
+            trigger.setAttribute('aria-expanded', 'false');
+            activeInput?.setAttribute('aria-expanded', 'false');
+            if (restoreFocus) { activeInput?.focus({ preventScroll: true }); }
+        }
+
+        function positionMenu() {
+            if (menu.hidden) { return; }
+            var field = fieldRow(activeInput).getBoundingClientRect();
+            var viewport = window.visualViewport;
+            var top = viewport?.offsetTop || 0;
+            var below = top + (viewport?.height || window.innerHeight) - field.bottom - 16;
+            var above = field.top - top - 16;
+            var openAbove = below < menu.scrollHeight && above > below;
+            menu.classList.toggle('dg-account-menu--above', openAbove);
+            menu.style.maxHeight = Math.max(0, openAbove ? above : below) + 'px';
+        }
+
+        function setValue(value) {
+            closeMenu(false);
+            var input = activeInput || phone;
+            if (!activeInput && !value) { return; }
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            (email.disabled ? phone : email).focus({ preventScroll: true });
+        }
+
+        function addGroup(label, accounts) {
+            if (!accounts.length) { return; }
+            var group = document.createElement('div');
+            group.className = 'dg-account-menu-group';
+            group.setAttribute('role', 'group');
+            group.setAttribute('aria-label', label);
+            var heading = document.createElement('p');
+            heading.className = 'dg-account-menu-label';
+            heading.textContent = label;
+            group.appendChild(heading);
+            accounts.forEach(function (account) {
+                var row = document.createElement('div');
+                row.className = 'dg-account-menu-row';
+                var choice = document.createElement('button');
+                choice.type = 'button';
+                choice.className = 'dg-account-menu-choice';
+                var kind = classifyIdentity(account.login);
+                var icon = account.assigned ? 'device' : kind === 'email' ? 'email' : kind === 'phone' ? 'phone' : 'user';
+                var badge = createAuthIdentity(account.name || account.login, icon, account.assigned ? account.avatar : '');
+                var text = document.createElement('span');
+                text.className = 'dg-account-menu-text';
+                text.appendChild(badge.querySelector('.dg-auth-identity-value'));
+                if (account.name && account.name !== account.login) {
+                    var login = document.createElement('bdi');
+                    login.textContent = account.login;
+                    text.appendChild(login);
+                }
+                choice.append(badge.querySelector('.dg-auth-identity-mark'), text);
+                if (matchingAccount(activeInput.value)?.login === account.login) {
+                    choice.setAttribute('aria-current', 'true');
+                }
+                choice.addEventListener('click', function () { setValue(account.login); });
+                row.appendChild(choice);
+                if (config.forgetAccountNonce) {
+                    var remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'dg-account-menu-remove';
+                    remove.title = authRequestLabel('Remove ' + (account.name || account.login), 'حذف ' + (account.name || account.login));
+                    remove.setAttribute('aria-label', remove.title);
+                    putAuthIcon(remove, 'trash');
+                    remove.addEventListener('click', function () { forgetAccount(account, remove); });
+                    row.appendChild(remove);
+                }
+                group.appendChild(row);
+            });
+            menu.appendChild(group);
+        }
+
+        function renderMenu() {
+            menu.replaceChildren();
+            addGroup(authRequestLabel('This workstation', 'این دستگاه'), assigned?.login ? [assigned] : []);
+            addGroup(authRequestLabel('Signed out', 'حساب‌های خارج‌شده'), saved.filter(account => account.login !== assigned?.login));
+            var another = document.createElement('button');
+            another.type = 'button';
+            another.className = 'dg-account-menu-another';
+            another.textContent = authRequestLabel('Use another account', 'ورود با حساب دیگر');
+            putAuthIcon(another, 'userPlus');
+            another.addEventListener('click', function () { setValue(''); });
+            menu.append(another, error);
+        }
+
+        function openMenu(last) {
+            error.textContent = '';
+            renderMenu();
+            menu.hidden = false;
+            trigger.setAttribute('aria-expanded', 'true');
+            activeInput.setAttribute('aria-expanded', 'true');
+            positionMenu();
+            var choices = menu.querySelectorAll('.dg-account-menu-choice, .dg-account-menu-another');
+            var current = menu.querySelector('[aria-current="true"]');
+            (last ? choices[choices.length - 1] : (current || choices[0]))?.focus({ preventScroll: true });
+        }
+
+        async function forgetAccount(account, remove) {
+            if (forgetting) { return; }
+            forgetting = true;
+            remove.disabled = true;
+            error.textContent = '';
+            try {
+                var response = await fetch(config.ajaxUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: new URLSearchParams({ action: 'digitalogic_forget_account_hint', nonce: config.forgetAccountNonce, login: account.login })
+                });
+                if (!response.ok || !(await response.json()).success) { throw new Error('Could not remove account hint'); }
+                var clear = matchingAccount(activeInput?.value || '')?.login === account.login;
+                var wasOpen = !menu.hidden;
+                if (assigned?.login === account.login) { config.rememberedAccount = assigned = null; }
+                config.rememberedAccounts = saved = saved.filter(item => item.login !== account.login);
+                if (clear) {
+                    setValue('');
+                } else {
+                    updateField(activeInput || (email.disabled ? phone : email), currentMode);
+                }
+                if (wasOpen && !clear && activeInput) { openMenu(false); }
+            } catch (_error) {
+                remove.disabled = false;
+                error.textContent = authRequestLabel('Could not remove this account from this browser. Try again.', 'حذف حساب از این مرورگر انجام نشد. دوباره امتحان کنید.');
+                positionMenu();
+            } finally {
+                forgetting = false;
+            }
+        }
+
+        function updateField(input, mode) {
+            var available = (assigned?.login || saved.length) && !form.dataset.dgSmsIdentity && !form.closest('[data-dg-recovery]');
+            var previous = activeInput;
+            if (previous && (!available || previous !== input)) {
+                closeMenu(false);
+                ['role', 'aria-haspopup', 'aria-controls', 'aria-expanded'].forEach(function (attribute) { previous.removeAttribute(attribute); });
+                var descriptions = (previous.getAttribute('aria-describedby') || '').split(' ').filter(id => id && id !== title.id);
+                if (descriptions.length) { previous.setAttribute('aria-describedby', descriptions.join(' ')); }
+                else { previous.removeAttribute('aria-describedby'); }
+                fieldRow(previous).classList.remove('dg-login-identity-field--picker');
+                trigger.remove();
+                title.remove();
+                avatar.remove();
+                menu.remove();
+                activeInput = null;
+            }
+            currentMode = mode;
+            if (!available) { return; }
+            if (activeInput !== input) {
+                activeInput = input;
+                var field = fieldRow(input);
+                field.classList.add('dg-login-identity-field--picker');
+                input.before(title, avatar);
+                field.append(trigger, menu);
+                [input, trigger].forEach(function (control) {
+                    control.setAttribute('aria-haspopup', 'dialog');
+                    control.setAttribute('aria-controls', menu.id);
+                    control.setAttribute('aria-expanded', 'false');
+                });
+                input.setAttribute('role', 'combobox');
+                input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), title.id].filter(Boolean).join(' '));
+            }
+            var account = matchingAccount(input.value);
+            var caption = mode === 'email' ? authRequestLabel('Email', 'ایمیل')
+                : mode === 'phone' ? authRequestLabel('Phone number', 'شماره تلفن')
+                    : authRequestLabel('Username', 'نام کاربری');
+            titleText.textContent = account?.name || (input.value ? caption : chooseLabel);
+            var holder = input.closest('.dg-auth-input-icon');
+            if (holder && account?.assigned && mode === 'username') { putAuthIcon(holder, 'device'); }
+            var photo = (mode !== 'phone' && account?.assigned && account.avatar) || null;
+            if (photo !== avatar.getAttribute('src')) {
+                avatar.hidden = true;
+                if (photo) { avatar.src = photo; }
+                else { avatar.removeAttribute('src'); }
+            }
+        }
+
+        trigger.addEventListener('click', function () { menu.hidden ? openMenu(false) : closeMenu(true); });
+        [phone, email, trigger].forEach(function (control) {
+            control.addEventListener('keydown', function (event) {
+                if (activeInput && ['ArrowDown', 'ArrowUp'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                    event.preventDefault();
+                    openMenu(event.key === 'ArrowUp');
+                }
+            });
+        });
+        menu.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                closeMenu(true);
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                var choices = Array.from(menu.querySelectorAll('.dg-account-menu-choice, .dg-account-menu-another'));
+                var current = choices.findIndex(button => button === event.target || button.parentElement.contains(event.target));
+                var next = choices[(current + (event.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length];
+                next?.focus({ preventScroll: true });
+                next?.scrollIntoView({ block: 'nearest' });
             }
         });
-        if (assigned?.login && !identity.value) {
-            identity.value = assigned.login;
-            identity.dispatchEvent(new Event('input', { bubbles: true }));
-        } else {
-            updateSummary(identity.value);
+        document.addEventListener('pointerdown', function (event) {
+            if (activeInput && !fieldRow(activeInput).contains(event.target)) { closeMenu(false); }
+        });
+        menu.addEventListener('focusout', function (event) {
+            if (event.relatedTarget && !menu.contains(event.relatedTarget) && event.relatedTarget !== trigger) { closeMenu(false); }
+        });
+        window.addEventListener('resize', positionMenu);
+        window.visualViewport?.addEventListener('resize', positionMenu);
+        loginAccountPickers.set(form, updateField);
+        if (assigned?.login && !phone.value && !email.value && !authRecovery) {
+            phone.value = assigned.login;
+            phone.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
 
@@ -4913,13 +5839,10 @@
                     document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(function (node) {
                         urls.add(node.src || node.href);
                     });
-                    document.querySelectorAll('.dg-story-image').forEach(function (image) {
-                        urls.add(image.dataset.lightImage);
-                        urls.add(image.dataset.darkImage);
-                    });
                     performance.getEntriesByType('resource').forEach(function (entry) {
                         if (['css', 'script', 'link'].includes(entry.initiatorType) ||
-                            entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/')) {
+                            (entry.initiatorType === 'img' &&
+                                entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/'))) {
                             urls.add(entry.name);
                         }
                     });
@@ -4957,7 +5880,7 @@
         if (!card) { return; }
 
         var editing = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
-        var useful = '[data-call-code], [data-call-dial][href^="tel:"], [data-call-preview-dial][href^="tel:"]';
+        var useful = '[data-call-code], [data-call-dial][href^="tel:"]';
         var fa = isPersianLocale();
         var trigger;
         var menu = document.createElement('div');
@@ -5084,6 +6007,25 @@
         });
     }
 
+    async function browserSupportsPasskeys() {
+        var credentials = window.PublicKeyCredential;
+        if (!window.isSecureContext || !credentials || typeof navigator.credentials?.get !== 'function') { return false; }
+        try {
+            if (typeof credentials.getClientCapabilities === 'function') {
+                var capabilities = await credentials.getClientCapabilities();
+                if (capabilities.passkeyPlatformAuthenticator || capabilities.hybridTransport || capabilities.userVerifyingPlatformAuthenticator) {
+                    return true;
+                }
+            }
+        } catch (error) { /* Older browsers can still report a local authenticator. */ }
+        try {
+            return typeof credentials.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+                && await credentials.isUserVerifyingPlatformAuthenticatorAvailable();
+        } catch (error) {
+            return false;
+        }
+    }
+
     function mountLoginAlternatives() {
         var form = document.querySelector('.dg-digits-login-shell .digits-form_login');
         if (!form) {
@@ -5095,23 +6037,24 @@
         if (widget && !shell.contains(widget)) {
             shell.appendChild(widget);
         }
-        var passkey = form.querySelector('.digits-form_passwordless_login');
         var login = form.closest('form') || form;
-        var social = login.querySelector('.digits-social-logins-box');
-        var disclosure = (social && social.querySelector('.dg-passkey-options')) || form.querySelector('.dg-passkey-options');
-        if (!disclosure && passkey) {
-            disclosure = document.createElement('details');
-            disclosure.className = 'dg-passkey-options';
-            var summary = document.createElement('summary');
-            summary.textContent = getLabel('passkeyOptions', 'Other sign-in options');
-            disclosure.appendChild(summary);
-            form.appendChild(disclosure);
-        }
-        if (social && disclosure && disclosure.parentElement !== social) {
-            social.appendChild(disclosure);
-        }
-
-        if (passkey && passkey.parentElement !== disclosure) {
+        var passkey = login.querySelector('.digits-form_passwordless_login');
+        if (!passkey || passkey.dataset.dgPasskeyReady) { return; }
+        passkey.dataset.dgPasskeyReady = 'true';
+        passkeySupport ||= browserSupportsPasskeys();
+        void passkeySupport.then(function (supported) {
+            if (!supported || !passkey.isConnected) { return; }
+            var social = login.querySelector('.digits-social-logins-box');
+            var disclosure = login.querySelector('.dg-passkey-options');
+            if (!disclosure) {
+                disclosure = document.createElement('details');
+                disclosure.className = 'dg-passkey-options';
+                var summary = document.createElement('summary');
+                summary.textContent = getLabel('passkeyOptions', 'Other sign-in options');
+                putAuthIcon(summary, 'more');
+                disclosure.appendChild(summary);
+                (social || form).appendChild(disclosure);
+            }
             passkey.type = 'button';
             passkey.classList.add('dg-icon-label-action');
             var label = document.createElement('span');
@@ -5119,7 +6062,7 @@
             passkey.replaceChildren(label);
             putAuthIcon(passkey, 'key');
             disclosure.appendChild(passkey);
-        }
+        });
     }
 
     function prepareDigitsTextFields() {
@@ -5163,14 +6106,15 @@
         var transition;
 
         function activeStep() {
+            if (shell.classList.contains('dg-auth-is-success')) { return shell.querySelector('.dg-auth-success'); }
             if (shell.classList.contains('dg-call-code-active')) {
-                return shell.querySelector('.dg-call-unified [data-call-instructions]');
+                return shell.querySelector('.dg-call-unified :is([data-call-instructions], [data-call-preview]):not([hidden])');
             }
             var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
             if (!form) { return null; }
             var steps = Array.from(form.querySelectorAll('.digits-form_tab_container')).filter(isVisibleElement);
             var step = steps[steps.length - 1] || form;
-            var code = step.querySelector('.dg-otp-editor');
+            var code = step.querySelector('.dg-otp-stack');
             return code && isVisibleElement(code) ? code : step;
         }
 
@@ -5181,9 +6125,12 @@
             previous = step;
             transition?.cancel();
             if (!step?.animate || motion.matches) { return; }
-            transition = step.animate([{ opacity: 0.58 }, { opacity: 1 }], {
-                duration: 180,
-                easing: 'cubic-bezier(0.2, 0.75, 0.25, 1)'
+            transition = step.animate([
+                { opacity: 0.45, transform: 'translateY(6px)' },
+                { opacity: 1, transform: 'translateY(0)' }
+            ], {
+                duration: step.matches('.dg-auth-success') ? 290 : 220,
+                easing: 'cubic-bezier(0.2, 0.7, 0.25, 1)'
             });
         }).observe(shell, {
             subtree: true,
@@ -5193,6 +6140,91 @@
         });
         motion.addEventListener?.('change', function () {
             if (motion.matches) { transition?.cancel(); }
+        });
+    }
+
+    function fitLoginOptionsToViewport() {
+        var shell = document.querySelector('body.login #login > .dg-digits-login-shell');
+        if (!shell || shell.dataset.dgViewportFit) { return; }
+        shell.dataset.dgViewportFit = 'true';
+        var viewport = window.visualViewport;
+        var frame = 0;
+        var reserve = ['data-dg-reserve-phone', 'data-dg-reserve-passkey'];
+
+        function measure() {
+            frame = 0;
+            var visualHeight = viewport?.scale === 1 && viewport.height < document.documentElement.clientHeight - 1
+                ? Math.floor(viewport.height) + 'px' : '';
+            document.body.style.setProperty('--dg-login-viewport-height', visualHeight);
+
+            var form = shell.querySelector('form.digloginpage.digits_form_index_section');
+            var panel = form?.closest('.digits-form_container') || form;
+            var scrollTop = panel?.scrollTop || 0;
+            reserve.forEach(function (attribute) { shell.removeAttribute(attribute); });
+            if (!panel || !isVisibleElement(form)) { return; }
+
+            var shouldReserve = [
+                callVerificationEnabled(shell) && Boolean(form.querySelector('.dg-phone-channels')),
+                isVisibleElement(form.querySelector('.dg-passkey-options'))
+            ];
+            reserve.forEach(function (attribute, index) {
+                if (!shouldReserve[index]) { return; }
+                shell.setAttribute(attribute, '');
+                if (panel.scrollHeight > panel.clientHeight) { shell.removeAttribute(attribute); }
+            });
+            if (scrollTop && panel.scrollTop !== scrollTop) { panel.scrollTop = scrollTop; }
+        }
+
+        function schedule() {
+            if (!frame) { frame = window.requestAnimationFrame(measure); }
+        }
+
+        var formContainer = shell.querySelector(':scope > :is(.digits-form_container, form)') || shell;
+        new MutationObserver(schedule).observe(formContainer, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'open', 'class']
+        });
+        if (window.ResizeObserver) { new ResizeObserver(schedule).observe(shell); }
+        viewport?.addEventListener('resize', schedule);
+        window.addEventListener('resize', schedule);
+        document.fonts?.ready.then(schedule);
+        schedule();
+    }
+
+    function observeAuthChallenges() {
+        var shell = document.querySelector('.dg-digits-login-shell');
+        if (!shell) { return; }
+        var selector = '.digits_captcha_row, .cf-turnstile, .g-recaptcha, .h-captcha, iframe[src*="challenges.cloudflare.com"], iframe[src*="hcaptcha.com"], iframe[src*="/recaptcha/"]';
+        var watched = new Set();
+        var sizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+
+        function update() {
+            var widgets = Array.from(shell.querySelectorAll(selector));
+            watched.forEach(function (widget) {
+                if (!widgets.includes(widget)) { sizeObserver?.unobserve(widget); watched.delete(widget); }
+            });
+            widgets.forEach(function (widget) {
+                if (!watched.has(widget)) { sizeObserver?.observe(widget); watched.add(widget); }
+            });
+            var active = widgets.find(function (widget) {
+                if (widget.closest('[hidden], .grecaptcha-badge, [data-size="invisible"]')) { return false; }
+                var bounds = widget.getBoundingClientRect();
+                return bounds.width >= 40 && bounds.height >= 24 && getComputedStyle(widget).visibility === 'visible';
+            });
+            shell.toggleAttribute('data-dg-auth-challenge', Boolean(active));
+            var step = active?.closest('.digits-form_login, .digits-form_register');
+            var container = active;
+            while (step && container.parentElement !== step) { container = container.parentElement; }
+            shell.querySelectorAll('[data-dg-position-challenge]').forEach(function (node) {
+                if (node !== container || !step) { node.removeAttribute('data-dg-position-challenge'); }
+            });
+            if (step && !container.matches('.digits-form_tab_wrapper, .digits-form_rememberme')) {
+                container.toggleAttribute('data-dg-position-challenge', true);
+            }
+        }
+
+        update();
+        new MutationObserver(update).observe(shell, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'style', 'class', 'src']
         });
     }
 
@@ -5216,7 +6248,7 @@
     function enableRipples() {
         document.addEventListener('pointerdown', function (event) {
             var target = event.target.closest('button, .button, .page-title-action, #wpadminbar a, .digits-social-btn');
-            if (!target || target.disabled || target.matches('.ab-empty-item, .dg-skip-password')) {
+            if (!target || target.disabled || target.matches('.ab-empty-item, .dg-skip-password, .dg-story-drawer-toggle')) {
                 return;
             }
 
@@ -5239,10 +6271,15 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        setTheme(currentTheme(), false);
-        migrateLegacyStoredTheme();
-        bindThemeStorageSync();
+        if (document.body?.classList.contains('login')) {
+            bindLoginTheme();
+        } else {
+            setTheme(currentTheme(), false);
+            migrateLegacyStoredTheme();
+            bindThemeStorageSync();
+        }
         bindThemeToggles();
+        fitAdminToolbar();
         mountLoginFooter();
         buildLanguageSwitcher();
         injectLateLoginOverrides();
@@ -5259,9 +6296,12 @@
         observeAuthChrome();
         routeBrandedAuth?.();
         animateBrandedAuthSteps();
+        observeAuthChallenges();
+        fitLoginOptionsToViewport();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();
+        document.querySelectorAll('[data-dg-toast-on-load]').forEach(enhanceToast);
         observeInlineMessages();
         if (!document.body.classList.contains('login')) { enableRipples(); }
     });

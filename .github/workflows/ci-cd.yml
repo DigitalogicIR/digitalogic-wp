@@ -108,6 +108,9 @@ jobs:
         npm --prefix ops/seo-monitor run check
         npm --prefix ops/seo-monitor test
 
+    - name: Check durable product content worker
+      run: python3 -m unittest discover -s ops/product-content -p 'test_worker.py'
+
     - name: Validate the digest-pinned sudoers policy
       run: |
         sudoers_candidate="$(mktemp /tmp/digitalogic-seo-monitor-sudoers.XXXXXX)"
