@@ -3,7 +3,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: Digitalogic 1.7.0\n"
-"Report-Msgid-Bugs-To: https://github.com/atomicdeploy/digitalogic-wp/issues\n"
+"Report-Msgid-Bugs-To: https://github.com/DigitalogicIR/digitalogic-wp/issues\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
@@ -21,7 +21,7 @@ msgstr ""
 
 #. Plugin URI of the plugin
 #: digitalogic.php
-msgid "https://github.com/atomicdeploy/digitalogic-wp"
+msgid "https://github.com/DigitalogicIR/digitalogic-wp"
 msgstr ""
 
 #. Description of the plugin

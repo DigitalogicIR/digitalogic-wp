@@ -42,7 +42,6 @@ final class Digitalogic_Plugin_Admin_Branding {
 		add_filter( 'gettext_digits', array( self::class, 'translate_digits_passkeys' ), 10, 2 );
         add_action('wp_ajax_digitalogic_set_admin_theme', [self::class, 'ajax_set_admin_theme']);
         add_action('admin_bar_menu', [self::class, 'admin_bar_menu'], 1);
-        add_action('wp_dashboard_setup', [self::class, 'register_dashboard_widgets']);
         add_filter('admin_body_class', [self::class, 'admin_body_class']);
         add_filter('login_body_class', [self::class, 'login_body_class']);
         add_filter('login_headerurl', [self::class, 'login_header_url'], 9999);
@@ -61,6 +60,7 @@ final class Digitalogic_Plugin_Admin_Branding {
         $admin_color = wp_json_encode(self::current_user_admin_color());
         $is_login = wp_json_encode(current_filter() === 'login_head');
 
+        // phpcs:disable WordPress.Security.EscapeOutput.HeredocOutputNotEscaped -- Every interpolated value is JSON-encoded above.
         echo <<<HTML
 <script>
 (function() {
@@ -95,6 +95,7 @@ final class Digitalogic_Plugin_Admin_Branding {
 })();
 </script>
 HTML;
+        // phpcs:enable WordPress.Security.EscapeOutput.HeredocOutputNotEscaped
     }
 
     public static function enqueue_admin_assets(): void {
@@ -383,52 +384,6 @@ HTML;
             'theme' => $theme,
             'admin_color' => $admin_color,
         ];
-    }
-
-    public static function register_dashboard_widgets(): void {
-        wp_add_dashboard_widget(
-            'digitalogic-admin-overview',
-            'Digitalogic Control Center',
-            [self::class, 'render_dashboard_widget']
-        );
-    }
-
-    public static function render_dashboard_widget(): void {
-        $wordfence = self::wordfence_status();
-        $proxy = self::proxy_status();
-
-        $security_state = $wordfence['captcha_enabled'] ? 'Protected with reCAPTCHA v3' : 'CAPTCHA is disabled';
-        $security_tone = $wordfence['captcha_enabled'] ? 'success' : 'warning';
-        $proxy_state = $proxy['enabled']
-            ? sprintf('Proxy %s:%s with bypass: %s', $proxy['host'], $proxy['port'], $proxy['bypass'])
-            : 'No WordPress HTTP proxy constants are enabled.';
-
-        echo '<div class="dg-dashboard-grid">';
-        echo '<section class="dg-dashboard-card">';
-        echo '<div class="dg-dashboard-card__eyebrow">Brand</div>';
-        echo '<h3>Digitalogic admin workspace</h3>';
-        echo '<p>Theme-aware controls, cleaner notices, and faster access to the parts of WordPress you use most.</p>';
-        echo '<div class="dg-dashboard-actions">';
-        echo '<a class="button button-primary" href="' . esc_url(admin_url()) . '">Open dashboard</a>';
-        echo '<a class="button" href="' . esc_url(home_url('/')) . '" target="_blank" rel="noopener">View site</a>';
-        echo '</div>';
-        echo '</section>';
-
-        echo '<section class="dg-dashboard-card">';
-        echo '<div class="dg-dashboard-card__eyebrow">Security</div>';
-        echo '<div class="dg-dashboard-pill dg-dashboard-pill--' . esc_attr($security_tone) . '">' . esc_html($security_state) . '</div>';
-        echo '<p>Provider: ' . esc_html($wordfence['provider']) . '</p>';
-        echo '<p>Mode: ' . esc_html($wordfence['captcha_enabled'] ? 'Login protection enabled' : 'Manual sign-in only') . '</p>';
-        echo '<a class="button" href="' . esc_url(admin_url('admin.php?page=WFLS#top#settings')) . '">Open Wordfence settings</a>';
-        echo '</section>';
-
-        echo '<section class="dg-dashboard-card">';
-        echo '<div class="dg-dashboard-card__eyebrow">Proxy</div>';
-        echo '<div class="dg-dashboard-pill dg-dashboard-pill--' . esc_attr($proxy['enabled'] ? 'info' : 'muted') . '">' . esc_html($proxy['enabled'] ? 'Selective proxy enabled' : 'Direct outbound mode') . '</div>';
-        echo '<p>' . esc_html($proxy_state) . '</p>';
-        echo '<p>WordPress outbound proxy rules are read from <code>wp-config.php</code>.</p>';
-        echo '</section>';
-        echo '</div>';
     }
 
     public static function admin_footer_text(string $text): string {
@@ -910,64 +865,4 @@ CSS;
         return $cached;
     }
 
-    private static function wordfence_status(): array {
-        static $cached = null;
-
-        if (is_array($cached)) {
-            return $cached;
-        }
-
-        global $wpdb;
-
-        $settings_table = $wpdb->prefix . 'wfls_settings';
-        $defaults = [
-            'captcha_enabled' => false,
-            'has_keys' => false,
-            'provider' => 'Google reCAPTCHA v3',
-        ];
-
-        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $settings_table));
-        if ($table_exists !== $settings_table) {
-            $cached = $defaults;
-            return $cached;
-        }
-
-        $rows = $wpdb->get_results(
-            "SELECT name, value FROM {$settings_table} WHERE name IN ('enable-auth-captcha', 'recaptcha-site-key', 'recaptcha-secret')",
-            ARRAY_A
-        );
-
-        if (!is_array($rows)) {
-            $cached = $defaults;
-            return $cached;
-        }
-
-        $map = [];
-        foreach ($rows as $row) {
-            if (!isset($row['name'], $row['value'])) {
-                continue;
-            }
-
-            $map[$row['name']] = (string) $row['value'];
-        }
-
-        $cached = [
-            'captcha_enabled' => !empty($map['enable-auth-captcha']) && $map['enable-auth-captcha'] !== '0',
-            'has_keys' => !empty($map['recaptcha-site-key']) && !empty($map['recaptcha-secret']),
-            'provider' => 'Google reCAPTCHA v3',
-        ];
-
-        return $cached;
-    }
-
-    private static function proxy_status(): array {
-        $enabled = defined('WP_PROXY_HOST') && defined('WP_PROXY_PORT');
-
-        return [
-            'enabled' => $enabled,
-            'host' => $enabled ? (string) WP_PROXY_HOST : '',
-            'port' => $enabled ? (string) WP_PROXY_PORT : '',
-            'bypass' => defined('WP_PROXY_BYPASS_HOSTS') ? (string) WP_PROXY_BYPASS_HOSTS : 'n/a',
-        ];
-    }
 }

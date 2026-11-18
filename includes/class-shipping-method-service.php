@@ -2967,8 +2967,8 @@ final class Digitalogic_Shipping_Method_Service {
         if (function_exists('acf_get_form_data')) {
             $post_id = absint(acf_get_form_data('post_id'));
         }
-        if (!$post_id && isset($_POST['post_ID'])) {
-            $post_id = absint(wp_unslash($_POST['post_ID']));
+        if (!$post_id && isset($_POST['post_ID'])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Read-only post ID lookup inside the ACF save flow, which verifies its own nonce.
+            $post_id = absint(wp_unslash($_POST['post_ID'])); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Read-only post ID lookup inside the ACF save flow, which verifies its own nonce.
         }
         $current_row = $post_id
 			? $this->read_product_method_meta($post_id)

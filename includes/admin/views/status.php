@@ -30,7 +30,7 @@ $update_date_raw = $options->get_update_date(); // Keep raw format for debug inf
 
 
 // Server info
-$server_software = $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown';
+$server_software = sanitize_text_field(wp_unslash($_SERVER['SERVER_SOFTWARE'] ?? 'Unknown'));
 $max_upload = ini_get('upload_max_filesize');
 $max_post = ini_get('post_max_size');
 $memory_limit = ini_get('memory_limit');
@@ -61,37 +61,37 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
 
 ?>
 <div class="wrap">
-    <h1><?php _e('Status & Diagnostics', 'digitalogic'); ?></h1>
+    <h1><?php esc_html_e('Status & Diagnostics', 'digitalogic'); ?></h1>
     
-    <p><?php _e('System information and plugin diagnostics for troubleshooting and support.', 'digitalogic'); ?></p>
+    <p><?php esc_html_e('System information and plugin diagnostics for troubleshooting and support.', 'digitalogic'); ?></p>
     
     <!-- WordPress Environment -->
     <div class="digitalogic-section">
-        <h2><?php _e('WordPress Environment', 'digitalogic'); ?></h2>
+        <h2><?php esc_html_e('WordPress Environment', 'digitalogic'); ?></h2>
         <table class="widefat striped">
             <tbody>
                 <tr>
-                    <td><strong><?php _e('WordPress Version', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('WordPress Version', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($wp_version); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('WooCommerce Version', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('WooCommerce Version', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($wc_version); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Site URL', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Site URL', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(site_url()); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Home URL', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Home URL', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(home_url()); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Language', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Language', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(get_locale()); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Timezone', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Timezone', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(wp_timezone_string()); ?></td>
                 </tr>
             </tbody>
@@ -100,15 +100,15 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
     
     <!-- Server Environment -->
     <div class="digitalogic-section">
-        <h2><?php _e('Server Environment', 'digitalogic'); ?></h2>
+        <h2><?php esc_html_e('Server Environment', 'digitalogic'); ?></h2>
         <table class="widefat striped">
             <tbody>
                 <tr>
-                    <td><strong><?php _e('Server Software', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Server Software', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($server_software); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('PHP Version', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('PHP Version', 'digitalogic'); ?></strong></td>
                     <td>
                         <?php echo esc_html($php_version); ?>
                         <?php if ($php_supported) : ?>
@@ -119,27 +119,27 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
                     </td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Minimum PHP', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Minimum PHP', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($min_php_version); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('MySQL Version', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('MySQL Version', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($mysql_version); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Max Upload Size', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Max Upload Size', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($max_upload); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Max Post Size', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Max Post Size', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($max_post); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Memory Limit', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Memory Limit', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($memory_limit); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Max Execution Time', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Max Execution Time', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($max_execution); ?>s</td>
                 </tr>
             </tbody>
@@ -148,24 +148,24 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
     
     <!-- Plugin Information -->
     <div class="digitalogic-section">
-        <h2><?php _e('Plugin Information', 'digitalogic'); ?></h2>
+        <h2><?php esc_html_e('Plugin Information', 'digitalogic'); ?></h2>
         <table class="widefat striped">
             <tbody>
                 <tr>
-                    <td><strong><?php _e('Plugin Version', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Plugin Version', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($plugin_version); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Plugin Path', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Plugin Path', 'digitalogic'); ?></strong></td>
                     <td><code><?php echo esc_html($plugin_path); ?></code></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Total Products', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Total Products', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(Digitalogic_Number_Formatter::format_integer($product_count)); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Activity Logs', 'digitalogic'); ?></strong></td>
-                    <td><?php echo esc_html(Digitalogic_Number_Formatter::format_integer($logs_count)); ?> <?php _e('entries', 'digitalogic'); ?></td>
+                    <td><strong><?php esc_html_e('Activity Logs', 'digitalogic'); ?></strong></td>
+                    <td><?php echo esc_html(Digitalogic_Number_Formatter::format_integer($logs_count)); ?> <?php esc_html_e('entries', 'digitalogic'); ?></td>
                 </tr>
             </tbody>
         </table>
@@ -173,11 +173,11 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
     
     <!-- Currency Settings -->
     <div class="digitalogic-section">
-        <h2><?php _e('Currency Settings', 'digitalogic'); ?></h2>
+        <h2><?php esc_html_e('Currency Settings', 'digitalogic'); ?></h2>
         <table class="widefat striped">
             <tbody>
                 <tr>
-                    <td><strong><?php _e('WooCommerce Base Currency', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('WooCommerce Base Currency', 'digitalogic'); ?></strong></td>
                     <td>
                         <code><?php echo esc_html($currency_status['code']); ?></code>
                         <?php if ($currency_status['compatible']) : ?>
@@ -186,7 +186,7 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
                     </td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Source IRT Pricing', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Source IRT Pricing', 'digitalogic'); ?></strong></td>
                     <td>
                         <span class="digitalogic-status-label <?php echo $currency_status['compatible'] ? 'is-ready' : 'is-warning'; ?>">
                             <span class="dashicons <?php echo $currency_status['compatible'] ? 'dashicons-yes-alt' : 'dashicons-warning'; ?>" aria-hidden="true"></span>
@@ -196,15 +196,15 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
                     </td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('USD Price (dollar_price)', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('USD Price (dollar_price)', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(Digitalogic_Number_Formatter::format_integer($dollar_price)); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('CNY Price (yuan_price)', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('CNY Price (yuan_price)', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html(Digitalogic_Number_Formatter::format_integer($yuan_price)); ?></td>
                 </tr>
                 <tr>
-                    <td><strong><?php _e('Last Update Date (update_date)', 'digitalogic'); ?></strong></td>
+                    <td><strong><?php esc_html_e('Last Update Date (update_date)', 'digitalogic'); ?></strong></td>
                     <td><?php echo esc_html($update_date); ?> <small>(<?php echo esc_html($update_date_raw); ?>)</small></td>
                 </tr>
             </tbody>
@@ -213,7 +213,7 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
     
     <!-- WooCommerce HPOS Status -->
     <div class="digitalogic-section">
-        <h2><?php _e('WooCommerce HPOS Status', 'digitalogic'); ?></h2>
+        <h2><?php esc_html_e('WooCommerce HPOS Status', 'digitalogic'); ?></h2>
         <table class="widefat striped">
             <tbody>
                 <?php foreach ($wc_features as $feature => $value) : ?>
@@ -233,19 +233,19 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
         
         <?php if ($hpos_status['plugin_compatible'] && $hpos_status['hpos_enabled']) : ?>
             <p class="description" style="color: green;">
-                ✓ <?php _e('This plugin is fully compatible with WooCommerce High-Performance Order Storage (HPOS). All operations use WooCommerce CRUD methods for maximum compatibility.', 'digitalogic'); ?>
+                ✓ <?php esc_html_e('This plugin is fully compatible with WooCommerce High-Performance Order Storage (HPOS). All operations use WooCommerce CRUD methods for maximum compatibility.', 'digitalogic'); ?>
             </p>
         <?php elseif (!$hpos_status['hpos_enabled']) : ?>
             <p class="description">
-                <?php _e('HPOS is available but not currently enabled. The plugin works with both traditional and HPOS storage modes.', 'digitalogic'); ?>
+                <?php esc_html_e('HPOS is available but not currently enabled. The plugin works with both traditional and HPOS storage modes.', 'digitalogic'); ?>
             </p>
         <?php endif; ?>
     </div>
     
     <!-- REST API Endpoints -->
     <div class="digitalogic-section">
-        <h2><?php _e('REST API Endpoints', 'digitalogic'); ?></h2>
-        <p><?php _e('Available REST API endpoints:', 'digitalogic'); ?></p>
+        <h2><?php esc_html_e('REST API Endpoints', 'digitalogic'); ?></h2>
+        <p><?php esc_html_e('Available REST API endpoints:', 'digitalogic'); ?></p>
         <ul>
             <li><code>GET <?php echo esc_html(rest_url('digitalogic/v1/products')); ?></code></li>
             <li><code>POST <?php echo esc_html(rest_url('digitalogic/v1/products/batch')); ?></code></li>
@@ -258,8 +258,8 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
     
     <!-- WP-CLI Commands -->
     <div class="digitalogic-section">
-        <h2><?php _e('WP-CLI Commands', 'digitalogic'); ?></h2>
-        <p><?php _e('Available WP-CLI commands:', 'digitalogic'); ?></p>
+        <h2><?php esc_html_e('WP-CLI Commands', 'digitalogic'); ?></h2>
+        <p><?php esc_html_e('Available WP-CLI commands:', 'digitalogic'); ?></p>
         <ul>
             <li><code>wp digitalogic currency get</code></li>
             <li><code>wp digitalogic currency update --usd=42000 --cny=6000</code></li>
@@ -273,42 +273,42 @@ $wc_features['Plugin Compatible'] = $hpos_status['plugin_compatible'] ? 'Yes' : 
     
     <!-- Debug Information -->
     <div class="digitalogic-section">
-        <h2><?php _e('Debug Information', 'digitalogic'); ?></h2>
-        <p><?php _e('Copy this information when requesting support:', 'digitalogic'); ?></p>
+        <h2><?php esc_html_e('Debug Information', 'digitalogic'); ?></h2>
+        <p><?php esc_html_e('Copy this information when requesting support:', 'digitalogic'); ?></p>
         <textarea readonly style="width: 100%; height: 200px; font-family: monospace; font-size: 12px;">
 === Digitalogic Status Report ===
 
-Plugin Version: <?php echo $plugin_version; ?>
+Plugin Version: <?php echo esc_html( $plugin_version ); ?>
 
-WordPress Version: <?php echo $wp_version; ?>
+WordPress Version: <?php echo esc_html( $wp_version ); ?>
 
-WooCommerce Version: <?php echo $wc_version; ?>
+WooCommerce Version: <?php echo esc_html( $wc_version ); ?>
 
-PHP Version: <?php echo $php_version; ?>
+PHP Version: <?php echo esc_html( $php_version ); ?>
 
-Minimum PHP: <?php echo $min_php_version; ?>
+Minimum PHP: <?php echo esc_html( $min_php_version ); ?>
 
-MySQL Version: <?php echo $mysql_version; ?>
+MySQL Version: <?php echo esc_html( $mysql_version ); ?>
 
-Server: <?php echo $server_software; ?>
+Server: <?php echo esc_html( $server_software ); ?>
 
 HPOS Enabled: <?php echo $hpos_status['hpos_enabled'] ? 'Yes' : 'No'; ?>
 
 HPOS Compatible: <?php echo $hpos_status['plugin_compatible'] ? 'Yes' : 'No'; ?>
 
-Products: <?php echo $product_count; ?>
+Products: <?php echo esc_html( $product_count ); ?>
 
-Logs: <?php echo $logs_count; ?>
+Logs: <?php echo esc_html( $logs_count ); ?>
 
-USD Price: <?php echo $dollar_price; ?>
+USD Price: <?php echo esc_html( $dollar_price ); ?>
 
-CNY Price: <?php echo $yuan_price; ?>
+CNY Price: <?php echo esc_html( $yuan_price ); ?>
 
-Last Update: <?php echo $update_date; ?>
+Last Update: <?php echo esc_html( $update_date ); ?>
 
-Memory Limit: <?php echo $memory_limit; ?>
+Memory Limit: <?php echo esc_html( $memory_limit ); ?>
 
-Max Execution Time: <?php echo $max_execution; ?>s
+Max Execution Time: <?php echo esc_html( $max_execution ); ?>s
         </textarea>
     </div>
 </div>

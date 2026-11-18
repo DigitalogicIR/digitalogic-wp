@@ -111,7 +111,7 @@ remain available in the immutable source tag.
 
 ### Via WordPress Admin
 
-1. Download the stable [`digitalogic-wp.zip`](https://github.com/atomicdeploy/digitalogic-wp/releases/latest/download/digitalogic-wp.zip) asset from the latest GitHub release
+1. Download the stable [`digitalogic-wp.zip`](https://github.com/DigitalogicIR/digitalogic-wp/releases/latest/download/digitalogic-wp.zip) asset from the latest GitHub release
 2. Go to WordPress Admin → Plugins → Add New → Upload Plugin
 3. Upload the zip file and activate
 
@@ -414,7 +414,7 @@ diagnostic output, permissions, and update semantics.
 
 ```bash
 # Clone the repository
-git clone https://github.com/atomicdeploy/digitalogic-wp.git
+git clone https://github.com/DigitalogicIR/digitalogic-wp.git
 cd digitalogic-wp
 
 # Install dependencies
@@ -516,8 +516,8 @@ wp i18n make-mo languages/
 
 ## Support
 
-- GitHub Issues: https://github.com/atomicdeploy/digitalogic-wp/issues
-- Documentation: https://github.com/atomicdeploy/digitalogic-wp/wiki
+- GitHub Issues: https://github.com/DigitalogicIR/digitalogic-wp/issues
+- Documentation: https://github.com/DigitalogicIR/digitalogic-wp/wiki
 
 ## License
 

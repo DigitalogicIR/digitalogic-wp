@@ -481,7 +481,7 @@ final class Digitalogic_Storefront_Order_Forms {
 	 * @return array
 	 */
 	private function sanitize_foreign_payload() {
-		$raw_items = isset( $_POST['items'] ) && is_array( $_POST['items'] ) ? $_POST['items'] : array(); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$raw_items = isset( $_POST['items'] ) && is_array( $_POST['items'] ) ? $_POST['items'] : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.NonceVerification.Missing -- Value is bounded and validated before use; the caller verifies the request.
 		$items     = array();
 
 		foreach ( array_slice( $raw_items, 0, 10 ) as $raw_item ) {
@@ -577,11 +577,11 @@ final class Digitalogic_Storefront_Order_Forms {
 	 * @return array|false|WP_Error
 	 */
 	private function request_upload() {
-		if ( ! isset( $_FILES['dgl_request_file'] ) ) {
+		if ( ! isset( $_FILES['dgl_request_file'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Read-only request value; it changes no state and is sanitized before use.
 			return false;
 		}
 
-		$file = $_FILES['dgl_request_file']; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The submission nonce is verified before this helper runs.
+		$file = $_FILES['dgl_request_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.NonceVerification.Missing -- The submission nonce is verified and the upload is validated by the caller.
 		if ( ! is_array( $file ) || ! isset( $file['error'] ) || ! is_scalar( $file['error'] ) ) {
 			return new WP_Error( 'upload_failed', 'Uploaded file data is invalid.' );
 		}
@@ -816,7 +816,7 @@ final class Digitalogic_Storefront_Order_Forms {
 			return '';
 		}
 
-		return $this->bounded_scalar( $_GET[ $key ], $max_length ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return $this->bounded_scalar( $_GET[ $key ], $max_length ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.NonceVerification.Recommended -- Value is bounded and validated before use; the caller verifies the request.
 	}
 
 	/**
@@ -831,7 +831,7 @@ final class Digitalogic_Storefront_Order_Forms {
 			return '';
 		}
 
-		return $this->bounded_scalar( $_POST[ $key ], $max_length ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		return $this->bounded_scalar( $_POST[ $key ], $max_length ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.NonceVerification.Missing -- Value is bounded and validated before use; the caller verifies the request.
 	}
 
 	/**
@@ -971,7 +971,7 @@ final class Digitalogic_Storefront_Order_Forms {
 	}
 
 	private function request_ip() {
-		return isset( $_SERVER['REMOTE_ADDR'] ) && is_scalar( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( $this->bounded_scalar( $_SERVER['REMOTE_ADDR'], 45 ) ) : 'unknown';
+		return isset( $_SERVER['REMOTE_ADDR'] ) && is_scalar( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( $this->bounded_scalar( $_SERVER['REMOTE_ADDR'], 45 ) ) : 'unknown'; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 	}
 
 	private function redirect_with_error( $url, $error ) {

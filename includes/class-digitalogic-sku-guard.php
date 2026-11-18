@@ -152,7 +152,7 @@ final class Digitalogic_SKU_Guard {
 		$validated = self::validate( $raw );
 		if ( is_wp_error( $validated ) ) {
 			$this->record_block( (int) $product->get_id(), $raw, 0, $validated->get_error_code(), 'woocommerce_save' );
-			throw new WC_Data_Exception( $validated->get_error_code(), $validated->get_error_message(), 400 );
+			throw new WC_Data_Exception( $validated->get_error_code(), $validated->get_error_message(), 400 ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
 		}
 		if ( (string) $raw !== $validated ) {
 			$product->set_sku( $validated );
