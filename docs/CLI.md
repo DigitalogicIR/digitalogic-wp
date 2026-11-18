@@ -3,6 +3,38 @@
 Run commands with a WordPress user that has `manage_woocommerce`. Mutating
 commands should use an administrator account appropriate for the environment.
 
+## Protected human-contact discovery
+
+The main plugin exposes two read-only, JSON-emitting commands through
+`includes/cli/class-digitalogic-human-contacts-cli.php`. Discover the live namespace first, resolve an existing administrator
+identity independently, and pass it only through WP-CLI's global `--user`
+parameter:
+
+```bash
+wp help digitalogic contacts
+wp digitalogic contacts list --user=<verified-administrator>
+wp digitalogic contacts get <person> --user=<verified-administrator>
+```
+
+The global `--user` value selects a WordPress identity; it does not authenticate
+the operating-system caller. The existing SSH, OS-user, sudo, and filesystem
+boundaries must already authorize the operator and must not be weakened.
+
+The commands accept no `--format` or other command-specific options. They return
+only a bounded safe projection: names, symbolic channel aliases, controlled
+preferences, field-presence metadata, route-presence counts/booleans, and an
+optional controlled availability observation. Availability always includes its
+observation timestamp and `point_in_time_only: true`; it is historical evidence,
+not a current or permanent presence guarantee.
+
+This lookup does not authorize a call or message. Resolve symbolic aliases only
+inside a separately authorized human-coordination workflow using the current PBX
+directory. Never query or export the `digitalogic_human_contacts` option directly
+and never print raw phone/email destinations, numeric chat routing, credentials,
+or account login data. The implementation ships with the main plugin release;
+legacy MU copies remain subject to the migration and rollback contract in
+`docs/plugin-consolidation.md`. Source integration is not deployment approval.
+
 ## Exact selectors
 
 Product commands accept exactly one selector:
