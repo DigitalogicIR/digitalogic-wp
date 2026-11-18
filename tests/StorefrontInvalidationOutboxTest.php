@@ -160,6 +160,37 @@ final class StorefrontInvalidationOutboxTest extends TestCase {
 		$this->assertNotFalse( wp_next_scheduled( Digitalogic_Storefront_Invalidation_Outbox::RETRY_HOOK, array() ) );
 	}
 
+	/** A process restart repairs the canonical generation once, before cursor ACK. */
+	public function test_crash_recovery_repairs_parent_cache_plan_and_generation_idempotently(): void {
+		$this->queue_verified_fixture();
+		$receiver = Digitalogic_Product_Sync_Receiver::instance();
+		( new ReflectionProperty( $receiver, 'coordinated_product_ids' ) )->setValue( $receiver, array( 456 => true ) );
+		$GLOBALS['digitalogic_test_options']['digitalogic_report_cache_generation_v1'] = 'before-crash';
+		$marker = $this->stage_commit();
+		$this->assertSame( array( 123, 456 ), $marker['cache_product_ids'] );
+		( new ReflectionClass( Digitalogic_Product_Sync_Receiver::class ) )->setStaticPropertyValue( 'instance', null );
+		$GLOBALS['wpdb']->fail_ack = true;
+		$this->assertFalse( Digitalogic_Storefront_Invalidation_Outbox::dispatch() );
+		$generation = Digitalogic_Report_Engine::instance()->current_projection_generation();
+		$this->assertSame( 'sha256:' . hash( 'sha256', "report-effect\0" . $marker['token'] ), $generation );
+		$this->assertTrue( $GLOBALS['digitalogic_test_options'][ Digitalogic_Storefront_Invalidation_Outbox::OPTION ]['pending'] );
+		$GLOBALS['wpdb']->fail_ack = false;
+		$this->assertTrue( Digitalogic_Storefront_Invalidation_Outbox::dispatch() );
+		$this->assertSame( $generation, Digitalogic_Report_Engine::instance()->current_projection_generation() );
+		$this->assertCount( 1, $GLOBALS['digitalogic_test_options']['digitalogic_panel_events'] );
+	}
+
+	/** Generation storage failure cannot produce a successful stale event. */
+	public function test_generation_failure_prevents_publication_and_ack(): void {
+		$this->queue_verified_fixture();
+		$GLOBALS['digitalogic_test_options']['digitalogic_report_cache_generation_v1'] = 'before-failure';
+		$this->stage_commit();
+		$GLOBALS['digitalogic_test_update_failures'][] = 'digitalogic_report_cache_generation_v1';
+		$this->assertFalse( Digitalogic_Storefront_Invalidation_Outbox::dispatch() );
+		$this->assertTrue( $GLOBALS['digitalogic_test_options'][ Digitalogic_Storefront_Invalidation_Outbox::OPTION ]['pending'] );
+		$this->assertArrayNotHasKey( 'digitalogic_panel_events', $GLOBALS['digitalogic_test_options'] );
+	}
+
 	/** An unavailable downstream queue cannot consume a pending marker. */
 	public function test_queue_failure_retains_pending_marker_and_one_retry(): void {
 		$this->stage_commit();

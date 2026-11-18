@@ -61,7 +61,9 @@ final class Digitalogic_Storefront_Invalidation_Outbox {
 		// Preserve older unacknowledged cache coverage when transactions coalesce.
 		$ids = ! empty( $previous['pending'] ) ? ( $previous['cache_product_ids'] ?? array() ) : array();
 		if ( class_exists( 'Digitalogic_Product_Sync_Receiver', false ) ) {
-			$ids = array_merge( $ids, Digitalogic_Product_Sync_Receiver::instance()->pending_public_product_ids() );
+			$receiver = Digitalogic_Product_Sync_Receiver::instance();
+			$plan     = $receiver->coordinated_pricing_cache_plan();
+			$ids      = array_merge( $ids, $receiver->pending_public_product_ids(), $plan['product_ids'] );
 		}
 		$record['cache_product_ids'] = array_values( array_unique( array_map( 'absint', $ids ) ) );
 		$raw                         = maybe_serialize( $record );
@@ -139,6 +141,32 @@ final class Digitalogic_Storefront_Invalidation_Outbox {
 					return true;
 				}
 				try {
+					if ( ! empty( $record['cache_product_ids'] ) ) {
+						// SQL may have committed before the writer's finally blocks ran.
+						// Repair all canonical readers, not only the HTML provider. Parents
+						// are captured before COMMIT along with the changed leaves.
+						if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+							if ( ! function_exists( 'wp_cache_supports' ) || ! wp_cache_supports( 'flush_runtime' ) || false === wp_cache_flush_runtime() ) {
+								continue;
+							}
+						}
+						if ( ! Digitalogic_Product_Sync_Receiver::instance()->flush_coordinated_pricing_caches(
+							array(
+								'product_ids' => $record['cache_product_ids'],
+								'batch_write' => true,
+							)
+						) ) {
+							continue;
+						}
+						$projection = Digitalogic_Report_Engine::instance()->invalidate_cache_for_effect( $record['token'], false );
+						if ( is_wp_error( $projection ) || ! in_array( $projection['status'] ?? '', array( 'complete', 'superseded' ), true ) ) {
+							continue;
+						}
+						$generation = Digitalogic_Report_Engine::instance()->current_projection_generation();
+						if ( is_wp_error( $generation ) || ( $projection['previous_generation'] ?? '' ) === $generation ) {
+							continue;
+						}
+					}
 					// Purge before publishing the cursor: fresh HTML must not contain
 					// old values alongside an already-current event cursor.
 					if ( ! empty( $record['cache_product_ids'] ) && (

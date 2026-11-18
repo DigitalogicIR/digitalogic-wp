@@ -1079,6 +1079,11 @@ final class Digitalogic_Report_Engine {
 
 		$result = $this->with_generation_lock(
 			function () use ( $effect_id ) {
+				// A persistent worker may have cached receipts before another
+				// dispatcher completed this effect. Refresh under the SQL mutex.
+				wp_cache_delete( self::CACHE_EFFECTS_OPTION, 'options' );
+				wp_cache_delete( self::CACHE_GENERATION_OPTION, 'options' );
+				wp_cache_delete( 'notoptions', 'options' );
 				$receipts = get_option( self::CACHE_EFFECTS_OPTION, array() );
 				$receipts = is_array( $receipts ) ? $receipts : array();
 				$receipt  = is_array( $receipts[ $effect_id ] ?? null ) ? $receipts[ $effect_id ] : array();

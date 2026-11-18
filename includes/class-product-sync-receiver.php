@@ -1813,12 +1813,12 @@ class Digitalogic_Product_Sync_Receiver {
      * already landed.
      *
      * @param array $persisted_plan Optional transaction marker cache plan.
-     * @return void
+     * @return bool Whether request-local product eviction completed.
      */
     public function flush_coordinated_pricing_caches($persisted_plan = array()) {
         $started = hrtime(true);
         try {
-            $this->flush_coordinated_pricing_caches_work($persisted_plan);
+            return $this->flush_coordinated_pricing_caches_work($persisted_plan);
         } finally {
             $this->record_receiver_timing('cache_flush', $started);
         }
@@ -1830,6 +1830,9 @@ class Digitalogic_Product_Sync_Receiver {
             ? $persisted_plan['product_ids']
             : array();
         $product_ids = array_merge(array_keys($this->coordinated_product_ids), $persisted_ids);
+		if ( count( array_unique( $product_ids ) ) > 2 * self::MAX_PRODUCTS * self::MAX_SOURCES ) {
+			return false; // Never acknowledge a recovery plan whose tail was omitted.
+		}
 		$product_ids = array_values(
 			array_slice(
 				array_unique(
@@ -1902,7 +1905,7 @@ class Digitalogic_Product_Sync_Receiver {
                 // shared raw-meta cache populated by wc_get_products().
                 WC_Cache_Helper::invalidate_cache_group('products');
             }
-			$this->evict_coordinated_product_instance_caches( $product_ids );
+			$runtime_evicted = $this->evict_coordinated_product_instance_caches( $product_ids );
 			clean_object_term_cache( $product_ids, 'product' );
 			if ( function_exists( 'wp_update_term_count_now' ) && function_exists( 'get_term_by' ) ) {
 				$term = get_term_by( 'slug', 'outofstock', 'product_visibility' );
@@ -1910,7 +1913,7 @@ class Digitalogic_Product_Sync_Receiver {
 					wp_update_term_count_now( array( (int) $term->term_taxonomy_id ), 'product_visibility' );
 				}
 			}
-            return;
+            return $runtime_evicted;
         }
         foreach ($product_ids as $product_id) {
             $product_id = (int) $product_id;
@@ -1930,7 +1933,7 @@ class Digitalogic_Product_Sync_Receiver {
 				clean_object_term_cache($product_id, 'product');
 			}
 		}
-		$this->evict_coordinated_product_instance_caches( $product_ids );
+		return $this->evict_coordinated_product_instance_caches( $product_ids );
 	}
 
 	/**
