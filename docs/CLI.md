@@ -5,8 +5,8 @@ commands should use an administrator account appropriate for the environment.
 
 ## Protected human-contact discovery
 
-The separately deployed must-use adapter exposes two read-only, JSON-emitting
-commands. Discover the live namespace first, resolve an existing administrator
+The main plugin exposes two read-only, JSON-emitting commands through
+`includes/cli/class-digitalogic-human-contacts-cli.php`. Discover the live namespace first, resolve an existing administrator
 identity independently, and pass it only through WP-CLI's global `--user`
 parameter:
 
@@ -31,8 +31,9 @@ This lookup does not authorize a call or message. Resolve symbolic aliases only
 inside a separately authorized human-coordination workflow using the current PBX
 directory. Never query or export the `digitalogic_human_contacts` option directly
 and never print raw phone/email destinations, numeric chat routing, credentials,
-or account login data. See `ops/wordpress-mu/README.md` for the separate
-source-only rollout and rollback contract.
+or account login data. The implementation ships with the main plugin release;
+legacy MU copies remain subject to the migration and rollback contract in
+`docs/plugin-consolidation.md`. Source integration is not deployment approval.
 
 ## Exact selectors
 

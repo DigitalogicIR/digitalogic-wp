@@ -7,7 +7,7 @@
 
 use PHPUnit\Framework\TestCase;
 
-require_once dirname( __DIR__ ) . '/ops/wordpress-mu/digitalogic-human-contacts.php';
+require_once dirname( __DIR__ ) . '/includes/cli/class-digitalogic-human-contacts-cli.php';
 
 /**
  * Verify capability, input, and non-disclosure boundaries.
@@ -367,7 +367,7 @@ final class WpCliHumanContactsTest extends TestCase {
 	 */
 	public function test_source_has_no_registry_write_rest_or_contact_action(): void {
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- This is a local source fixture.
-		$source = file_get_contents( dirname( __DIR__ ) . '/ops/wordpress-mu/digitalogic-human-contacts.php' );
+		$source = file_get_contents( dirname( __DIR__ ) . '/includes/cli/class-digitalogic-human-contacts-cli.php' );
 		$this->assertIsString( $source );
 		$this->assertDoesNotMatchRegularExpression( '/\b(?:add|update|delete)_option\s*\(/', $source );
 		$this->assertStringNotContainsString( 'register_rest_route', $source );

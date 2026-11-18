@@ -15,7 +15,7 @@ fi
 "$phpcs" \
     --standard=WordPress \
     --extensions=php \
-    "$root/ops/wordpress-mu/digitalogic-human-contacts.php" \
+    "$root/includes/cli/class-digitalogic-human-contacts-cli.php" \
     "$root/tests/WpCliHumanContactsTest.php"
 
 # The repository predates its current WordPress coding-standard setup. Keep
