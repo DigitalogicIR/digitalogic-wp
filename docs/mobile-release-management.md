@@ -4,7 +4,7 @@ The publisher owns immutable signed APK/manifest files. The issued WordPress dat
 
 Initial deployment: **live on2026-11-15** from runtime commit `970df32`; reporting policy was subsequently updated in `7d83674`. Build17 was issued at11:58:45UTC through the owner command. The operational report schema/cleanup are active; no synthetic production report was submitted. Physical-device receipt is a separate app-owner acceptance step.
 
-Latest issue: **build18 at18:00:59UTC on2026-11-15**, operation `a9f1ecab-40de-46f0-a1aa-5d697f7a2f18`. Its immutable manifest is `https://digitalogic.ir/apps/digitalogic/digitalogic-18-arm64.json`, app source `1e1ae8788855ddde2256386ee65562b2f7cae168`, APK SHA-256 `54183974c54a31f92448d66cb782c4efd49a2955e800e71f80bd99a58409f3f3`. Independent public readback confirmed bootstrap200 with exact fixed manifest/build/hash, APK range206, catalog200 and anonymous report401. Automatic reporting remains disclosed with `telemetry_opt_in_required:false`; approved OTP template757947 and its hash/enabled state are unchanged.
+Historical issue: **build18 at18:00:59UTC on2026-11-15**, operation `a9f1ecab-40de-46f0-a1aa-5d697f7a2f18`. Its immutable manifest is `https://digitalogic.ir/apps/digitalogic/digitalogic-18-arm64.json`, app source `1e1ae8788855ddde2256386ee65562b2f7cae168`, APK SHA-256 `54183974c54a31f92448d66cb782c4efd49a2955e800e71f80bd99a58409f3f3`. Independent public readback confirmed bootstrap200 with exact fixed manifest/build/hash, APK range206, catalog200 and anonymous report401. Automatic reporting remains disclosed with `telemetry_opt_in_required:false`; approved OTP template757947 and its hash/enabled state are unchanged.
 
 ## Issue an existing build
 
@@ -33,7 +33,7 @@ Promotion changes one transaction. Independent publisher acceptance must compare
 
 ### Optional delta metadata
 
-The full immutable APK URL, checksum, byte count and permanent signature are always required. Optional `deltas` is a sequential list of at most eight entries, each containing only `algorithm`, `from_version_code`, `from_sha256`, `url`, `sha256` and `bytes`. The sole algorithm is `digitalogic-copy-v1+gzip`; the source build must be positive and lower than the target. Hashes are64 lowercase hex characters, patch bytes must be positive and smaller than the full APK, and duplicate patch names are rejected.
+The full immutable APK URL, checksum, byte count and permanent signature are always required, with a256MiB full-APK ceiling shared by publisher and client. Optional `deltas` is a sequential list of at most eight entries, each containing only `algorithm`, `from_version_code`, `from_sha256`, `url`, `sha256` and `bytes`. The sole algorithm is `digitalogic-copy-v1+gzip`; the source build must be positive and lower than the target. Hashes are64 lowercase hex characters, patch bytes must be positive and smaller than the full APK, and duplicate patch names are rejected.
 
 Each URL must exactly equal the same-origin `/apps/digitalogic/digitalogic-FROM-TO-BASE12-arm64.delta.gz` path, where BASE12 is the first12 characters of `from_sha256`. No arbitrary path, host, query, symlink or alternate ABI is accepted. Issuance verifies every local patch's complete byte count and hash while holding the publisher lock. It does not execute or apply patches. Clients verify the reconstructed full APK and retain the full-download fallback; old clients can ignore the optional list. `source_commit`, when present, must be a full40-character lowercase hexadecimal commit.
 
@@ -47,6 +47,18 @@ The2026-11-18 repair was prompted by observed issued build18 versus stale static
 4. Only then run the publisher's explicit issue operation. A lost reply is recovered with the identical UUID, never a newly invented retry operation.
 
 Containment preserves immutable artifacts and receipts. Disable new offers if necessary; do not lower the active build or replace signed artifacts in place. A corrected higher build is the normal release repair. Runtime rollback backups must retain the exact predeploy hashes; reverting routes must not expose the obsolete static file as a silent authority.
+
+### 2026-11-18 live acceptance
+
+The five-file runtime from `c0cd960` is live. The app owner promoted build27 through the reviewed issuer (operation `3224fdb1-88ef-50a5-8951-96bfcedf02d0`); build26 remains an immutable staged base, not an intermediate offer. These are dated acceptance observations, not another release configuration source:
+
+- Permanent JSON, immutable build27 JSON and apex/PWA bootstrap agree on APK SHA-256 `c708c61c73035dbcd5087fcf28d695174bbaf00d8eee68f85a1819f405aff38c`, source `4ea193298fa91f4b338c7becedd1c901cbe7c749`, and two optional delta entries.
+- Independent GET/HEAD returned200, conditional `If-None-Match:*` returned200 rather than304, unsupported POST returned405, and the APK alias returned307 to build27 with immutable Range206. All permanent responses were no-store. Apache's exact raw-request rule strips conditional headers before the internal rewrite can lose the original path; the obsolete static file is privately retained by the routing owner.
+- Read-only SQL receipt inspection confirmed the exact operation, current build/hash and enabled offer. No duplicate issuance was performed by the backend verification lane. OTP capability and automatic-report policy are unchanged.
+- Separate real WordPress/Laravel fixture:77 assertions passed against final archive `9e8dba8b96ec4dc24333471cfc29a9d01702a234530247eee02e7ee7d93e879f`. It exercised real signed16→17 promotion, historical/current UUID recovery, downgrade rejection, three failed SQL writes, ambiguous COMMIT recovery, cache races, malformed/mismatched artifacts and permanent routes. Exact database contents, users, provider sessions and signed artifacts were restored; successful IP/foreign Unix connections were zero.
+- Release-specific unit tests:23 tests/277 assertions. The original full feature snapshot passed1,376 tests/14,718 assertions with35 existing skips. Integration with newer canonical main exposed a shared test cache-provider stub and formatting debt; their source-only corrections do not alter the five deployed runtime hashes. The integrated full suite passed1,383 tests/14,761 assertions with35 existing skips using the local PHP installation's OpenSSL configuration.
+
+Post-commit realtime `app.release.updated` invalidation is a separate follow-up. Current clients refresh bootstrap periodically and on explicit update checks. No realtime delivery is claimed for this issuance.
 
 Release rollback readiness: prior immutable artifacts and UUID receipts remain preserved. The issuer deliberately refuses downgrade; to contain a faulty offer, an authorized operator can clear the existing manifest option, then publish and issue a higher corrected build. This does not silently downgrade or uninstall devices. No rollback was performed during build18 acceptance.
 

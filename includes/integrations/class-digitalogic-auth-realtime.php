@@ -13,9 +13,17 @@ final class Digitalogic_Auth_Realtime {
 	const COOKIE = 'digitalogic_auth_binding';
 	const ROUTE  = '/digitalogic/v1/auth-events';
 	const STEPS  = array( 'login', 'password', 'contact', 'recover', 'signup', 'code', 'call', 'call-code' );
-	/** @var array|null Session issued during the current HTTP request. */
+	/**
+	 * Session issued during the current HTTP request.
+	 *
+	 * @var array|null
+	 */
 	private static $issued_session;
-	/** @var string Correlation ID supplied by the verified PBX consume request. */
+	/**
+	 * Correlation ID supplied by the verified PBX consume request.
+	 *
+	 * @var string
+	 */
 	private static $rest_flow = '';
 
 	/** Wire the private HTTP fallback and observe native session issuance. */

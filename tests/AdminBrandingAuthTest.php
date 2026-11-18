@@ -91,8 +91,11 @@ if (!function_exists('get_site_transient')) {
 }
 
 if (!function_exists('wp_using_ext_object_cache')) {
-    function wp_using_ext_object_cache() {
-        return false;
+    function wp_using_ext_object_cache($using = null) {
+        if (null !== $using) {
+            $GLOBALS['digitalogic_test_using_ext_object_cache'] = (bool) $using;
+        }
+        return (bool) ($GLOBALS['digitalogic_test_using_ext_object_cache'] ?? false);
     }
 }
 

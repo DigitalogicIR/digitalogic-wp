@@ -59,7 +59,7 @@ final class Digitalogic_Plugin_Admin_Branding {
         $storage_key = wp_json_encode(self::THEME_STORAGE_KEY);
         $initial_theme = wp_json_encode(self::current_user_theme());
         $admin_color = wp_json_encode(self::current_user_admin_color());
-        $is_login = wp_json_encode(current_filter() === 'login_head');
+		$is_login = wp_json_encode( current_filter() === 'login_head' );
 
         echo <<<HTML
 <script>
@@ -665,7 +665,7 @@ JS;
         if (!$is_fa) {
             return [
                 'theme'                 => 'Theme',
-                'auto'                  => 'Auto',
+				'auto'                  => 'Auto',
                 'dark'                  => 'Dark',
                 'light'                 => 'Light',
                 'toggleToDark'          => 'Switch to dark mode',
@@ -723,7 +723,7 @@ JS;
 
         return [
             'theme'                 => 'قالب',
-            'auto'                  => 'خودکار',
+			'auto'                  => 'خودکار',
             'dark'                  => 'تاریک',
             'light'                 => 'روشن',
             'toggleToDark'          => 'تغییر به حالت تاریک',
