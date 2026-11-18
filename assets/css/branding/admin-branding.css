@@ -3066,11 +3066,18 @@ body.login .dg-auth-message > button {
     font: inherit;
     text-decoration: underline;
 }
-body.login .dg-digits-login-shell .dg-sms-identity-help {
-    margin: 0 0 12px;
-    color: var(--dg-text-soft);
+body.login .dg-digits-login-shell :is(.dg-sms-identity-help:not([hidden]), .dg-otp-step .dg-otp-instructions) {
+    box-sizing: border-box;
+    min-block-size: 44px;
+    margin-block: 0 12px;
+    padding: 9px 12px;
+    border: 1px solid var(--dg-border);
+    border-radius: 11px;
+    background-color: var(--dg-panel-soft);
+    color: var(--dg-text);
     font-size: 13px;
-    line-height: 1.7;
+    line-height: 1.75;
+    text-align: start;
 }
 body.login .dg-phone-channels:not([hidden]),
 body.login .dg-digits-login-shell[data-dg-reserve-phone] form.digloginpage.digits_form_index_section .dg-phone-channels[hidden] {
