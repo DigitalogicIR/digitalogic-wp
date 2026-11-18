@@ -34,7 +34,7 @@ final class Digitalogic_Voice_Notifications {
 	private const MAX_TEMPLATE_BYTES        = 800;
 	private const MAX_RENDERED_BYTES        = 1400;
 	private const ALLOWED_PLACEHOLDERS      = array( '{first_name}', '{order_number}', '{order_status}', '{site_name}' );
-	private const STATUS_SLUGS              = array( 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' );
+	private const STATUS_SLUGS              = array( 'pending', 'review', 'processing', 'shipped', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' );
 
 	/** @var self|null */
 	private static $instance = null;
@@ -915,6 +915,13 @@ final class Digitalogic_Voice_Notifications {
 	 * @return string
 	 */
 	public static function render_message( string $template, $order, string $status ): string {
+		$legacy_defaults = array(
+			'completed' => array( 'سفارش {order_number} شما تکمیل شد. از خرید شما سپاسگزاریم.', 'وضعیت سفارش {order_number} شما: {order_status}. از خرید شما سپاسگزاریم.' ),
+			'on-hold'   => array( 'سفارش {order_number} شما در انتظار بررسی است.', 'سفارش {order_number} شما در انتظار تأیید پرداخت است.' ),
+		);
+		if ( isset( $legacy_defaults[ $status ] ) && $template === $legacy_defaults[ $status ][0] ) {
+			$template = $legacy_defaults[ $status ][1];
+		}
 		$valid = self::sanitize_template( $template );
 		if ( is_wp_error( $valid ) || ! is_object( $order ) ) {
 			return '';
@@ -927,7 +934,7 @@ final class Digitalogic_Voice_Notifications {
 				array(
 					'{first_name}'   => wp_strip_all_tags( $first_name ),
 					'{order_number}' => preg_replace( '/[^0-9A-Za-z._-]/', '', $order_number ),
-					'{order_status}' => wp_strip_all_tags( self::status_label( $status ) ),
+					'{order_status}' => wp_strip_all_tags( Digitalogic_Order_Fulfillment::label( $order, $status ) ),
 					'{site_name}'    => wp_strip_all_tags( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
 				)
 			)
@@ -978,9 +985,11 @@ final class Digitalogic_Voice_Notifications {
 	private static function defaults(): array {
 		$templates = array(
 			'pending'    => 'سفارش {order_number} شما در {site_name} ثبت شد و در انتظار پرداخت است.',
+			'review'     => 'سفارش {order_number} شما در انتظار بررسی است.',
 			'processing' => 'سفارش {order_number} شما در حال پردازش است.',
-			'on-hold'    => 'سفارش {order_number} شما در انتظار بررسی است.',
-			'completed'  => 'سفارش {order_number} شما تکمیل شد. از خرید شما سپاسگزاریم.',
+			'shipped'    => 'وضعیت سفارش {order_number} شما: {order_status}.',
+			'on-hold'    => 'سفارش {order_number} شما در انتظار تأیید پرداخت است.',
+			'completed'  => 'وضعیت سفارش {order_number} شما: {order_status}. از خرید شما سپاسگزاریم.',
 			'cancelled'  => 'سفارش {order_number} شما لغو شد.',
 			'refunded'   => 'مبلغ سفارش {order_number} بازپرداخت شد.',
 			'failed'     => 'پرداخت سفارش {order_number} ناموفق بود. لطفاً وضعیت سفارش را بررسی کنید.',

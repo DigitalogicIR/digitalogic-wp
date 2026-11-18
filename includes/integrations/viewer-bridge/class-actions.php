@@ -368,10 +368,10 @@ final class Actions {
 			$order = $loaded['object'];
 			$from  = $order->get_status();
 			$to    = (string) $payload['status'];
-			if ( ! in_array( $to, Live_State::allowed_order_transitions( $from ), true ) ) {
+			if ( ! in_array( $to, Live_State::allowed_order_transitions( $from, \Digitalogic_Order_Fulfillment::is_pickup( $order ) ), true ) ) {
 				return self::error(
 					'order_transition_not_allowed',
-					'Only hold, resume, processing, and completion transitions are allowed.',
+					'Only review, hold, processing, dispatch, and completion transitions are allowed.',
 					409
 				);
 			}

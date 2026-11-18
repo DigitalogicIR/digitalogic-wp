@@ -1,5 +1,8 @@
 # PBX call verification and voice order updates
 
+For where this method fits in the login card, see the
+[Digitalogic authentication flow](AUTHENTICATION-FLOW.md#2-call-verification).
+
 Digitalogic exposes an inbound verification option alongside the existing Digits login. A user enters an Iranian mobile or fixed-line number, receives a six-digit code that expires after 120 seconds, and calls `021-66754123` from that same number. When the signed pending-ANI probe finds the live challenge, the PBX plays the «دوست عزیزم» shortcut and collects the code directly; otherwise the call falls through to the operator. Digitalogic has no website digit in its main IVR. The signed PBX callback must match both the canonical number and code before the browser can consume the challenge.
 
 The same proof can add a verified supplemental phone to WooCommerce My Account. Customers can also keep multiple supplemental email addresses. A verified phone is eligible for order-announcement consent, but consent, the global switch, and every order status are all off by default.
@@ -22,6 +25,12 @@ openssl rand -base64 48
 ```
 
 `DIGITALOGIC_PBX_VERIFY_SECRET` is standard base64 text. The plugin validates canonical base64, decodes it strictly, and requires at least 32 decoded bytes before HMAC use. The callout URL must be exactly `http://127.0.0.1:8789/call`. The printable-ASCII bearer token must contain 32–512 characters.
+
+## Country and phone display
+
+The call challenge returns `request_country` as a two-letter country code when available. If the CDN supplies a country code, map its verified value to the `DIGITALOGIC_CDN_COUNTRY` server variable at the origin. Only map it after confirming the request came from the trusted CDN.
+
+The plugin can look up the origin's validated request IP in `/var/lib/digitalogic/geoip/user-country.mmdb` or a country database selected with `DIGITALOGIC_IP_COUNTRY_DATABASE`. It can also use WooCommerce's local lookup. Iranian numbers display with a leading zero when the request country is Iran or the browser timezone is Tehran. The telephone link and PBX still use the international number.
 
 ## Signed callback contract
 

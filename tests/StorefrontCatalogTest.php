@@ -105,6 +105,16 @@ final class StorefrontCatalogTest extends TestCase {
 		$this->assertFalse( $post_args['hide_empty'] );
 	}
 
+	public function test_keeps_empty_parent_categories_resolvable_by_slug(): void {
+		$catalog = ( new ReflectionClass( Digitalogic_Storefront_Catalog::class ) )->newInstanceWithoutConstructor();
+		$args    = array(
+			'slug'       => array( 'passive-components' ),
+			'hide_empty' => false,
+		);
+
+		$this->assertSame( $args, $catalog->force_hide_empty_product_categories( $args, array( 'product_cat' ) ) );
+	}
+
 	public function test_filters_non_catalog_terms_and_keeps_visible_ancestors(): void {
 		$GLOBALS['digitalogic_test_category_ancestors'][31] = array( 20, 10 );
 		$GLOBALS['wpdb']                                    = new class() extends Digitalogic_Test_WPDB {

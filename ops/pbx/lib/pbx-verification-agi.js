@@ -63,6 +63,24 @@ function parseAreaCode(value) {
 	return value;
 }
 
+function normalizeCallerNumber(value, options) {
+	const national = normalizeIranNumber(value, options);
+	if (national || typeof value !== 'string') {
+		return national;
+	}
+	const explicit = value.trim().replace(/^00/, '+');
+	return /^\+(?!98)[1-9]\d{7,14}$/.test(explicit) ? explicit : null;
+}
+
+function isExtension(value) {
+	return typeof value === 'string' && /^[1-9]\d{2,5}$/.test(value);
+}
+
+function validCallerPrincipal(value) {
+	return (typeof value === 'string' && value.startsWith('pbx:') && isExtension(value.slice(4))) ||
+		Boolean(normalizeCallerNumber(value));
+}
+
 function validateSixDigitCode(value) {
 	return typeof value === 'string' && /^[1-9]\d{5}$/.test(value);
 }
@@ -175,6 +193,7 @@ function loadConfig(env = process.env) {
 	const prompts = {
 		enterCode: requireEnv(env, 'PBX_PROMPT_ENTER_CODE'),
 		pendingCode: requireEnv(env, 'PBX_PROMPT_PENDING_CODE'),
+		checking: env.PBX_PROMPT_CHECKING || 'beep',
 		verified: requireEnv(env, 'PBX_PROMPT_VERIFIED'),
 		invalid: requireEnv(env, 'PBX_PROMPT_INVALID'),
 		temporaryFailure: requireEnv(env, 'PBX_PROMPT_TEMPORARY_FAILURE'),
@@ -285,7 +304,7 @@ function buildPayload(config, call) {
 	if (!validateEventId(call.eventId) || !validateCallId(call.callId)
 		|| !validateSixDigitCode(call.code)
 		|| normalizeIranNumber(call.calledNumber) !== config.expectedDid
-		|| !normalizeIranNumber(call.callerNumber)) {
+		|| !validCallerPrincipal(call.callerNumber)) {
 		throw new Error('Invalid callback payload input');
 	}
 	return {
@@ -303,7 +322,7 @@ function buildPayload(config, call) {
 function buildPendingPayload(config, call) {
 	if (!validateEventId(call.eventId) || !validateCallId(call.callId)
 		|| normalizeIranNumber(call.calledNumber) !== config.expectedDid
-		|| !normalizeIranNumber(call.callerNumber)) {
+		|| !validCallerPrincipal(call.callerNumber)) {
 		throw new Error('Invalid pending payload input');
 	}
 	return {
@@ -411,7 +430,7 @@ async function postSignedJson(config, secret, payload, endpoint, fetchImpl = glo
 		});
 		text = await readBoundedResponse(response, config.maxResponseBytes);
 	} catch (error) {
-		return { error: error instanceof ProtocolError ? 'protocol' : 'temporary' };
+		return { error: error instanceof ProtocolError ? 'protocol' : 'temporary', status: response?.status };
 	} finally {
 		clearTimeout(timer);
 	}
@@ -421,18 +440,24 @@ async function postSignedJson(config, secret, payload, endpoint, fetchImpl = glo
 		try {
 			json = JSON.parse(text);
 		} catch (_) {
-			return { error: 'protocol' };
+			return { error: 'protocol', status: response.status };
 		}
 	}
 	return { status: response.status, json };
 }
 
 async function postVerification(config, secret, payload, fetchImpl = globalThis.fetch) {
-	const result = await postSignedJson(config, secret, payload, {
+	const endpoint = {
 		path: config.callbackPath,
 		url: config.callbackUrl,
 		timeoutMs: config.httpTimeoutMs,
-	}, fetchImpl);
+	};
+	let result = await postSignedJson(config, secret, payload, endpoint, fetchImpl);
+	if (result.error === 'temporary' || [502, 503, 504].includes(result.status)) {
+		// WordPress may have committed the event before the response was lost.
+		// Keep the body and event ID; only regenerate the request signature and nonce.
+		result = await postSignedJson(config, secret, payload, endpoint, fetchImpl);
+	}
 	return result.error || classifyResponse(result.status, result.json);
 }
 
@@ -638,14 +663,16 @@ async function safeSetPending(agi, pending) {
 
 function parseMode(value) {
 	const mode = value === undefined || value === '' ? 'verify' : value;
-	return ['verify', 'preflight', 'shortcut'].includes(mode) ? mode : null;
+	return ['verify', 'preflight', 'shortcut', 'outbound', 'extension-preflight', 'extension-shortcut'].includes(mode) ? mode : null;
 }
 
 async function runAgi(dependencies = {}) {
-	const mode = parseMode(dependencies.mode);
-	if (mode === null) {
+	const requestedMode = parseMode(dependencies.mode);
+	if (requestedMode === null) {
 		return EXIT.CONFIGURATION;
 	}
+	const internal = requestedMode.startsWith('extension-');
+	const mode = internal ? requestedMode.slice('extension-'.length) : requestedMode;
 	let config;
 	let secret;
 	try {
@@ -658,7 +685,9 @@ async function runAgi(dependencies = {}) {
 	let agi;
 	try {
 		agi = await AgiSession.open(dependencies.input || process.stdin, dependencies.output || process.stdout);
-		const expectedContext = mode === 'verify' ? config.expectedContext : config.expectedPendingContext;
+		const expectedContext = internal ? 'pbx-call-verification-extension' :
+			mode === 'outbound' ? 'pbx-call-verification-outbound' :
+				mode === 'verify' ? config.expectedContext : config.expectedPendingContext;
 		if (agi.environment.agi_context !== expectedContext) {
 			await safeSetResult(agi, 'invalid_call');
 			return EXIT.INVALID_CALL;
@@ -671,17 +700,28 @@ async function runAgi(dependencies = {}) {
 			allowZeroCountryPrefix: config.allowZeroCountryPrefixDid,
 			localAreaCode: config.didLocalAreaCode,
 		});
-		const callerNumber = normalizeIranNumber(rawAni, {
+		let callerNumber = normalizeCallerNumber(rawAni, {
 			allowBareNsn: config.allowBareAni,
 			allowZeroCountryPrefix: config.allowZeroCountryPrefixAni,
 			localAreaCode: config.aniLocalAreaCode,
 		});
+		if (internal) {
+			const extension = await agi.getVariable('PBX_VERIFY_INTERNAL_EXTEN');
+			const source = /^PJSIP\/([1-9]\d{2,5})-[0-9a-f]+$/i.exec(agi.environment.agi_channel || '');
+			// Asterisk's channel name identifies the authenticated endpoint. Caller ID is presentation data.
+			callerNumber = isExtension(extension) && source?.[1] === extension ? `pbx:${extension}` : null;
+		}
 		const callId = agi.environment.agi_uniqueid || '';
 		if (calledNumber !== config.expectedDid || !callerNumber || !validateCallId(callId)) {
 			await safeSetResult(agi, 'invalid_call');
 			return EXIT.INVALID_CALL;
 		}
 
+		const challengeId = mode === 'outbound' ? await agi.getVariable('PBX_VERIFY_CHALLENGE') : '';
+		if (mode === 'outbound' && !validateEventId(challengeId)) {
+			await safeSetResult(agi, 'invalid_call');
+			return EXIT.INVALID_CALL;
+		}
 		const fetchImpl = dependencies.fetchImpl || globalThis.fetch;
 		if (mode === 'preflight') {
 			const payload = buildPendingPayload(config, {
@@ -709,7 +749,12 @@ async function runAgi(dependencies = {}) {
 				code,
 				occurredAt: new Date().toISOString(),
 			});
-			return postVerification(config, secret, payload, fetchImpl);
+			if (challengeId) {
+				payload.challenge_id = challengeId;
+			}
+			const verification = postVerification(config, secret, payload, fetchImpl);
+			const [outcome] = await Promise.all([verification, agi.stream(config.prompts.checking)]);
+			return outcome;
 		};
 
 		if (mode === 'shortcut') {
@@ -787,11 +832,11 @@ async function runAgi(dependencies = {}) {
 }
 
 if (require.main === module) {
-	runAgi({ mode: process.argv[2] }).then((exitCode) => {
-		process.exitCode = exitCode;
-	}).catch(() => {
-		process.exitCode = EXIT.PROTOCOL;
-	});
+	// Asterisk keeps stdin open until the AGI process exits.
+	runAgi({ mode: process.argv[2] }).then(
+		(exitCode) => process.exit(exitCode),
+		() => process.exit(EXIT.PROTOCOL),
+	);
 }
 
 module.exports = {
@@ -804,6 +849,7 @@ module.exports = {
 	classifyPendingResponse,
 	loadConfig,
 	normalizeIranNumber,
+	normalizeCallerNumber,
 	postVerification,
 	postPending,
 	runAgi,
