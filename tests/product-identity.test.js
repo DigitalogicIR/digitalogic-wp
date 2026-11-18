@@ -10,6 +10,11 @@ const source = fs.readFileSync(
 const identityCss = fs.readFileSync(path.join(__dirname, '..', 'assets', 'css', 'product-identity.css'), 'utf8');
 const experience = fs.readFileSync(path.join(__dirname, '..', 'assets', 'js', 'product-experience.js'), 'utf8');
 const experienceCss = fs.readFileSync(path.join(__dirname, '..', 'assets', 'css', 'product-experience.css'), 'utf8');
+const variationSelector = fs.readFileSync(path.join(__dirname, '..', 'assets', 'js', 'variation-selector.js'), 'utf8');
+const storefrontIcons = fs.readFileSync(path.join(__dirname, '..', 'includes', 'integrations', 'class-digitalogic-storefront-icons.php'), 'utf8');
+const productIdentityPhp = fs.readFileSync(path.join(__dirname, '..', 'includes', 'integrations', 'class-product-identity.php'), 'utf8');
+const variationSelectorPhp = fs.readFileSync(path.join(__dirname, '..', 'includes', 'integrations', 'class-digitalogic-variation-selector.php'), 'utf8');
+const productExperiencePhp = fs.readFileSync(path.join(__dirname, '..', 'includes', 'integrations', 'class-digitalogic-product-experience.php'), 'utf8');
 
 test('selected variations and Woodmart fallback expose the public Product Code safely', () => {
 	assert.match(source, /variation\.digitalogic_product_code/);
@@ -75,6 +80,27 @@ test('contextual highlights separate model text from a copyable product Code', (
 	assert.match(experience, /navigator\.clipboard\.writeText\(code\)/);
 	assert.match(experienceCss, /\.dgl-highlight--product-code/);
 	assert.match(experienceCss, /\.dgl-highlight__copy-button/);
+});
+
+test('every existing Product Code indicator uses the shared linear barcode contract', () => {
+	const barcodePath = storefrontIcons.match(/BARCODE_PATH = '([^']+)'/);
+	assert.ok(barcodePath, 'the shared barcode path must remain explicit and reviewable');
+	assert.match(barcodePath[1], /^M3 5v14(?:M\d+ 5v14)+$/);
+	assert.match(storefrontIcons, /trim\( 'digitalogic-barcode-icon ' \. \$additional_class \)/);
+	assert.match(storefrontIcons, /aria-hidden="true" focusable="false"/);
+	assert.match(productIdentityPhp, /'barcodeIconPath'\s*=>\s*Digitalogic_Storefront_Icons::barcode_path\(\)/);
+	assert.match(productIdentityPhp, /Digitalogic_Storefront_Icons::barcode_svg\(\)/);
+	assert.match(source, /productCodeIcon\(settings\.barcodeIconPath\)/);
+	assert.match(source, /setAttribute\('class', 'digitalogic-barcode-icon'\)/);
+	assert.match(variationSelectorPhp, /'barcodeIconPath'\s*=>\s*Digitalogic_Storefront_Icons::barcode_path\(\)/);
+	assert.match(variationSelector, /svgIcon\(data\.barcodeIconPath \|\| '', 'digitalogic-barcode-icon'\)/);
+	assert.match(productExperiencePhp, /array\( 'barcode', 'کد کالا', '', 'product_code', true, 'product-code' \)/);
+	assert.match(productExperiencePhp, /barcode_svg\( 'dgl-icon' \)/);
+	assert.match(productExperiencePhp, /data-digitalogic-copy-product-code>[\s\S]*self::icon\( 'copy' \)/);
+
+	const productCodeRenderers = [source, variationSelector, productIdentityPhp, productExperiencePhp].join('\n');
+	assert.doesNotMatch(productCodeRenderers, /M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3/);
+	assert.doesNotMatch(productCodeRenderers, /M5 4h11l3 3v13H5zM15 4v4h4/);
 });
 
 test('quantity and add-to-cart controls use the branded blue purchase system', () => {

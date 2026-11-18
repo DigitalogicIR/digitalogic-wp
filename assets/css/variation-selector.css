@@ -37,6 +37,7 @@
 .digitalogic-model-sku bdi { direction: ltr; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-weight: 850; letter-spacing: .025em; unicode-bidi: isolate; }
 .digitalogic-model-sku__icon { display: inline-flex; flex: 0 0 auto; }
 .digitalogic-model-sku__icon svg { fill: none; height: .9rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; width: .9rem; }
+.digitalogic-model-sku__icon .digitalogic-barcode-icon { stroke-linecap: butt; stroke-linejoin: miter; }
 .digitalogic-model-sku__label { color: var(--dgl-color-muted, #62738a); font-weight: 650; }
 .digitalogic-model-price {
     align-self: center; flex: 0 0 auto; margin-inline-start: auto; padding-inline-start: 12px;

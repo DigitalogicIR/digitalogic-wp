@@ -174,6 +174,7 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-label-overrides.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-ux.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-topology-guard.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-icons.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-variation-selector.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-auth-realtime.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-oidc-token.php';
