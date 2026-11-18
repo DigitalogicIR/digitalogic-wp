@@ -60,6 +60,7 @@ final class Digitalogic_Plugin_Admin_Branding {
         $admin_color = wp_json_encode(self::current_user_admin_color());
         $is_login = wp_json_encode(current_filter() === 'login_head');
 
+        // phpcs:disable WordPress.Security.EscapeOutput.HeredocOutputNotEscaped -- Every interpolated value is JSON-encoded above.
         echo <<<HTML
 <script>
 (function() {
@@ -94,6 +95,7 @@ final class Digitalogic_Plugin_Admin_Branding {
 })();
 </script>
 HTML;
+        // phpcs:enable WordPress.Security.EscapeOutput.HeredocOutputNotEscaped
     }
 
     public static function enqueue_admin_assets(): void {

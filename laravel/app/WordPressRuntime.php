@@ -66,10 +66,10 @@ final class WordPressRuntime {
 		}
 
 		if ( isset( $_SERVER['DIGITALOGIC_WORDPRESS_LOAD'] ) && is_string( $_SERVER['DIGITALOGIC_WORDPRESS_LOAD'] ) ) {
-			$candidates[] = $_SERVER['DIGITALOGIC_WORDPRESS_LOAD'];
+			$candidates[] = $_SERVER['DIGITALOGIC_WORDPRESS_LOAD']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		}
 		if ( isset( $_ENV['DIGITALOGIC_WORDPRESS_LOAD'] ) && is_string( $_ENV['DIGITALOGIC_WORDPRESS_LOAD'] ) ) {
-			$candidates[] = $_ENV['DIGITALOGIC_WORDPRESS_LOAD'];
+			$candidates[] = $_ENV['DIGITALOGIC_WORDPRESS_LOAD']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Developer-supplied environment path for the CLI runtime; it is checked before loading.
 		}
 
 		$pluginRoot   = dirname( __DIR__, 2 );

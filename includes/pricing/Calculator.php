@@ -340,6 +340,6 @@ final class Calculator {
 
 
 	private function field_error( string $field, string $reason ): never {
-		throw new \InvalidArgumentException( $field . ': ' . $reason );
+		throw new \InvalidArgumentException( $field . ': ' . $reason ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
 	}
 }
