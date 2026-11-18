@@ -130,7 +130,12 @@ def content(job):
     draft = generate(job)
     if draft['action'] == 'blocked':
         return dict(status='blocked', retry_seconds=604800, result={'reason': draft['reason'], 'unknowns': draft['unknowns']})
-    evidence = source_evidence(draft['evidence'])
+    try:
+        evidence = source_evidence(draft['evidence'])
+    except ValueError as error:
+        return dict(status='blocked', retry_seconds=604800,
+                    result={'reason': 'source_verification_required', 'detail': str(error)[:180],
+                            'sources': [e.get('url') for e in draft['evidence']]})
     payload = dict(id=job['id'], token=job['token'], snapshot=snap, copy=draft['copy'],
                    evidence=evidence, unknowns=draft['unknowns'])
     backups = ROOT / 'backups'
