@@ -1,0 +1,8 @@
+[Unit]
+Description=Bounded Google product inspection queue (at most 720 per day)
+[Timer]
+OnBootSec=4min
+OnUnitInactiveSec=10min
+Persistent=true
+[Install]
+WantedBy=timers.target

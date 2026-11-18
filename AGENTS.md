@@ -1,5 +1,14 @@
 # Digitalogic authentication
 
+## Product content and Google readiness
+
+- The canonical lifecycle queue is `Digitalogic_Product_Content_Queue`; see `ops/product-content/README.md`. Keep its bootstrap, publication/stock hooks and periodic authoritative sweep intact when changing imports, synchronization or deployment.
+- Use the queue's claim, expected snapshot, publish and finish contract for missing-description repairs. Skip a product with another unexpired content claim. Preserve existing nonempty guides and all commercial and identity fields.
+- Verify both saved descriptions and the public page before completing content work. Use primary manufacturer evidence, retain unknown board details privately and apply the internal Persian electronics glossary. Do not place store identifiers in either description.
+- Sitemap membership and HTTP 200 do not prove Google indexing. Record Google's actual inspection verdict; when new copy was published, retain follow-up until the last crawl is at least as recent as that publication.
+
+## Authentication interface
+
 - Keep username, email, and mobile on one visible sign-in field in the branded card. Digits can keep separate provider inputs internally. Show one Remember me checkbox on the first identity step and preserve the choice through verification. The first complete OTP can submit automatically once per form. Require an explicit submit on retry.
 - Keep the placeholder and accessible name in sync with the identity mode. Show «شماره تلفن» when the user enters a phone number. An empty passwordless contact field asks for email or phone. Restore the general prompt on return to an empty sign-in field.
 - Keep sign-in, signup, and password recovery in the same card. A new mobile identity must flow into native Digits signup and OTP confirmation without an extra “Not a member yet?” prompt. Show the optional new-password dialog only after successful verification establishes a session. Skipping the dialog must resume the original destination.

@@ -132,6 +132,7 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-category-slugs.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-supplier-links.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-research.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-content-queue.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-metadata-inspector.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-write-lock.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-code-write-guard.php';
@@ -324,6 +325,7 @@ final class Digitalogic {
 		Digitalogic_Product_Code_Editor::instance();
         Digitalogic_Product_Supplier_Links::instance();
         Digitalogic_Product_Research::boot();
+        Digitalogic_Product_Content_Queue::boot();
         Digitalogic_Pricing::instance();
         Digitalogic_Import_Export::instance();
         Digitalogic_Patris_Feed::instance();

@@ -1,0 +1,10 @@
+[Unit]
+Description=Draft and publish bounded verified missing product content
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/digitalogic-product-content/worker.py content --limit=2
+TimeoutStartSec=70min
+Environment=CODEX_HOME=/root/.codex
+UMask=0077
+Nice=15
