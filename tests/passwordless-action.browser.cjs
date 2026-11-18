@@ -1252,6 +1252,12 @@ async function checkAuthenticationThemes(browser, direction, labels, width) {
         page.setDefaultTimeout(15000);
         let verifications = 0;
         try {
+            if (channel === 'sms') {
+                await render(page, direction, labels, true);
+                await checkPasswordField(page, labels, direction === 'rtl');
+                assert.equal(await page.locator('input.dg-password-input:visible').evaluate(node => getComputedStyle(node).color),
+                    theme === 'dark' ? 'rgb(235, 245, 253)' : 'rgb(22, 50, 72)');
+            }
             const localizedLabels = direction === 'rtl' ? {
                 ...labels, otpCode: 'کد تأیید', smsCodeInstructions: 'کد پیامکی را وارد کنید.',
                 otpResend: 'ارسال مجدد کد', phoneChannel: 'روش دریافت کد تأیید', phoneSms: 'پیامک', phoneCall: 'تماس تلفنی'
