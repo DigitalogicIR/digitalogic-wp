@@ -24,6 +24,8 @@ final class Digitalogic_Admin_Workspace {
 		add_filter( 'get_user_option_screen_layout_dashboard', array( self::class, 'dashboard_columns' ) );
 		add_filter( 'admin_body_class', array( self::class, 'body_class' ) );
 		add_action( 'admin_enqueue_scripts', array( self::class, 'style' ) );
+		add_action( 'admin_enqueue_scripts', array( self::class, 'order_assets' ) );
+		add_action( 'add_meta_boxes', array( self::class, 'order_tracking_box' ), 100 );
 
 		add_action( 'wp_before_admin_bar_render', array( self::class, 'trim_toolbar' ) );
 		add_action( 'admin_head', array( self::class, 'route_vendor_notices' ) );
@@ -205,11 +207,62 @@ final class Digitalogic_Admin_Workspace {
 			return;
 		}
 
+		// WebToffee uses one instance for its order milestone, loyalty and shipping upsells.
+		$notices = $GLOBALS['wp_filter']['admin_notices'] ?? null;
+		foreach ( $notices->callbacks ?? array() as $priority => $callbacks ) {
+			foreach ( $callbacks as $registered ) {
+				$callback = $registered['function'];
+				if (
+					is_array( $callback )
+					&& $callback[0] instanceof Wt_Pklist_Promo_Banners
+					&& in_array( $callback[1], array( 'render_banners', 'render_shipping_promo_banner_maybe' ), true )
+				) {
+					remove_action( 'admin_notices', $callback, $priority );
+				}
+			}
+		}
 		remove_action( 'admin_notices', array( 'ACF_To_REST_API_Donation', 'donation_notice' ) );
 		remove_action( 'admin_notices', 'ss_admin_notice' );
 		if ( 'toplevel_page_ss_options' !== $screen->id && ! str_ends_with( $screen->id, '_page_ss_options' ) ) {
 			remove_action( 'admin_notices', 'ss_wc_admin_notice' );
 		}
+	}
+
+	/** Give Digits' existing tracking controls a native order sidebar destination. */
+	public static function order_tracking_box(): void {
+		if ( ! function_exists( 'digits_wc_sms_send_message' ) ) {
+			return;
+		}
+
+		foreach ( array( 'shop_order', wc_get_page_screen_id( 'shop-order' ) ) as $screen ) {
+			add_meta_box(
+				'digitalogic-order-tracking',
+				self::label( 'Send postal tracking code', 'ارسال کد رهگیری پستی' ),
+				array( self::class, 'render_order_tracking_box' ),
+				$screen,
+				'side',
+				'high'
+			);
+		}
+	}
+
+	/** The original Digits inputs and handlers are moved into this destination. */
+	public static function render_order_tracking_box(): void {
+		echo '<div data-dg-order-tracking-slot></div>';
+	}
+
+	/** Load the tracking layout adapter on WooCommerce order editors. */
+	public static function order_assets(): void {
+		if ( ! function_exists( 'digits_wc_sms_send_message' ) ) {
+			return;
+		}
+
+		$screen = get_current_screen();
+		if ( ! $screen || ! in_array( $screen->id, array( 'shop_order', wc_get_page_screen_id( 'shop-order' ) ), true ) ) {
+			return;
+		}
+		$file = 'assets/js/admin-order-workspace.js';
+		wp_enqueue_script( 'digitalogic-order-workspace', DIGITALOGIC_PLUGIN_URL . $file, array( 'jquery' ), (string) filemtime( DIGITALOGIC_PLUGIN_DIR . $file ), true );
 	}
 
 	/** Keep Woodmart's optional newsletter recommendation out of global install notices. */
@@ -364,10 +417,14 @@ final class Digitalogic_Admin_Workspace {
 
 	/** Show optional commercial material only within the promotions category. */
 	private static function render_promotions(): void {
+		$webtoffee_offer = self::label( 'Bulk export for PDF invoices and credit notes', 'خروجی گروهی فاکتورها و یادداشت‌های اعتباری' );
+		if ( class_exists( 'Wt_Pklist_Promo_Banners' ) && 'loyalty' === Wt_Pklist_Promo_Banners::get_active_promo_banner_type() ) {
+			$webtoffee_offer .= ' · ' . self::label( 'Vendor loyalty offer: 15% off PRO with coupon PSLOYAL50.', 'پیشنهاد وفاداری سازنده: ۱۵٪ تخفیف نسخه حرفه‌ای با کد PSLOYAL50.' );
+		}
 		$paid = array(
 			array( 'permalink-manager/permalink-manager.php', 'Permalink Manager', 'Pro features and offers', 'امکانات و پیشنهادهای نسخه حرفه‌ای', 'https://permalinkmanager.pro/pricing/' ),
 			array( 'wp-rocket/wp-rocket.php', 'WP Rocket', 'Optional RocketCDN service', 'سرویس اختیاری RocketCDN', 'https://wp-rocket.me/rocketcdn/' ),
-			array( 'print-invoices-packing-slip-labels-for-woocommerce/print-invoices-packing-slip-labels-for-woocommerce.php', 'WebToffee', 'Bulk export for PDF invoices and credit notes', 'خروجی گروهی فاکتورها و یادداشت‌های اعتباری', 'https://www.webtoffee.com/product/woocommerce-pdf-invoices-packing-slips/' ),
+			array( 'print-invoices-packing-slip-labels-for-woocommerce/print-invoices-packing-slip-labels-for-woocommerce.php', 'WebToffee', $webtoffee_offer, $webtoffee_offer, 'https://www.webtoffee.com/product/woocommerce-pdf-invoices-packing-slips/' ),
 			array( 'zero-spam/wordpress-zero-spam.php', 'Zero Spam', 'Optional Enhanced Protection plan', 'طرح اختیاری محافظت پیشرفته', 'https://www.zerospam.org/' ),
 			array( 'redis-cache/redis-cache.php', 'Object Cache Pro', 'Paid upgrade for Redis Object Cache', 'ارتقای پولی افزونه Redis Object Cache', 'https://objectcache.pro/' ),
 		);
