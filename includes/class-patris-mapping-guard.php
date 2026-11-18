@@ -196,7 +196,7 @@ final class Digitalogic_Patris_Mapping_Guard {
 	 * @throws RuntimeException When an unmapped product has a price.
 	 */
 	public static function before_save( $product ) {
-		if ( Digitalogic_Patris_Price_Write_Guard::instance()->is_authorized_write() ) {
+		if ( Digitalogic_Patris_Price_Write_Guard::instance()->is_authorized_write( $product ) ) {
 			return; }
 		if ( ! self::connected( $product ) ) {
 			$message = 'CRITICAL: Product ' . $product->get_id() . ' has no valid Patris mapping; price write blocked.';
@@ -230,7 +230,7 @@ final class Digitalogic_Patris_Mapping_Guard {
 	 * @return mixed
 	 */
 	public static function price_metadata( $check, $id, $key, $value ) {
-		if ( null !== $check || Digitalogic_Patris_Price_Write_Guard::instance()->is_authorized_write()
+		if ( null !== $check || Digitalogic_Patris_Price_Write_Guard::instance()->is_authorized_write( (int) $id )
 			|| ! in_array( $key, array( '_price', '_regular_price', '_sale_price' ), true ) || '' === (string) $value ) {
 			return $check; }
 		$p = wc_get_product( $id );

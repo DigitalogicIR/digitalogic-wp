@@ -29,6 +29,13 @@ final class Digitalogic_Patris_Price_Write_Guard {
 	private $authorized_depth = 0;
 
 	/**
+	 * Exact source publication scope, never a public mapping.
+	 *
+	 * @var array|null
+	 */
+	private $source_publication = null;
+
+	/**
 	 * Return the shared service.
 	 *
 	 * @return self
@@ -101,9 +108,78 @@ final class Digitalogic_Patris_Price_Write_Guard {
 		}
 	}
 
-	/** Whether the canonical writer is currently applying a source transition. */
-	public function is_authorized_write() {
-		return $this->authorized_depth > 0;
+	/**
+	 * Whether the canonical writer is applying this source transition.
+	 *
+	 * @param WC_Product|int|null $product Exact target for a scoped publication.
+	 * @return bool
+	 */
+	public function is_authorized_write( $product = null ) {
+		return $this->authorized_depth > 0 || $this->matches_source_publication( $product );
+	}
+
+	/**
+	 * Save one already-verified source projection before its applied ledger commits.
+	 *
+	 * This scope permits only this object and its price metadata. It never makes
+	 * connected() true, changes the ledger, or authorizes another product.
+	 *
+	 * @param WC_Product $product Verified, staged Woo object.
+	 * @param array      $identity Exact canonical source identity.
+	 * @param string     $record_hash Hash already persisted by the feed.
+	 * @return int Saved product ID.
+	 * @throws RuntimeException If identity or transaction locks are not verified.
+	 */
+	public function save_verified_source_publication( $product, array $identity, $record_hash ) {
+		$previous                 = $this->source_publication;
+		$this->source_publication = array(
+			'product'     => $product,
+			'identity'    => $identity,
+			'record_hash' => (string) $record_hash,
+		);
+		try {
+			if ( ! $this->matches_source_publication( $product ) ) {
+				throw new RuntimeException( 'Source publication identity or transaction locks could not be verified.' );
+			}
+			return $product->save();
+		} finally {
+			$this->source_publication = $previous;
+		}
+	}
+
+	/**
+	 * Validate the exact object/metadata target at every guard boundary.
+	 *
+	 * @param WC_Product|int|null $target Save or metadata target.
+	 * @return bool
+	 */
+	private function matches_source_publication( $target ) {
+		$scope = $this->source_publication;
+		if ( ! is_array( $scope ) || ! $scope['product'] instanceof WC_Product ) {
+			return false;
+		}
+		$product = $scope['product'];
+		$id      = (int) $product->get_id();
+		if ( $id < 1 || ( is_object( $target ) ? $target !== $product : (int) $target !== $id )
+			|| ! Digitalogic_Product_Sync_Receiver::instance()->source_identity_lock_is_owned()
+			|| ! Digitalogic_Product_Write_Lock::instance()->is_owned( $id ) ) {
+			return false;
+		}
+		$identity = $scope['identity'];
+		$code     = (string) ( $identity['product_code'] ?? '' );
+		$source   = (string) ( $identity['source_id'] ?? '' );
+		$dataset  = (string) ( $identity['dataset'] ?? '' );
+		$revision = (string) ( $identity['source_revision'] ?? '' );
+		return '' !== $code && '' !== $source && '' !== $dataset
+			&& 1 === preg_match( '/\Asha256:[a-f0-9]{64}\z/D', $revision )
+			&& 1 === preg_match( '/\A(?:sha256:)?[a-f0-9]{64}\z/D', $scope['record_hash'] )
+			&& $code === (string) $product->get_sku( 'edit' )
+			&& $code === (string) $product->get_meta( '_digitalogic_patris_product_code', true )
+			&& $code === (string) $product->get_meta( '_digitalogic_patris_owner_product_code', true )
+			&& $source === (string) $product->get_meta( '_digitalogic_patris_owner_source_id', true )
+			&& $dataset === (string) $product->get_meta( '_digitalogic_patris_owner_dataset', true )
+			&& $revision === (string) $product->get_meta( '_digitalogic_patris_source_revision', true )
+			&& hash_equals( $scope['record_hash'], (string) $product->get_meta( '_digitalogic_patris_record_hash', true ) );
 	}
 
 	/**
@@ -139,7 +215,7 @@ final class Digitalogic_Patris_Price_Write_Guard {
 	public function guard_product_save( $product, $data_store = null ) {
 		unset( $data_store );
 		if (
-			$this->authorized_depth > 0
+			$this->is_authorized_write( $product )
 			|| ! is_object( $product )
 			|| ! method_exists( $product, 'get_changes' )
 		) {
@@ -200,7 +276,7 @@ final class Digitalogic_Patris_Price_Write_Guard {
 		unset( $prev_value );
 		if (
 			null !== $check
-			|| $this->authorized_depth > 0
+			|| $this->is_authorized_write( (int) $object_id )
 			|| ! in_array( (string) $meta_key, array( '_regular_price', '_sale_price', '_price' ), true )
 			|| ! $this->is_product_record( (int) $object_id )
 		) {
@@ -233,7 +309,7 @@ final class Digitalogic_Patris_Price_Write_Guard {
 	public function reconcile_regular_price_metadata( $meta_id, $object_id, $meta_key, $meta_value ) {
 		unset( $meta_id, $meta_value );
 		if (
-			$this->authorized_depth > 0
+			$this->is_authorized_write( (int) $object_id )
 			|| '_regular_price' !== (string) $meta_key
 			|| ! $this->is_product_record( (int) $object_id )
 			|| $this->is_managed_product( (int) $object_id )

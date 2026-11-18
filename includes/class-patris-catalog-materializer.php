@@ -381,7 +381,7 @@ final class Digitalogic_Patris_Catalog_Materializer {
 							return is_wp_error( $guarded ) ? $guarded : $this->error( 'digitalogic_pricing_actuation_guard_rejected', 'Pricing transaction guard rejected the write.' );
 						}
 					}
-					if ( ! $product->save() ) {
+					if ( ! Digitalogic_Patris_Price_Write_Guard::instance()->save_verified_source_publication( $product, $identity, (string) ( $record['record_hash'] ?? '' ) ) ) {
 						throw new RuntimeException( 'WooCommerce rejected the public source projection.' );
 					}
 				} catch ( Throwable $exception ) {
