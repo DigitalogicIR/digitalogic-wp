@@ -93,6 +93,7 @@
                     });
                     cardIds.clear();
                     cardsApplied = generation;
+                    if (window.jQuery) window.jQuery(document).trigger('wood-images-loaded');
                     window.dispatchEvent(new CustomEvent('digitalogic:cards-refreshed'));
                     return;
                 }
