@@ -116,12 +116,15 @@ final class MobileBrowserGoogleCode {
 		if ( $claims['iat'] < $proof['created_at'] - 30 || $proof['expires_at'] <= time() ) {
 			return self::error( 'browser_google_code_rejected', 409 );
 		}
+		// Code-flow state is not a signed JWT nonce. Never promote an older token
+		// past a canonical subject-binding activation using a newer challenge time.
+		$verified_at = min( $proof['created_at'], $claims['iat'] );
 		return array(
 			'claims' => $claims,
 			'token'  => $data['id_token'],
 			'fresh'  => array(
-				'created_at'  => $proof['created_at'],
-				'verified_at' => $proof['created_at'],
+				'created_at'  => $verified_at,
+				'verified_at' => $verified_at,
 				'expires_at'  => $proof['expires_at'],
 			),
 		);

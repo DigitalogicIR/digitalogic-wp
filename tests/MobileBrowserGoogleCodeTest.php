@@ -324,6 +324,24 @@ final class MobileBrowserGoogleCodeTest extends TestCase {
 		self::assertCount( 1, $GLOBALS['digitalogic_test_remote_posts'] );
 	}
 
+	/** A new unsigned code challenge cannot advance the signed token's proof time. */
+	public function test_code_freshness_never_exceeds_signed_token_issue_time(): void {
+		$input  = $this->input();
+		$proof  = GoogleCode::proof( $this->context, $input );
+		$issued = $proof['created_at'] - 20;
+		$GLOBALS['digitalogic_test_remote_post_results'][] = array(
+			'response' => array( 'code' => 200 ),
+			'body'     => wp_json_encode( array( 'id_token' => $this->token( array( 'iat' => $issued ) ) ) ),
+		);
+		$result = GoogleCode::exchange( $this->context, $input, '192.0.2.61' );
+		self::assertIsArray( $result );
+		self::assertSame( $issued, $result['claims']['iat'] );
+		self::assertSame( $issued, $result['fresh']['created_at'] );
+		self::assertSame( $issued, $result['fresh']['verified_at'] );
+		self::assertSame( $proof['expires_at'], $result['fresh']['expires_at'] );
+		self::assertCount( 1, $GLOBALS['digitalogic_test_remote_posts'] );
+	}
+
 	/**
 	 * A timeout is uncertain and permanently consumes that attempt without retries.
 	 */
