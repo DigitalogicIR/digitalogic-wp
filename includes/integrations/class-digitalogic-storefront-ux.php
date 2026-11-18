@@ -38,7 +38,8 @@ final class Digitalogic_Storefront_UX {
 		if ( ! $page || 'publish' !== $page->post_status ) {
 			return $fallback;
 		}
-		return get_permalink( $page ) ?: $fallback;
+		$url = get_permalink( $page );
+		return $url ? $url : $fallback;
 	}
 
 	/** Use the same catalog destination when Woodmart renders its Shop button. */

@@ -192,7 +192,6 @@ final class Digitalogic_Product_Link_Report {
 		}
 		$category = ( -1 === $category || in_array( $category, array_map( 'intval', wp_list_pluck( $terms, 'term_id' ) ), true ) ) ? $category : 0;
 		?>
-		<p>این گزارش با هر بار باز کردن صفحه یا اعمال فیلتر، از داده‌های فعلی فروشگاه خوانده می‌شود.</p>
 		<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>">
 			<input type="hidden" name="page" value="<?php echo esc_attr( self::PAGE ); ?>">
 			<p style="display:flex;flex-wrap:wrap;align-items:end;gap:12px">

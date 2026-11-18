@@ -15,43 +15,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class Health {
 
-	private static bool $registered = false;
-
-	public static function register(): void {
-		if ( self::$registered ) {
-			return;
-		}
-
-		self::$registered = true;
-		add_action( 'wp_dashboard_setup', array( self::class, 'add_widget' ) );
-		add_action( 'admin_enqueue_scripts', array( self::class, 'enqueue_dashboard_style' ) );
-	}
-
-	public static function add_widget(): void {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-
-		wp_add_dashboard_widget(
-			'digitalogic-admin-health',
-			'سلامت مدیریت دیجیتالاجیک',
-			array( self::class, 'render' )
-		);
-	}
-
-	public static function enqueue_dashboard_style( string $hook_suffix ): void {
-		if ( $hook_suffix !== 'index.php' || ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-
-		$path = DIGITALOGIC_PLUGIN_DIR . 'assets/css/admin-suite.css';
-		if ( ! is_readable( $path ) || wp_style_is( Branding::ADMIN_STYLE, 'enqueued' ) ) {
-			return;
-		}
-
-		wp_enqueue_style( Branding::ADMIN_STYLE, DIGITALOGIC_PLUGIN_URL . 'assets/css/admin-suite.css', array(), (string) filemtime( $path ) );
-	}
-
 	public static function render(): void {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;

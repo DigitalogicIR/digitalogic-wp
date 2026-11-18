@@ -89,4 +89,4 @@ Both files are optimized for web use and load quickly.
 ## Credits
 
 Icon design: Digitalogic Brand Team  
-Implementation: atomicdeploy/digitalogic-wp
+Implementation: DigitalogicIR/digitalogic-wp

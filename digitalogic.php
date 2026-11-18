@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Digitalogic WooCommerce Extension
- * Plugin URI: https://github.com/atomicdeploy/digitalogic-wp
+ * Plugin URI: https://github.com/DigitalogicIR/digitalogic-wp
  * Description: Custom dynamic pricing, stock manager, and POS integration for Digitalogic electronic components shop. Supports bulk operations, import/export, and external API integration.
  * Version: 2.4.34
  * Author: Digitalogic
@@ -174,6 +174,7 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-label-overrides.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-ux.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-topology-guard.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-icons.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-variation-selector.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-auth-realtime.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-oidc-token.php';
@@ -627,9 +628,9 @@ final class Digitalogic {
     public function plugin_row_meta($links, $file) {
         if ($file === DIGITALOGIC_PLUGIN_BASENAME) {
             $row_meta = array(
-                'docs'    => '<a href="https://github.com/atomicdeploy/digitalogic-wp#readme" target="_blank">' . __('Documentation', 'digitalogic') . '</a>',
+                'docs'    => '<a href="https://github.com/DigitalogicIR/digitalogic-wp#readme" target="_blank">' . __('Documentation', 'digitalogic') . '</a>',
                 'api'     => '<a href="' . esc_url(admin_url('admin.php?page=digitalogic-status')) . '">' . __('API & Status', 'digitalogic') . '</a>',
-                'support' => '<a href="https://github.com/atomicdeploy/digitalogic-wp/issues" target="_blank">' . __('Support', 'digitalogic') . '</a>',
+                'support' => '<a href="https://github.com/DigitalogicIR/digitalogic-wp/issues" target="_blank">' . __('Support', 'digitalogic') . '</a>',
             );
 
             $links = array_merge($links, $row_meta);
