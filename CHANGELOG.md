@@ -7,6 +7,307 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Exclude unavailable products and variations from public price filters and collection ranges, and show sold-out status in search suggestions and model selectors without a price or update date.
+
+## [2.4.34] - 2026-10-13
+
+- Accept explicitly observed UAH prices in private research without conversion or public commercial changes.
+
+## [2.4.33] - 2026-10-13
+
+- Accept explicitly observed PKR prices in private research without conversion or public commercial changes.
+
+## [2.4.32] - 2026-10-13
+
+- Accept explicitly observed BRL prices in the private research ledger without currency conversion or changes to WooCommerce prices.
+
+## [2.4.31] - 2026-10-13
+
+- Allow the private research presenter to reuse source/status labels; verify the complete rendered offer table and anonymous capability boundary, preventing truncated administrator pages.
+
+## [2.4.30] - 2026-10-13
+
+- Group private research offers by normalized source so shared storefront profiles appear once without dropping independent offers or history.
+- Format DECIMAL amounts without zero padding and DATETIME observations with semantic UTC timestamps. Expose structured offer and derived comparison values in private readbacks.
+- Show exact amount differences and approximate percentages in green/red for reviewed same-currency single-unit offers; equal and incomparable offers stay neutral. Unspecified variable parents never supply an aggregate minimum.
+
+## [2.4.29] - 2026-10-13
+
+- Accept explicitly observed MXN prices in the private research ledger without converting Mexican peso amounts or changing WooCommerce prices.
+
+## [2.4.28] - 2026-10-13
+
+- Accept explicitly observed EGP prices in the private research ledger without converting Egyptian pound amounts or changing WooCommerce prices.
+
+## [2.4.27] - 2026-10-13
+
+- Accept explicitly observed AFN prices in the private research ledger without converting Afghan afghani amounts or changing WooCommerce prices.
+
+## [2.4.26] - 2026-10-13
+
+- Accept explicitly observed HKD prices in the private research ledger without converting the amount or changing WooCommerce prices.
+
+## [2.4.25] - 2026-10-13
+
+- Preserve private research corrections and analytics notes when revisiting a product, and accept explicitly observed PLN prices without conversion.
+
+## [2.4.24] - 2026-10-13
+
+- Add private normalized source domains, product listings, historical price/currency/availability observations, and a leased research coverage queue.
+- Show Persian seller/manufacturer summaries, technical attachments, comparison notes, and administrator findings inside the existing private product supplier section and a WooCommerce research dashboard.
+- Add administrator-only research CLI commands, safe bounded metadata extraction, and legacy supplier-link imports that do not count as completed searches.
+
+## [2.4.23] - 2026-10-11
+
+- Opt English-only product and entity titles out of FaNum typography while preserving the Persian face for titles containing any non-ASCII script.
+- Reapply the title typography decision after AJAX catalogue navigation and dynamic Woodmart updates.
+
+## [2.4.22] - 2026-10-11
+
+- Keep only the product-category banner that matches the current category ancestry; unrelated promotional category artwork is no longer shown.
+- Replace the real Woodmart product grid during AJAX catalogue navigation instead of the similarly named category carousel.
+- Move the updated product grid into the viewport after pagination, per-page, availability, or price-filter navigation while respecting a sticky header.
+
+## [2.4.21] - 2026-10-11
+
+- Stop emitting Product and Merchant-listing schema for products that do not yet have a verified image, while leaving their normal pages indexable.
+- Keep valid ProductGroup schema when at least one declared variant carries a real image value.
+
+## [2.4.20] - 2026-10-11
+
+- Redirect historic direct URLs for published, SKU-backed WooCommerce variations to the canonical parent product with the exact variation attributes selected.
+- Leave ambiguous, unpublished, parentless, or SKU-less variation paths untouched instead of guessing a destination.
+
+## [2.4.19] - 2026-10-11
+
+- Prevent product titles from carrying customer instructions such as «انتخاب مدل …».
+- Reject ESP32 variations that mix different silicon families under one parent.
+- Preserve old `/product/esp-32/` links with family-aware permanent redirects.
+- Make catalogue quantity controls neutral and remove unrelated category promos and placeholder category carousels from product-search results.
+
+## [2.4.18] - 2026-10-10
+
+- Add configurable magnitude-based final rounding, shared by PHP and Go for foreign, partner and direct-sale prices, with exact half-up boundary handling.
+- Add editable rounding tiers to Patris settings and `wp digitalogic pricing rounding`; coordinated changes immediately reprice products while preserving source amounts, stock and identity.
+
+- Keep catalogue-only availability controls off single-product related-product sections.
+- Normalize Rank Math Pro variation offers after its ProductGroup variants are populated.
+- Sanitize optional schema fields and category text after Rank Math Pro validates its completed JSON-LD graph.
+- Grant the existing least-privilege viewer service role access to the protected Organizer catalog endpoint.
+- Fully decode repeatedly escaped Product category paths and emit a KSES-safe slash separator before Merchant listing JSON-LD is rendered.
+
+## [2.4.17] - 2026-10-10
+
+- Translate the legacy price-filter widget title even when Woodmart stores it as database content instead of a gettext string.
+- Render and maintain the AJAX-enhanced in-stock filter on product-search layouts that omit WooCommerce's standard before-loop hook.
+
+## [2.4.16] - 2026-10-10
+
+- Translate the exact live order-status slugs registered by the spam, partial-payment, scheduled-payment, and deposit extensions.
+
+## [2.4.15] - 2026-10-10
+
+- Move the live, least-privilege Organizer product and media endpoint into the canonical plugin package so package replacement cannot remove the existing private integration.
+
+## [2.4.14] - 2026-10-10
+
+- Localize escaped storefront labels and third-party order statuses without changing their internal slugs.
+- Add accessible catalogue loading feedback, an AJAX-enhanced availability filter, and a resilient My Account navigation layout.
+- Replace reused promotional art with six category-specific, readable banner assets.
+- Normalize nested ProductGroup variant offers to ISO Rial schema, remove invalid Jalali price-expiry values, and suppress invalid unpriced Product rich-result entities.
+- Classify administrator-only related links as supplier, partner, or competitor while retaining their existing privacy boundary.
+
+## [2.4.13] - 2026-10-07
+
+- Read the localized WooCommerce variation price from its PHP-provided `price_text` key while retaining compatibility with camel-case card data.
+
+## [2.4.12] - 2026-10-07
+
+- Fall back to WooCommerce's tax-aware display-price formatter when a pricing integration temporarily returns empty variation price HTML during server-side model-card rendering.
+
+## [2.4.11] - 2026-10-07
+
+- Reconcile server-rendered selectable-model cards with the final localized variation data so available prices are not lost when pricing integrations finish later in the page lifecycle.
+
+## [2.4.10] - 2026-10-07
+
+- Show each available variation's WooCommerce-formatted price in the selectable-model card while keeping unavailable models price-free.
+
+## [2.4.9] - 2026-10-07
+
+- Render fully English product titles with a Latin non-FaNum font and left-to-right text flow while leaving Persian and mixed-language titles unchanged.
+
+## [2.4.8] - 2026-10-05
+
+- Add a controlled Original/Copy product field and SMD-only Marking and Package fields in the WooCommerce editor.
+- Show populated product specifications as compact storefront pills and include them in WooCommerce and Rank Math Product structured data without treating Marking as an MPN.
+- Refresh the locked Laravel and CommonMark dependency tree to versions that clear the current Composer security audit.
+
+## [2.4.7] - 2026-10-05
+
+- Mirror Woodmart navigation chevrons in RTL layouts while preserving the expanded-state downward direction.
+
+## [2.4.6] - 2026-10-05
+
+- Replace letter-based software tiles with locally hosted official product icons in the shared Knowledge Hub.
+- Flatten product and compatibility surfaces into a cleaner Digitalogic blue-and-cyan visual system with quieter borders and shadows.
+
+## [2.4.5] - 2026-10-05
+
+- Stack the enhanced model selector and purchase controls at intermediate storefront widths so neither is constrained to Woodmart's narrow variation column.
+
+## [2.4.4] - 2026-10-05
+
+- Apply the Digitalogic model switcher to Raspberry Pi RAM variations and keep its native select fallback full-width at narrow and intermediate storefront widths.
+
+## [2.4.3] - 2026-10-05
+
+- Align the software archive wrapper with Woodmart's content-grid contract so the library uses the full responsive content width.
+
+## [2.4.2] - 2026-10-05
+
+- Add a product-knowledge shortcode so the live Elementor/Woodmart description accordion visibly renders related tools and operating-system badges.
+
+## [2.4.1] - 2026-10-04
+
+- Render shared software and OS resources through the product content path used by the live Woodmart product template.
+
+## [2.4.0] - 2026-10-04
+
+- Add an RTL software library with reviewed official links and practical guides for Raspberry Pi Imager, RustDesk, Arduino IDE, PlatformIO, Arduino Community for VS Code, and ESP Arduino cores.
+- Add reusable product topics and supported-operating-system badges shared by products and guides.
+- Add responsive SBC and product-resource sections, including a dedicated `/sbc/` landing page and `/software/` archive.
+
+## [2.3.11] - 2026-09-28
+
+- Replace the Patris product reconciliation and incomplete-product repair timers with synchronous, identity-locked materialization for every accepted event.
+- Retire the legacy Patris pull-import cron so product ingestion has no polling writer to race the authenticated event receiver.
+- Keep any incomplete delivery durably unapplied and make receipt-v2 report pending until both transient and deferred product sets are empty.
+- Publish one idempotent, value-free `product.created` or `product.updated` Panel event after verified commit with Product Code, source event/revision, WordPress product ID, and allowlisted changed-field names.
+- Add the durable Panel-ledger-to-Codex event bridge with strict schema validation, wake-only prompts, and no polling loop.
+
+## [2.3.10] - 2026-09-28
+
+- Add a complete package-runtime fingerprint and make the persistent WordPress WebSocket command worker exit for its managed systemd restart when a deployment replaces it, preventing stale receiver bytecode after deployments.
+
+## [2.3.9] - 2026-09-28
+
+- Enforce the accepted event timestamp as an atomic receiver-state storage invariant, including durable backfill for legacy rows on their next write.
+
+## [2.3.8] - 2026-09-28
+
+- Let an authenticated Patris outbox safely prove a strictly newer absent event against the receiver's durable accepted-timestamp high-water without weakening saturated-history replay protection.
+
+## [2.3.7] - 2026-09-28
+
+- Clear a stale catalog-watchdog scheduling error whenever an existing or newly-created cron event is read back successfully.
+
+## [2.3.6] - 2026-09-28
+
+- Allow an explicitly enabled source policy to publish identity-safe products with incomplete commercial fields while preserving blank prices and non-purchasable behavior.
+- Add a bounded receiver-owned reconciliation watchdog that retries pending product creation, audits source-to-WooCommerce materialization, repairs its own schedule, and exposes nonsecret run status through `wp digitalogic product-sync status`.
+- Add an authenticated, read-only exact-event receipt probe so Patris can resolve unknown write outcomes without blindly replaying product-sync events.
+
+## [2.3.5] - 2026-09-28
+
+- Keep the add-to-cart SVG in the button's flex flow and restore the product-benefit area to its intended aligned CSS Grid on desktop and mobile.
+
+## [2.3.4] - 2026-09-27
+
+- Reserve a dedicated mobile cart-title gutter so the order remove action never overlaps product identity text.
+
+## [2.3.3] - 2026-09-27
+
+- Disable and visually subdue unavailable Product Code model cards, with an explicit unavailable badge matching the rich model dropdown.
+
+## [2.3.2] - 2026-09-27
+
+- Apply the contextual Digitalogic model selector to the canonical WooCommerce `pa_model` attribute as well as source-owned model attributes.
+- Keep unavailable `pa_model` variations visible but disabled, subdued, price-free, and linked to their exact Product Code card.
+
+## [2.3.1] - 2026-09-27
+
+- Separate the selected model and exact Product Code into contextual highlight cards, with an accessible copy action and no bracketed identity text.
+- Present model images or branded placeholders in the selector, disable unavailable models, and replace their price with an explicit unavailable badge.
+- Prevent out-of-stock variations from exposing storefront price HTML/raw contracts or price-update provenance while keeping the catalog API price field intact.
+- Align Product Code choices, quantity controls, and add-to-cart actions with the shared blue Digitalogic storefront design system.
+
+## [2.3.0] - 2026-09-27
+
+- Keep Woodmart live-search results above storefront content when the shared header drop-shadow creates a stacking context.
+- Consolidate the former Digitalogic custom plugins and MU integrations, including the unprefixed Organizer login and WP Rocket/Cloudflare fixes, under the single `digitalogic-wp` runtime owner.
+- Generalize the former Organizer-only proxy as `digitalogic-login-proxy`, with protected external configuration for multiple trusted login-proxy consumers and a bounded legacy configuration fallback.
+- Replace public Patris-code markup and browser contracts with product-code terminology while preserving the private accounting identity internally.
+- Present each variable-product model as a separate, selectable control with its exact product code and raw-contract-validated price.
+- Keep price, price-update provenance, and variation attributes hidden until an exact model is selected, and clear them again on reset.
+- Replace ambiguous text actions with accessible SVG controls and reserve stable space for product and order reset/remove actions.
+
+## [2.2.1] - 2026-09-27
+
+- Expose exact non-HTML prices and currency metadata through product API responses and identity-guarded variation JSON.
+- Pair selected-variation HTML with its raw price contract so equal-priced WooCommerce variations cannot be misreported as unpriced.
+- Validate the raw/HTML pair in the storefront without calculating from parent prices or localized display text.
+
+## [2.2.0] - 2026-09-27
+
+- Route WordPress order text and invoice PDFs to the Digitalogic Telegram operations group and its dedicated website topic instead of a private Shokri chat.
+- Rename the n8n document node to `Send Order PDF to Telegram`, use server-owned group/topic configuration, and make invoice captions contextual to the order number.
+- Remove protected payment-receipt files when their WooCommerce order is permanently deleted, including HPOS and legacy CPT storage.
+
+## [2.1.9] - 2026-09-26
+
+- Localize the live delivery date picker itself with Jalali month context, Persian weekday names, Persian digits, and Persian navigation labels without changing its Gregorian availability identifiers.
+
+## [2.1.8] - 2026-09-26
+
+- Present delivery and order dates in one Persian-digit Jalali format across checkout, order details, PDFs, receipt state, shortcodes, and notification payloads while preserving Delivery Slots Gregorian ASCII machine identifiers.
+
+## [2.1.7] - 2026-09-26
+
+- Keep the delivery date and delivery time-window requirements independent in checkout validation so an optional time window is never presented as optional while the server still rejects it.
+
+## [2.1.6] - 2026-09-26
+
+- Render the configured Digitalogic wordmark and official circuit-D site icon as a composed PDF brand lockup so mPDF cannot clip the mark from the order header.
+
+## [2.1.5] - 2026-09-26
+
+- Normalize the full Persian `قبل از ظهر` and `بعد از ظهر` forms, including half-spaced variants emitted by localized WordPress date formatting.
+
+## [2.1.4] - 2026-09-26
+
+- Add a shared site-wide formatter for WordPress `wp_date()` and `date_i18n()` output that replaces Persian and English 12-hour meridiems with contextual `صبح`, `ظهر`, and `عصر` labels.
+- Reuse the formatter across checkout choices, order details, PDFs, shortcodes, and webhook notifications while preserving stored slot identifiers and legacy order data.
+
+## [2.1.3] - 2026-09-26
+
+- Use server-local static TrueType instances generated from YekanBakh FaNum VF for real Regular and Bold mPDF typography, with the existing static face retained as a safe fallback.
+- Replace the English invoice eyebrow with a concise Persian Digitalogic document label while preserving the branded RTL layout.
+
+## [2.1.2] - 2026-09-26
+
+- Replace blanket storefront shadow removal with reusable flat, content, raised, feature, and interactive surface variants.
+- Keep the order action hub as the focal feature surface, preserve the dedicated bank-card treatment, and raise the receipt form only during active interaction.
+
+## [2.1.1] - 2026-09-26
+
+- Restore a distinctive, restrained bank-card surface while keeping surrounding content cards flat and visually stable.
+- Align invoice actions at a consistent control height and refresh their semantic blue, violet, green, and coral palette.
+- Register the local YekanBakh TrueType font directly with mPDF, disable automatic Persian font substitution, and align the generated invoice with the storefront design system.
+
+## [2.1.0] - 2026-09-26
+
+- Add a shared YekanBakh RTL storefront design system for header, footer, catalog, product, cart, checkout, account, form, and empty-state surfaces.
+- Standardize semantic primary, success, warning, and destructive controls; add accessible focus treatment and a global reduced-motion contract.
+- Remove redundant nested presentation layers and prevent mobile Chaty overlays from obscuring catalog actions, product identity, checkout choices, and the fixed purchase bar.
+- Record production media gaps in a separate product-code-authoritative evidence ledger without assigning guessed or mismatched images.
+
+## [2.0.5] - 2026-09-26
+
+- Keep required delivery date and time controls outside WooCommerce's AJAX-replaced order-review fragment, with maintained Persian labels and vendor validation translations.
+- Add checkout-side progressive validation, accessible inline feedback, stable shipping-method checks, and an explicit order-readiness state while retaining server validation as the final authority.
+- Replace orange checkout warnings and quantity hover controls with a responsive Digitalogic blue visual system and remove warning-link underlines.
+
 ## [2.0.4] - 2026-09-08
 
 - Batch source-owned operational metadata, stock and unavailable-price transitions in the existing direct database writer, with exact metadata, lookup and stock-visibility verification.

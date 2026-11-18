@@ -32,8 +32,6 @@ final class Digitalogic_Call_Verification {
 	private const PBX_KEY_ID            = 'v1';
 	private const SITE_ID               = 'digitalogic.ir';
 	private const ACCESS_DID            = '+982166754123';
-	private const DIAL_DISPLAY          = '021-66754123';
-	private const DIAL_TEL              = '+982166754123';
 	private const CHALLENGE_TTL         = 120;
 	private const CONSUME_TTL           = 120;
 	private const COOKIE_NAME           = 'digitalogic_call_binding';
@@ -74,7 +72,7 @@ final class Digitalogic_Call_Verification {
 		add_filter( 'rest_post_dispatch', array( $this, 'add_no_store_headers' ), 10, 3 );
 		add_action( 'login_enqueue_scripts', array( $this, 'enqueue_assets' ), 40 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'maybe_enqueue_account_assets' ), 40 );
-		add_action( 'login_footer', array( $this, 'render_login_verification' ) );
+		add_action( 'digitalogic_branded_login_content', array( $this, 'render_login_verification' ) );
 		add_action( 'wp_footer', array( $this, 'render_sidebar_login_verification' ), 5 );
 		add_action( 'woocommerce_after_edit_account_form', array( $this, 'render_account_contacts' ) );
 		add_action( 'show_user_profile', array( $this, 'render_admin_contacts' ) );
@@ -444,9 +442,29 @@ final class Digitalogic_Call_Verification {
 			return new WP_Error( 'digitalogic_call_login_required', __( 'Please sign in before adding a contact.', 'digitalogic' ), array( 'status' => 401 ) );
 		}
 
-		$phone = Digitalogic_PBX_Phone::normalize( $request->get_param( 'phone' ) );
+		$raw_phone = $request->get_param( 'phone' );
+		$phone     = Digitalogic_PBX_Phone::normalize( $raw_phone );
+		$delivery  = $request->get_param( 'delivery' ) ?? 'incoming';
+		$internal  = 'extension' === $delivery;
+		if ( $internal ) {
+			$assigned = 'login' === $purpose && $user_id < 1 ? self::lan_assignment() : null;
+			if ( ! $assigned ) {
+				return new WP_Error( 'digitalogic_call_extension', __( 'Internal extension verification is unavailable for this workstation.', 'digitalogic' ), array( 'status' => 403 ) );
+			}
+			$user_id = $assigned['user']->ID;
+			$dial = self::extension_dial( $assigned['extension'] );
+			$phone = 'pbx:' . $assigned['extension'];
+		}
+		if ( '' === $phone && 'login' === $purpose && is_string( $raw_phone ) ) {
+			$phone = Digitalogic_PBX_Phone::normalize_international( $raw_phone );
+		}
 		if ( '' === $phone ) {
-			return new WP_Error( 'digitalogic_call_phone', __( 'Enter a valid Iranian mobile or landline number with its area code.', 'digitalogic' ), array( 'status' => 400 ) );
+			return new WP_Error( 'digitalogic_call_phone', __( 'Enter a valid phone number with its area code.', 'digitalogic' ), array( 'status' => 400 ) );
+		}
+
+		$queue    = 'outgoing' === $delivery && 'login' === $purpose ? self::outbound_queue_directory() : '';
+		if ( ! $internal && 'incoming' !== $delivery && ( ! $queue || ! Digitalogic_PBX_Phone::normalize( $phone ) ) ) {
+			return new WP_Error( 'digitalogic_call_delivery', __( 'The phone callback option is unavailable for this number.', 'digitalogic' ), array( 'status' => 400 ) );
 		}
 
 		$binding = $this->browser_binding();
@@ -462,10 +480,17 @@ final class Digitalogic_Call_Verification {
 			}
 		}
 		$binding_mac = self::lookup_hash( 'binding', $binding );
-		$ip_hash     = self::lookup_hash( 'ip', $this->request_ip() );
+		$ip_hash     = self::lookup_hash( 'ip', self::request_ip() );
 		$rate_error  = $this->enforce_creation_limits( $phone_hash, $binding_mac, $ip_hash );
 		if ( is_wp_error( $rate_error ) ) {
 			return $rate_error;
+		}
+
+		if ( $queue ) {
+			$rate_error = $this->rate_hit( 'outbound-60s', self::lookup_hash( 'outbound', 'site' ), 10, 60 );
+			if ( is_wp_error( $rate_error ) ) {
+				return $rate_error;
+			}
 		}
 
 		global $wpdb;
@@ -515,20 +540,80 @@ final class Digitalogic_Call_Verification {
 			return new WP_Error( 'digitalogic_call_storage', __( 'Verification is temporarily unavailable.', 'digitalogic' ), array( 'status' => 503 ) );
 		}
 
+		if ( $queue && ! self::queue_outbound_call( $queue, $public_id, $phone, $now + self::CHALLENGE_TTL ) ) {
+			$wpdb->update(
+				self::table( 'phone_challenges' ),
+				array( 'status' => 'cancelled' ),
+				array(
+					'public_id' => $public_id,
+					'status'    => 'pending',
+				)
+			);
+			return new WP_Error( 'digitalogic_call_queue', __( 'The callback could not be started. You can call us to verify instead.', 'digitalogic' ), array( 'status' => 503 ) );
+		}
+
+		$country = self::request_country();
 		return new WP_REST_Response(
 			array(
-				'success'      => true,
-				'challenge_id' => $public_id,
-				'code'         => $code,
-				'csrf_token'   => $csrf,
-				'expires_in'   => self::CHALLENGE_TTL,
-				'dial'         => array(
-					'display' => self::DIAL_DISPLAY,
-					'tel'     => self::DIAL_TEL,
-				),
+				'success'         => true,
+				'challenge_id'    => $public_id,
+				'code'            => $code,
+				'csrf_token'      => $csrf,
+				'expires_in'      => self::CHALLENGE_TTL,
+				'dial'            => $dial ?? self::public_dial( $country ),
+				'request_country' => $country,
 			),
 			201
 		);
+	}
+
+	/**
+	 * Return the configured private queue when outgoing calls are explicitly enabled.
+	 */
+	private static function outbound_queue_directory(): string {
+		if ( ! defined( 'DIGITALOGIC_PBX_OUTBOUND_ENABLED' ) || true !== DIGITALOGIC_PBX_OUTBOUND_ENABLED
+			|| ! defined( 'DIGITALOGIC_PBX_OUTBOUND_QUEUE' ) || ! is_string( DIGITALOGIC_PBX_OUTBOUND_QUEUE ) ) {
+			return '';
+		}
+		$directory = realpath( DIGITALOGIC_PBX_OUTBOUND_QUEUE );
+		$web_root  = realpath( ABSPATH );
+		if ( ! $directory || ! $web_root || $directory === $web_root
+			|| str_starts_with( $directory, $web_root . DIRECTORY_SEPARATOR )
+			|| ! is_dir( $directory ) ) {
+			return '';
+		}
+		return is_writable( $directory ) ? $directory : ''; // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+	}
+
+	/**
+	 * Publish one private, expiring job atomically. The verification code stays out of the queue.
+	 *
+	 * @param string $directory Private queue directory.
+	 * @param string $challenge Challenge UUID.
+	 * @param string $phone     The normalized recipient.
+	 * @param int    $expires   Challenge expiry in Unix seconds.
+	 */
+	private static function queue_outbound_call( string $directory, string $challenge, string $phone, int $expires ): bool {
+		$job  = wp_json_encode(
+			array(
+				'challenge' => $challenge,
+				'phone'     => $phone,
+				'expires'   => $expires,
+			)
+		);
+		$temp = $job ? tempnam( $directory, '.outbound-' ) : false;
+		if ( ! $temp ) {
+			return false;
+		}
+		// Same-directory rename prevents the worker from picking up a partially written job.
+		// phpcs:disable WordPress.WP.AlternativeFunctions
+		if ( dirname( $temp ) === $directory && chmod( $temp, 0640 ) && file_put_contents( $temp, $job ) === strlen( $job )
+			&& rename( $temp, $directory . DIRECTORY_SEPARATOR . $challenge . '.json' ) ) {
+			return true;
+		}
+		unlink( $temp );
+		// phpcs:enable WordPress.WP.AlternativeFunctions
+		return false;
 	}
 
 	/**
@@ -538,10 +623,66 @@ final class Digitalogic_Call_Verification {
 	 * @return WP_REST_Response|WP_Error
 	 */
 	public function challenge_status( WP_REST_Request $request ) {
+		$id      = (string) $request->get_param( 'id' );
+		$binding = $this->browser_binding( false );
+		$csrf    = (string) $request->get_header( self::CSRF_HEADER );
+		$result  = $this->read_challenge_status( $id, $binding, $csrf );
+		if ( is_wp_error( $result ) || null === $request->get_param( 'redirect_to' ) || ! $this->same_origin( $request ) ) {
+			return $result;
+		}
+		$data = $result->get_data();
+		if ( 'consumed' !== $data['status'] ) {
+			return $result;
+		}
+
+		// REST sets the current user to zero without a nonce. Check the signed
+		// login cookie directly when the browser lost the consume response.
+		$user_id = (int) wp_validate_auth_cookie( '', 'logged_in' );
+		if ( $user_id < 1 ) {
+			return $result;
+		}
+		$row = $this->find_bound_challenge( $id, $binding, $csrf );
+		if ( is_wp_error( $row ) || 'login' !== $row->purpose || 'consumed' !== $row->status
+			|| strtotime( (string) $row->consume_deadline . ' UTC' ) < time() ) {
+			return $result;
+		}
+		$phone = self::decrypt( (string) $row->phone_encrypted );
+		$user  = '' !== $phone ? $this->resolve_login_user( $phone, (string) $row->phone_hash ) : null;
+		if ( $user instanceof WP_User && $user_id === $user->ID ) {
+			$data['redirect_url'] = self::login_destination( $request->get_param( 'redirect_to' ) );
+			$result->set_data( $data );
+		}
+		return $result;
+	}
+
+	/**
+	 * Read status using the cookie from this connection's handshake.
+	 *
+	 * @param array  $data    Challenge ID and proof.
+	 * @param string $origin  WebSocket origin.
+	 * @param string $binding Browser binding from the handshake.
+	 */
+	public function socket_challenge_status( array $data, string $origin, string $binding ) {
+		if ( ! hash_equals( rtrim( home_url( '/' ), '/' ), $origin ) ) {
+			return new WP_Error( 'digitalogic_call_missing', __( 'Verification not found.', 'digitalogic' ) );
+		}
+		$id   = is_string( $data['challenge_id'] ?? null ) ? $data['challenge_id'] : '';
+		$csrf = is_string( $data['csrf_token'] ?? null ) ? $data['csrf_token'] : '';
+		return $this->read_challenge_status( $id, $binding, $csrf );
+	}
+
+	/**
+	 * Apply the same browser binding and rate limits on either transport.
+	 *
+	 * @param string $id      Challenge ID.
+	 * @param string $binding Browser binding.
+	 * @param string $csrf    Challenge proof.
+	 */
+	private function read_challenge_status( string $id, string $binding, string $csrf ) {
 		if ( ! self::is_schema_ready() ) {
 			return new WP_Error( 'digitalogic_pbx_schema', __( 'Call verification is temporarily unavailable.', 'digitalogic' ), array( 'status' => 503 ) );
 		}
-		$row = $this->bound_challenge( $request );
+		$row = $this->find_bound_challenge( $id, $binding, $csrf );
 		if ( is_wp_error( $row ) ) {
 			return $row;
 		}
@@ -618,7 +759,7 @@ final class Digitalogic_Call_Verification {
 			return $bound;
 		}
 
-		$consume_rate = $this->rate_hit( 'consume-10m', self::lookup_hash( 'consume', $bound->binding_mac . '|' . $this->request_ip() ), 5, 600 );
+		$consume_rate = $this->rate_hit( 'consume-10m', self::lookup_hash( 'consume', $bound->binding_mac . '|' . self::request_ip() ), 5, 600 );
 		if ( is_wp_error( $consume_rate ) ) {
 			return $consume_rate;
 		}
@@ -652,7 +793,14 @@ final class Digitalogic_Call_Verification {
 		$user       = null;
 		$contact_id = 0;
 		if ( 'login' === $row->purpose ) {
-			$user = $this->resolve_login_user( $phone, (string) $row->phone_hash );
+			if ( str_starts_with( $phone, 'pbx:' ) ) {
+				$assigned = self::lan_assignment();
+				$user = $assigned && $assigned['user']->ID === (int) $row->user_id && 'pbx:' . $assigned['extension'] === $phone
+					? $assigned['user']
+					: new WP_Error( 'digitalogic_call_extension', __( 'The extension assignment is no longer available.', 'digitalogic' ), array( 'status' => 403 ) );
+			} else {
+				$user = $this->resolve_login_user( $phone, (string) $row->phone_hash );
+			}
 			if ( is_wp_error( $user ) ) {
 				$wpdb->query( 'ROLLBACK' );
 				return $user;
@@ -696,15 +844,18 @@ final class Digitalogic_Call_Verification {
 		}
 
 		if ( $user instanceof WP_User ) {
+			if ( class_exists( Digitalogic_Auth_Realtime::class ) ) {
+				Digitalogic_Auth_Realtime::correlate_rest( $request->get_param( 'dg_auth_flow' ) );
+			}
 			wp_set_current_user( $user->ID, $user->user_login );
-			wp_set_auth_cookie( $user->ID, false, is_ssl() );
+			wp_set_auth_cookie( $user->ID, true === $request->get_param( 'rememberme' ), is_ssl() );
 			do_action( 'wp_login', $user->user_login, $user );
 
 			return new WP_REST_Response(
 				array(
 					'success'       => true,
 					'authenticated' => true,
-					'redirect_url'  => home_url( '/my-account/' ),
+					'redirect_url'  => self::login_destination( $request->get_param( 'redirect_to' ) ),
 				),
 				200
 			);
@@ -969,6 +1120,9 @@ final class Digitalogic_Call_Verification {
 		$rows     = array_merge( $recovery_rows, $pending_rows );
 		$verified = false;
 		foreach ( (array) $rows as $row ) {
+			if ( isset( $validated['challenge_id'] ) && ! hash_equals( (string) $row->public_id, $validated['challenge_id'] ) ) {
+				continue;
+			}
 			$candidate_phone = self::decrypt( (string) $row->phone_encrypted );
 			if ( '' === $candidate_phone || ! hash_equals( $candidate_phone, $caller )
 				|| ! hash_equals( (string) $row->code_mac, self::code_mac( (string) $row->public_id, $code ) ) ) {
@@ -1316,6 +1470,14 @@ final class Digitalogic_Call_Verification {
 	 */
 	public static function validate_pbx_payload( $payload, int $signed_timestamp ) {
 		$required_keys = array( 'schema', 'site_id', 'event_id', 'call_id', 'called_number', 'caller_number', 'code', 'occurred_at' );
+		$challenge_id  = '';
+		if ( is_array( $payload ) && array_key_exists( 'challenge_id', $payload ) ) {
+			if ( ! is_string( $payload['challenge_id'] ) || ! wp_is_uuid( $payload['challenge_id'], 4 ) || ! self::outbound_queue_directory() ) {
+				return new WP_Error( 'digitalogic_pbx_payload', __( 'PBX payload is invalid.', 'digitalogic' ) );
+			}
+			$challenge_id    = $payload['challenge_id'];
+			$required_keys[] = 'challenge_id';
+		}
 		if ( ! is_array( $payload ) || count( $required_keys ) !== count( $payload )
 			|| ! empty( array_diff( $required_keys, array_keys( $payload ) ) )
 			|| ! empty( array_diff( array_keys( $payload ), $required_keys ) ) ) {
@@ -1325,7 +1487,7 @@ final class Digitalogic_Call_Verification {
 		$call_id            = is_string( $payload['call_id'] ) ? $payload['call_id'] : '';
 		$code               = self::ascii_digits( is_string( $payload['code'] ) ? $payload['code'] : '' );
 		$called             = is_string( $payload['called_number'] ) ? self::normalize_called_did( $payload['called_number'] ) : '';
-		$caller             = is_string( $payload['caller_number'] ) ? Digitalogic_PBX_Phone::normalize_trusted_ani( $payload['caller_number'] ) : '';
+		$caller             = self::normalize_pbx_caller( $payload['caller_number'] );
 		$occurred_at        = is_string( $payload['occurred_at'] ) ? $payload['occurred_at'] : '';
 		$occurred_timestamp = 1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', $occurred_at ) ? strtotime( $occurred_at ) : false;
 		$valid              = 1 === preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $event_id )
@@ -1345,7 +1507,7 @@ final class Digitalogic_Call_Verification {
 			'call_id'  => $call_id,
 			'caller'   => $caller,
 			'code'     => $code,
-		);
+		) + ( '' !== $challenge_id ? array( 'challenge_id' => $challenge_id ) : array() );
 	}
 
 	/**
@@ -1366,7 +1528,7 @@ final class Digitalogic_Call_Verification {
 		$event_id           = is_string( $payload['event_id'] ) ? $payload['event_id'] : '';
 		$call_id            = is_string( $payload['call_id'] ) ? $payload['call_id'] : '';
 		$called             = is_string( $payload['called_number'] ) ? self::normalize_called_did( $payload['called_number'] ) : '';
-		$caller             = is_string( $payload['caller_number'] ) ? Digitalogic_PBX_Phone::normalize_trusted_ani( $payload['caller_number'] ) : '';
+		$caller             = self::normalize_pbx_caller( $payload['caller_number'] );
 		$occurred_at        = is_string( $payload['occurred_at'] ) ? $payload['occurred_at'] : '';
 		$occurred_timestamp = 1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', $occurred_at ) ? strtotime( $occurred_at ) : false;
 		$valid              = 1 === preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $event_id )
@@ -1474,6 +1636,57 @@ final class Digitalogic_Call_Verification {
 	}
 
 	/**
+	 * Describe the public inbound number. Keep the PBX's trusted DID checks
+	 * independent of the display setting.
+	 *
+	 * @return array{tel:string, display:string}
+	 */
+	private static function public_dial( ?string $country = null ): array {
+		$number = apply_filters( 'digitalogic_call_verification_public_number', self::ACCESS_DID );
+		$tel    = is_string( $number ) && preg_match( '/^\+98[1-8][0-9]{9}$/D', $number ) ? $number : self::ACCESS_DID;
+		return array(
+			'tel'     => $tel,
+			'display' => ( 'IR' === $country ? '0' : '+98 ' ) . substr( $tel, 3, 2 ) . '-' . substr( $tel, 5 ),
+		);
+	}
+
+	/** Read provisioned SIP identities from server configuration. */
+	private static function lan_extensions(): array {
+		if ( ! defined( 'DIGITALOGIC_LAN_PBX_EXTENSIONS' ) || ! is_array( DIGITALOGIC_LAN_PBX_EXTENSIONS ) ) {
+			return array();
+		}
+		return array_map( 'strval', array_filter( DIGITALOGIC_LAN_PBX_EXTENSIONS, static fn( $value ) => is_int( $value ) || is_string( $value ) ) );
+	}
+
+	private static function lan_assignment(): ?array {
+		if ( ! class_exists( 'Digitalogic_Plugin_Auth_Routes' ) ) {
+			return null;
+		}
+		$user = Digitalogic_Plugin_Auth_Routes::lan_assigned_user();
+		$extensions = self::lan_extensions();
+		$extension = $user ? ( $extensions[ $user->user_login ] ?? '' ) : '';
+		if ( ! preg_match( '/\A[1-9][0-9]{2,5}\z/', $extension )
+			|| 1 !== count( array_keys( $extensions, $extension, true ) ) ) {
+			return null;
+		}
+		return array( 'user' => $user, 'extension' => $extension );
+	}
+
+	private static function normalize_pbx_caller( $value ): string {
+		if ( ! is_string( $value ) ) {
+			return '';
+		}
+		if ( preg_match( '/\Apbx:([1-9][0-9]{2,5})\z/', $value, $matches ) ) {
+			return 1 === count( array_keys( self::lan_extensions(), $matches[1], true ) ) ? $value : '';
+		}
+		return Digitalogic_PBX_Phone::normalize_trusted_ani( $value );
+	}
+
+	private static function extension_dial( string $extension ): array {
+		return array( 'tel' => $extension, 'display' => $extension );
+	}
+
+	/**
 	 * Load front-end assets and localized configuration.
 	 */
 	public function enqueue_assets(): void {
@@ -1481,15 +1694,16 @@ final class Digitalogic_Call_Verification {
 			'digitalogic-call-verification',
 			DIGITALOGIC_PLUGIN_URL . 'assets/css/call-verification.css',
 			array(),
-			DIGITALOGIC_VERSION
+			(string) filemtime( DIGITALOGIC_PLUGIN_DIR . 'assets/css/call-verification.css' )
 		);
 		wp_enqueue_script(
 			'digitalogic-call-verification',
 			DIGITALOGIC_PLUGIN_URL . 'assets/js/call-verification.js',
 			array(),
-			DIGITALOGIC_VERSION,
+			(string) filemtime( DIGITALOGIC_PLUGIN_DIR . 'assets/js/call-verification.js' ),
 			true
 		);
+		$persian = str_starts_with( determine_locale(), 'fa' );
 		wp_localize_script(
 			'digitalogic-call-verification',
 			'DigitalogicCallVerification',
@@ -1497,14 +1711,20 @@ final class Digitalogic_Call_Verification {
 				'challengeUrl' => esc_url_raw( rest_url( self::REST_NAMESPACE . self::ROUTE ) ),
 				'contactsUrl'  => esc_url_raw( rest_url( self::REST_NAMESPACE . '/contacts' ) ),
 				'wpNonce'      => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
+				'areaCodes'    => Digitalogic_PBX_Phone::area_codes(),
+				'dialNumber'   => self::public_dial()['tel'],
 				'messages'     => array(
-					'start'       => __( 'Verify by calling', 'digitalogic' ),
-					'waiting'     => __( 'Waiting for your call…', 'digitalogic' ),
-					'verified'    => __( 'Phone number verified. Finishing…', 'digitalogic' ),
-					'expired'     => __( 'This code expired. Please request another code.', 'digitalogic' ),
-					'error'       => __( 'Verification could not be completed. Please try again.', 'digitalogic' ),
-					'remaining'   => __( '%s seconds remaining', 'digitalogic' ),
-					'confirmDrop' => __( 'Removing this contact also disables voice notifications. Continue?', 'digitalogic' ),
+					'start'           => __( 'Verify by calling', 'digitalogic' ),
+					'waiting'         => __( 'Waiting for your call…', 'digitalogic' ),
+					'redirecting'     => $persian ? 'شماره تأیید شد. در حال انتقال…' : 'Phone verified. Redirecting…',
+					'outboundWaiting' => $persian ? 'در انتظار تماس با شمارهٔ شما…' : 'Waiting for the PBX to call your phone…',
+					'verified'        => __( 'Phone number verified. Finishing…', 'digitalogic' ),
+					'finishing'       => $persian ? 'کد تأیید شد. در حال تکمیل ورود…' : 'Code confirmed. Finishing sign-in…',
+					'expired'         => __( 'This code expired. Please request another code.', 'digitalogic' ),
+					'error'           => __( 'Verification could not be completed. Please try again.', 'digitalogic' ),
+					'remaining'       => __( '%s seconds remaining', 'digitalogic' ),
+					'confirmDrop'     => __( 'Removing this contact also disables voice notifications. Continue?', 'digitalogic' ),
+					'invalidPhone'    => __( 'Enter a valid Iranian mobile or landline number with its area code.', 'digitalogic' ),
 				),
 			)
 		);
@@ -1534,7 +1754,79 @@ final class Digitalogic_Call_Verification {
 			return;
 		}
 
-		$this->render_login_widget( false );
+		$this->render_branded_login_widget();
+	}
+
+	/**
+	 * Render the caller identity alongside the issued code.
+	 *
+	 * @param bool $persian Whether to render the Persian label.
+	 */
+	private static function render_branded_caller_summary( bool $persian ): void {
+		?>
+		<div class="dg-auth-identity dg-auth-identity--recipient dg-auth-identity--phone" data-call-caller hidden>
+			<span class="dg-auth-identity-mark" aria-hidden="true"></span>
+			<span class="dg-auth-identity-label"><?php echo esc_html( $persian ? 'شمارهٔ شما' : 'Your phone number' ); ?></span>
+			<bdi class="dg-auth-identity-value" dir="ltr" data-call-caller-number></bdi>
+		</div>
+		<?php
+	}
+
+	/** Render call instructions for the shared verification stage. */
+	private function render_branded_login_widget(): void {
+		$persian = str_starts_with( strtolower( determine_locale() ), 'fa' );
+		$dial    = self::public_dial();
+		$lan     = self::lan_assignment();
+		?>
+		<section class="digitalogic-call-verification dg-call-unified" data-digitalogic-call-widget data-call-unified data-purpose="login" data-call-available="<?php echo esc_attr( defined( 'DIGITALOGIC_PUBLIC_CALL_VERIFICATION' ) && DIGITALOGIC_PUBLIC_CALL_VERIFICATION ? 'true' : 'false' ); ?>">
+			<input type="hidden" data-call-phone>
+			<button type="button" data-call-start hidden></button>
+			<?php if ( $lan ) : ?>
+				<button type="button" class="dg-call-lan-action dg-icon-label-action" data-call-lan-action data-login="<?php echo esc_attr( $lan['user']->user_login ); ?>" data-email-digest="<?php echo esc_attr( hash( 'sha256', strtolower( $lan['user']->user_email ) ) ); ?>" data-extension="<?php echo esc_attr( $lan['extension'] ); ?>" hidden><span><?php echo esc_html( sprintf( $persian ? 'ورود با تماس به داخلی %s' : 'Sign in by calling extension %s', $lan['extension'] ) ); ?></span></button>
+			<?php endif; ?>
+			<p class="digitalogic-call-error" data-call-error role="alert" hidden></p>
+			<div class="digitalogic-call-panel" role="region" aria-labelledby="digitalogic-call-code-title" hidden>
+				<div class="digitalogic-call-instructions" data-call-preview hidden>
+					<h2 class="digits-form_heading" id="digitalogic-call-preview-title" tabindex="-1" data-call-preview-title><?php echo esc_html( $persian ? 'تأیید با تماس تلفنی' : 'Verify by phone call' ); ?></h2>
+					<ol class="dg-call-steps">
+						<li>
+							<div class="dg-call-line">
+								<div class="dg-call-copy">
+									<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
+									<p data-call-public-note><?php echo esc_html( $persian ? 'برای تماس، از همان شماره‌ای استفاده کنید که وارد کردید.' : 'Call from the same number you entered.' ); ?></p>
+									<p data-call-lan-note hidden><?php echo esc_html( $persian ? 'از تلفن یا نرم‌افزار تماس شرکت و داخلی خودتان استفاده کنید.' : 'Use your assigned extension on the company phone or softphone.' ); ?></p>
+								</div>
+							</div>
+						</li>
+						<li>
+							<strong><?php echo esc_html( $persian ? 'کد تأیید را با صفحه‌کلید تلفن وارد کنید' : 'Enter the verification code on your phone keypad' ); ?></strong>
+							<p><?php echo esc_html( $persian ? 'پس از شنیدن «کاربر گرامی»، کد شش‌رقمی مرحلهٔ بعد را وارد کنید.' : 'After you hear «کاربر گرامی», enter the six-digit code from the next step.' ); ?></p>
+						</li>
+					</ol>
+					<button type="button" class="dg-auth-primary dg-call-next" data-call-confirm><span><?php echo esc_html( $persian ? 'ادامه و دریافت کد' : 'Continue and get code' ); ?></span></button>
+					<?php if ( self::outbound_queue_directory() ) : ?>
+						<button type="button" class="dg-auth-back" data-call-outbound hidden><?php echo esc_html( $persian ? 'با من تماس بگیرید' : 'Call my phone' ); ?></button>
+					<?php endif; ?>
+					<button type="button" class="dg-auth-back" data-call-preview-back><?php echo esc_html( $persian ? 'بازگشت' : 'Back' ); ?></button>
+				</div>
+				<div class="digitalogic-call-instructions" data-call-instructions hidden>
+					<h2 class="digits-form_heading" id="digitalogic-call-code-title" tabindex="-1" data-call-code-title><?php echo esc_html( $persian ? 'کد تأیید' : 'Verification code' ); ?></h2>
+					<?php self::render_branded_caller_summary( $persian ); ?>
+					<div class="dg-call-line dg-call-code-prompt" data-call-code-prompt>
+						<div class="dg-call-copy">
+							<strong><?php echo esc_html( $persian ? 'با دیجیتالاجیک تماس بگیرید' : 'Call Digitalogic' ); ?></strong>
+							<p><?php echo esc_html( $persian ? 'وقتی پیام «کاربر گرامی» را شنیدید، کد زیر را با صفحه‌کلید تلفن وارد کنید.' : 'When you hear the greeting, enter the code below on your phone keypad.' ); ?></p>
+						</div>
+						<a class="dg-call-number" data-call-dial dir="ltr" href="tel:<?php echo esc_attr( $dial['tel'] ); ?>"><span data-call-dial-number><?php echo esc_html( $dial['display'] ); ?></span></a>
+					</div>
+					<p class="dg-call-code-prompt" data-call-outbound-prompt hidden><?php echo esc_html( $persian ? 'به تماس پاسخ دهید و کد شش‌رقمی زیر را وارد کنید.' : 'Answer the call and enter the six digits below.' ); ?></p>
+					<output data-call-code dir="ltr" tabindex="0" aria-keyshortcuts="Shift+F10 ContextMenu"></output>
+					<div class="dg-call-wait" data-call-remember-anchor><p data-call-status role="status"><?php echo esc_html( $persian ? 'در انتظار تماس شما…' : 'Waiting for your call…' ); ?></p><span data-call-countdown role="timer" dir="ltr"></span></div>
+					<button type="button" class="dg-auth-back" data-call-cancel><span><?php echo esc_html( $persian ? 'ویرایش شماره تلفن' : 'Edit phone number' ); ?></span></button>
+				</div>
+			</div>
+		</section>
+		<?php
 	}
 
 	/**
@@ -1550,40 +1842,28 @@ final class Digitalogic_Call_Verification {
 		}
 		?>
 		<div class="digitalogic-call-parking" data-digitalogic-sidebar-call-parking hidden>
-			<?php $this->render_login_widget( true ); ?>
+			<?php $this->render_sidebar_login_widget(); ?>
 		</div>
 		<?php
 	}
 
 	/**
-	 * Render the shared login-purpose call-verification controls.
-	 *
-	 * @param bool $sidebar Whether this is the singleton parked for Woodmart.
+	 * Render the login-purpose call verification controls for Woodmart.
 	 */
-	private function render_login_widget( bool $sidebar ): void {
-		$toggle_id     = $sidebar ? 'digitalogic-sidebar-call-toggle' : 'digitalogic-login-call-toggle';
-		$panel_id      = $sidebar ? 'digitalogic-sidebar-call-panel' : 'digitalogic-login-call-panel';
-		$phone_help_id = $sidebar ? 'digitalogic-sidebar-call-phone-help' : 'digitalogic-login-call-phone-help';
+	private function render_sidebar_login_widget(): void {
 		?>
-		<section
-			class="<?php echo esc_attr( 'digitalogic-call-verification' . ( $sidebar ? ' digitalogic-call-verification--sidebar' : '' ) ); ?>"
-			data-digitalogic-call-widget
-			data-purpose="login"
-			<?php if ( $sidebar ) : ?>
-				data-digitalogic-sidebar-call-widget hidden
-			<?php endif; ?>
-		>
-			<button type="button" id="<?php echo esc_attr( $toggle_id ); ?>" class="button digitalogic-call-toggle" aria-expanded="false" aria-controls="<?php echo esc_attr( $panel_id ); ?>"><?php esc_html_e( 'Verify by calling', 'digitalogic' ); ?></button>
-			<div class="digitalogic-call-panel" id="<?php echo esc_attr( $panel_id ); ?>" role="region" aria-labelledby="<?php echo esc_attr( $toggle_id ); ?>" hidden>
+		<section class="digitalogic-call-verification digitalogic-call-verification--sidebar" data-digitalogic-call-widget data-purpose="login" data-digitalogic-sidebar-call-widget hidden>
+			<button type="button" id="digitalogic-sidebar-call-toggle" class="button digitalogic-call-toggle" aria-expanded="false" aria-controls="digitalogic-sidebar-call-panel"><?php esc_html_e( 'Verify by calling', 'digitalogic' ); ?></button>
+			<div class="digitalogic-call-panel" id="digitalogic-sidebar-call-panel" role="region" aria-labelledby="digitalogic-sidebar-call-toggle" hidden>
 				<label>
 					<span><?php esc_html_e( 'Mobile or landline number (include area code)', 'digitalogic' ); ?></span>
-					<input type="tel" inputmode="tel" autocomplete="tel" dir="ltr" data-call-phone aria-describedby="<?php echo esc_attr( $phone_help_id ); ?>" placeholder="02112345678">
+					<input type="tel" inputmode="tel" autocomplete="tel" dir="ltr" data-call-phone aria-describedby="digitalogic-sidebar-call-phone-help" placeholder="02112345678">
 				</label>
-				<p class="digitalogic-call-match-note" id="<?php echo esc_attr( $phone_help_id ); ?>"><?php esc_html_e( 'Place the call from the same phone number you entered so caller ID can confirm ownership.', 'digitalogic' ); ?></p>
+				<p class="digitalogic-call-match-note" id="digitalogic-sidebar-call-phone-help"><?php esc_html_e( 'Place the call from the same phone number you entered so caller ID can confirm ownership.', 'digitalogic' ); ?></p>
 				<button type="button" class="button button-primary" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 				<div class="digitalogic-call-instructions" data-call-instructions hidden>
-					<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::DIAL_TEL ); ?>"><?php echo esc_html( self::DIAL_DISPLAY ); ?></a></p>
-					<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
+					<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::public_dial()['tel'] ); ?>"><?php echo esc_html( self::public_dial()['display'] ); ?></a></p>
+					<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 					<output class="digitalogic-call-code" data-call-code dir="ltr" aria-live="polite"></output>
 					<p data-call-status role="status" aria-live="polite" aria-atomic="true"><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>
 					<button type="button" class="button-link" data-call-cancel><?php esc_html_e( 'Cancel', 'digitalogic' ); ?></button>
@@ -1623,8 +1903,8 @@ final class Digitalogic_Call_Verification {
 					<label><?php esc_html_e( 'Mobile or landline number (include area code)', 'digitalogic' ); ?> <input type="tel" inputmode="tel" data-call-phone></label>
 					<button type="button" class="button" data-call-start><?php esc_html_e( 'Create call code', 'digitalogic' ); ?></button>
 					<div class="digitalogic-call-instructions" data-call-instructions hidden aria-live="polite">
-						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" href="tel:+982166754123">021-66754123</a>.</p>
-						<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
+						<p><?php esc_html_e( 'Call', 'digitalogic' ); ?> <a dir="ltr" data-call-dial href="tel:<?php echo esc_attr( self::public_dial()['tel'] ); ?>"><?php echo esc_html( self::public_dial()['display'] ); ?></a>.</p>
+						<p><?php esc_html_e( 'Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator.', 'digitalogic' ); ?></p>
 						<output class="digitalogic-call-code" data-call-code dir="ltr"></output>
 						<p data-call-status><?php esc_html_e( 'Waiting for your call…', 'digitalogic' ); ?></p>
 						<button type="button" class="button-link" data-call-cancel><?php esc_html_e( 'Cancel', 'digitalogic' ); ?></button>
@@ -1652,7 +1932,7 @@ final class Digitalogic_Call_Verification {
 			<?php if ( $is_voice ) : ?>
 				<label><input type="checkbox" data-contact-voice <?php checked( $contact['voice_opt_in'] ); ?>> <?php esc_html_e( 'Voice order updates', 'digitalogic' ); ?></label>
 				<div class="digitalogic-contact-events">
-					<?php foreach ( array( 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
+					<?php foreach ( array( 'pending', 'review', 'processing', 'shipped', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
 						<?php $event_enabled = ! empty( $contact['voice_events'][ $event ] ); ?>
 						<label><input type="checkbox" value="<?php echo esc_attr( $event ); ?>" data-contact-event <?php checked( $event_enabled ); ?>> <?php echo esc_html( function_exists( 'wc_get_order_status_name' ) ? wc_get_order_status_name( $event ) : ucfirst( str_replace( '-', ' ', $event ) ) ); ?></label>
 					<?php endforeach; ?>
@@ -1686,7 +1966,7 @@ final class Digitalogic_Call_Verification {
 						<label><input type="checkbox" name="digitalogic_contacts[<?php echo esc_attr( (string) $contact['id'] ); ?>][voice_opt_in]" value="1" <?php checked( $contact['voice_opt_in'] ); ?>> <?php esc_html_e( 'Voice notifications enabled', 'digitalogic' ); ?></label>
 						<label><input type="checkbox" name="digitalogic_contacts[<?php echo esc_attr( (string) $contact['id'] ); ?>][admin_suppressed]" value="1" <?php checked( $contact['admin_suppressed'] ); ?>> <?php esc_html_e( 'Administratively suppress calls', 'digitalogic' ); ?></label>
 						<fieldset><legend><?php esc_html_e( 'Explicitly allowed voice events', 'digitalogic' ); ?></legend>
-						<?php foreach ( array( 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
+						<?php foreach ( array( 'pending', 'review', 'processing', 'shipped', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
 							<label><input type="checkbox" name="digitalogic_contacts[<?php echo esc_attr( (string) $contact['id'] ); ?>][voice_events][]" value="<?php echo esc_attr( $event ); ?>" <?php checked( ! empty( $contact['voice_events'][ $event ] ) ); ?>> <?php echo esc_html( function_exists( 'wc_get_order_status_name' ) ? wc_get_order_status_name( $event ) : ucfirst( str_replace( '-', ' ', $event ) ) ); ?></label>
 						<?php endforeach; ?>
 						</fieldset>
@@ -2116,7 +2396,9 @@ final class Digitalogic_Call_Verification {
 
 		$national     = Digitalogic_PBX_Phone::to_national( $phone );
 		$significant  = substr( $phone, 3 );
-		$values       = array_values( array_unique( array( $phone, '98' . $significant, $national, $significant ) ) );
+		$values       = str_starts_with( $phone, '+98' )
+			? array_values( array_unique( array( $phone, '98' . $significant, $national, $significant ) ) )
+			: array( $phone, substr( $phone, 1 ), '00' . substr( $phone, 1 ) );
 		$placeholders = implode( ',', array_fill( 0, count( $values ), '%s' ) );
 		// This lookup runs only after live PBX proof and is restricted to
 		// explicit authentication identities. WooCommerce billing/order phone
@@ -2156,7 +2438,7 @@ final class Digitalogic_Call_Verification {
 	 * @return int[]
 	 */
 	private static function consistent_digits_user_ids( array $rows, string $phone ): array {
-		$phone = Digitalogic_PBX_Phone::normalize( $phone );
+		$phone = Digitalogic_PBX_Phone::normalize( $phone ) ?: Digitalogic_PBX_Phone::normalize_international( $phone );
 		if ( '' === $phone ) {
 			return array();
 		}
@@ -2177,7 +2459,9 @@ final class Digitalogic_Call_Verification {
 				);
 			}
 
-			$normalized = self::normalize_digits_phone_meta( $value );
+			$normalized = str_starts_with( $phone, '+98' )
+				? self::normalize_digits_phone_meta( $value )
+				: Digitalogic_PBX_Phone::normalize_international( preg_match( '/^[1-9][0-9]+$/D', $value ) ? '+' . $value : $value );
 			if ( '' === $normalized ) {
 				$identities[ $user_id ]['invalid'] = true;
 				continue;
@@ -2220,7 +2504,7 @@ final class Digitalogic_Call_Verification {
 	 * @param WP_User $user Resolved user.
 	 * @return WP_User|WP_Error
 	 */
-	private function authenticate_verified_user( WP_User $user ) {
+	public function authenticate_verified_user( WP_User $user ) {
 		$removed = $this->suspend_zerospam_login_filter();
 		try {
 			return apply_filters( 'wp_authenticate_user', $user, '' );
@@ -2325,10 +2609,22 @@ final class Digitalogic_Call_Verification {
 	 * @return object|WP_Error
 	 */
 	private function bound_challenge( WP_REST_Request $request ) {
-		$id      = (string) $request->get_param( 'id' );
-		$binding = $this->browser_binding( false );
-		$csrf    = (string) $request->get_header( self::CSRF_HEADER );
-		if ( '' === $binding || 1 !== preg_match( '/^[A-Za-z0-9_-]{32,128}$/', $csrf ) ) {
+		return $this->find_bound_challenge(
+			(string) $request->get_param( 'id' ),
+			$this->browser_binding( false ),
+			(string) $request->get_header( self::CSRF_HEADER )
+		);
+	}
+
+	/**
+	 * Match both browser proofs before returning any challenge state.
+	 *
+	 * @param string $id      Challenge ID.
+	 * @param string $binding Browser binding.
+	 * @param string $csrf    Challenge proof.
+	 */
+	private function find_bound_challenge( string $id, string $binding, string $csrf ) {
+		if ( ! preg_match( '/\A[A-Za-z0-9_-]{43}\z/', $binding ) || ! preg_match( '/\A[A-Za-z0-9_-]{32,128}\z/', $csrf ) || ! preg_match( '/\A[A-Za-z0-9_-]{32,128}\z/', $id ) ) {
 			return new WP_Error( 'digitalogic_call_missing', __( 'Verification not found.', 'digitalogic' ), array( 'status' => 404 ) );
 		}
 		global $wpdb;
@@ -2342,6 +2638,29 @@ final class Digitalogic_Call_Verification {
 		}
 
 		return $row;
+	}
+
+	/**
+	 * Keep return URLs on this site, including the OpenID continuation.
+	 *
+	 * @param mixed $requested Requested return URL.
+	 */
+	public static function login_destination( $requested ): string {
+		$fallback = home_url( '/my-account/' );
+		$url      = is_string( $requested ) ? wp_validate_redirect( $requested, $fallback ) : $fallback;
+		$target   = wp_parse_url( $url );
+		$home     = wp_parse_url( home_url( '/' ) );
+		if ( ! is_array( $target ) || isset( $target['user'] ) || isset( $target['pass'] )
+			|| ( isset( $target['host'] ) && ( $target['host'] !== $home['host'] || ( $target['scheme'] ?? '' ) !== $home['scheme'] || ( $target['port'] ?? null ) !== ( $home['port'] ?? null ) ) ) ) {
+			return $fallback;
+		}
+		$path = untrailingslashit( (string) ( $target['path'] ?? '' ) );
+		if ( '/wp-login.php' === $path ) {
+			parse_str( (string) ( $target['query'] ?? '' ), $query );
+			return 'openid-authenticate' === ( $query['action'] ?? '' ) && 'code' === ( $query['response_type'] ?? '' )
+				&& is_string( $query['client_id'] ?? null ) && '' !== $query['client_id'] ? $url : $fallback;
+		}
+		return '/login' === $path || '' === $url ? $fallback : $url;
 	}
 
 	/**
@@ -2590,13 +2909,42 @@ final class Digitalogic_Call_Verification {
 	}
 
 	/**
-	 * Best available request IP; it is used only after keyed hashing.
+	 * Request IP after the web server's trusted proxy handling.
 	 *
 	 * @return string
 	 */
-	private function request_ip(): string {
+	private static function request_ip(): string {
 		$value = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
 		return false !== filter_var( $value, FILTER_VALIDATE_IP ) ? $value : 'unknown';
+	}
+
+	/** Return the ISO country for the public request IP, when known. */
+	public static function request_country(): ?string {
+		// The web server maps a verified CDN value to this variable.
+		$cdn_country = isset( $_SERVER['DIGITALOGIC_CDN_COUNTRY'] ) ? sanitize_text_field( wp_unslash( $_SERVER['DIGITALOGIC_CDN_COUNTRY'] ) ) : '';
+		if ( 'XX' !== $cdn_country && preg_match( '/\A[A-Z]{2}\z/', $cdn_country ) ) {
+			return $cdn_country;
+		}
+
+		$ip = self::request_ip();
+		if ( ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE ) ) {
+			return null;
+		}
+		$database = defined( 'DIGITALOGIC_IP_COUNTRY_DATABASE' ) ? DIGITALOGIC_IP_COUNTRY_DATABASE : '/var/lib/digitalogic/geoip/user-country.mmdb';
+		$country  = '';
+		if ( is_string( $database ) && is_readable( $database ) && class_exists( \MaxMind\Db\Reader::class ) ) {
+			try {
+				$reader  = new \MaxMind\Db\Reader( $database );
+				$country = $reader->get( $ip )['country']['iso_code'] ?? '';
+				$reader->close();
+			} catch ( \Exception $error ) {
+				$country = '';
+			}
+		}
+		if ( '' === $country && class_exists( 'WC_Geolocation' ) ) {
+			$country = WC_Geolocation::geolocate_ip( $ip, false, false )['country'] ?? '';
+		}
+		return is_string( $country ) && preg_match( '/\A[A-Z]{2}\z/', $country ) ? $country : null;
 	}
 
 	/**

@@ -451,7 +451,7 @@ final class Digitalogic_Currency_Admin_Async {
 	private function enqueue_owner_intent( array $values, $dispatch, $reconcile, $expected_revision, $source, $request_id, $execution_mode, $settings_intent ) {
 		$submitted_at = time();
 		$allowed      = $settings_intent
-			? array( 'dollar_price', 'yuan_price', 'usd_effective_date', 'cny_effective_date', 'profit_margin_percent', 'air_express_price_per_kg', 'price_rounding_digits' )
+			? array( 'dollar_price', 'yuan_price', 'usd_effective_date', 'cny_effective_date', 'profit_margin_percent', 'air_express_price_per_kg', 'price_rounding_digits', 'price_rounding_policy' )
 			: array( 'dollar_price', 'yuan_price', 'effective_date', 'usd_effective_date', 'cny_effective_date' );
 		if ( ! $values || array_diff( array_keys( $values ), $allowed ) ) {
 			return new WP_Error(
@@ -463,6 +463,10 @@ final class Digitalogic_Currency_Admin_Async {
 		$desired = array();
 		foreach ( $values as $field => $raw_value ) {
 			if ( $settings_intent ) {
+				if ( 'price_rounding_policy' === $field && ( null === $raw_value || is_array( $raw_value ) ) ) {
+					$desired[ $field ] = $raw_value;
+					continue;
+				}
 				if ( ( ! is_string( $raw_value ) && ! is_int( $raw_value ) && ! is_float( $raw_value ) )
 					|| ( is_string( $raw_value ) && '' === trim( $raw_value ) )
 					|| ( is_float( $raw_value ) && ! is_finite( $raw_value ) ) ) {
@@ -3522,7 +3526,7 @@ final class Digitalogic_Currency_Admin_Async {
 
 	/** Show a durable enqueue failure after an ACF redirect instead of false success. */
 	public function render_admin_issue() {
-		if ( ! $this->can_manage_currency() ) {
+		if ( ! $this->can_manage_currency() || ! $this->is_currency_admin_page() ) {
 			return;
 		}
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;

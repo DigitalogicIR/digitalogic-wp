@@ -32,7 +32,8 @@ class Digitalogic_Admin {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_admin_bar_styles'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_bar_styles'));
-        add_action('admin_footer', array($this, 'remove_unwanted_admin_notices'), 1000);
+        require_once __DIR__ . '/class-digitalogic-admin-workspace.php';
+        Digitalogic_Admin_Workspace::register();
         add_action('wp_ajax_digitalogic_get_products', array($this, 'ajax_get_products'));
         add_action('wp_ajax_digitalogic_update_product', array($this, 'ajax_update_product'));
 		add_action( 'wp_ajax_digitalogic_update_product_code', array( $this, 'ajax_update_product_code' ) );
@@ -46,30 +47,6 @@ class Digitalogic_Admin {
         add_action('wp_ajax_digitalogic_update_patris_settings', array($this, 'ajax_update_patris_settings'));
     }
 
-    /**
-     * Remove noisy third-party notices that are not actionable for site editors.
-     */
-    public function remove_unwanted_admin_notices() {
-        if (!current_user_can('manage_options')) {
-            return;
-        }
-        ?>
-        <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('.notice, .updated, .error, .woocommerce-message, .woocommerce-warning').forEach(function(notice) {
-                var text = notice.textContent || '';
-                if (
-                    text.indexOf('Zero Spam Enhanced Protection') !== -1 &&
-                    text.indexOf('missing a valid license key') !== -1
-                ) {
-                    notice.remove();
-                }
-            });
-        });
-        </script>
-        <?php
-    }
-    
     /**
      * Add admin menu
      */
@@ -851,12 +828,46 @@ class Digitalogic_Admin {
                     break;
 
 				case 'update_price_rounding':
-					$result      = $shipping_service->update_price_rounding_digits(
-						$posted_value( 'price_rounding_digits' )
-					);
+					$selection = $posted_value( 'price_rounding_selection' );
+					$policy    = null;
+					$result    = null;
+					if ( 'magnitude' === $selection ) {
+						// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Preserve exact numeric input for strict tier validation below and RoundingPolicy::normalize().
+						$thresholds = isset( $_POST['rounding_threshold_irt'] ) && is_array( $_POST['rounding_threshold_irt'] ) ? wp_unslash( $_POST['rounding_threshold_irt'] ) : array();
+						// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Reject malformed digits below rather than changing their value.
+						$digits = isset( $_POST['rounding_tier_digits'] ) && is_array( $_POST['rounding_tier_digits'] ) ? wp_unslash( $_POST['rounding_tier_digits'] ) : array();
+						$policy = array(
+							'tiers'          => array(),
+							'extend_decades' => isset( $_POST['rounding_extend_decades'] ),
+						);
+						foreach ( array_unique( array_merge( array_keys( $thresholds ), array_keys( $digits ) ) ) as $index ) {
+							$threshold = $thresholds[ $index ] ?? '';
+							$digit     = $digits[ $index ] ?? '';
+							if ( '' === $threshold && '' === $digit ) {
+								continue;
+							}
+							if ( ! is_string( $threshold ) || ! is_string( $digit ) || ! preg_match( '/\A[0-9]+\z/D', $digit ) || '' === $threshold ) {
+								$result = new WP_Error( 'invalid_rounding_policy', 'در هر ردیف، مبلغ شروع و تعداد رقم را کامل وارد کنید.' );
+								break;
+							}
+							$policy['tiers'][] = array(
+								'threshold_irt' => $threshold,
+								'digits'        => (int) $digit,
+							);
+						}
+					} elseif ( 'fixed' !== $selection ) {
+						$result = new WP_Error( 'invalid_rounding_selection', 'روش گردکردن را انتخاب کنید.' );
+					}
+					if ( ! is_wp_error( $result ) ) {
+						$result = Digitalogic_Pricing_Coordinator::instance()->update_price_rounding(
+							$posted_value( 'price_rounding_digits' ),
+							'wp',
+							$policy
+						);
+					}
 					$notice      = is_wp_error( $result )
 						? $result->get_error_message()
-						: __( 'The price-rounding policy was saved. WooCommerce prices were not changed.', 'digitalogic' );
+						: __( 'The price-rounding policy was saved and WooCommerce prices were recalculated atomically.', 'digitalogic' );
 					$notice_type = is_wp_error( $result ) ? 'error' : 'success';
 					break;
 

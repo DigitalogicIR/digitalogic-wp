@@ -1,9 +1,9 @@
 <?php
 /**
  * Plugin Name: Digitalogic WooCommerce Extension
- * Plugin URI: https://github.com/atomicdeploy/digitalogic-wp
+ * Plugin URI: https://github.com/DigitalogicIR/digitalogic-wp
  * Description: Custom dynamic pricing, stock manager, and POS integration for Digitalogic electronic components shop. Supports bulk operations, import/export, and external API integration.
- * Version: 2.0.4
+ * Version: 2.4.34
  * Author: Digitalogic
  * Author URI: https://digitalogic.ir
  * Text Domain: digitalogic
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define( 'DIGITALOGIC_VERSION', '2.0.4' );
+define( 'DIGITALOGIC_VERSION', '2.4.34' );
 define( 'DIGITALOGIC_PBX_SCHEMA_VERSION', '3' );
 define( 'DIGITALOGIC_EVENT_MESH_SCHEMA_VERSION', '1' );
 define( 'DIGITALOGIC_ASSISTANT_ACCOUNT_SCHEMA_VERSION', '2' );
@@ -131,6 +131,8 @@ final class Digitalogic {
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-sku-guard.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-category-slugs.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-supplier-links.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-research.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-content-queue.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-metadata-inspector.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-write-lock.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-product-code-write-guard.php';
@@ -151,6 +153,7 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-report-engine.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-pricing-snapshot.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-command-dispatcher.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/digitalogic-organizer-products-loader.php';
 
         // WebSocket support
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/websocket/class-websocket.php';
@@ -160,12 +163,29 @@ final class Digitalogic {
         // External panel and migrated site integrations
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-laravel-bridge.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-smsir-integration.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-login-proxy.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-wp-rocket-cloudflare-fix.php';
+		if ( ! class_exists( 'Digitalogic_Shatel_SMS_Primary', false ) ) {
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-shatel-sms.php';
+		}
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-admin-suite.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-comment-guard.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-admin-branding.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-label-overrides.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-ux.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-topology-guard.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-icons.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-variation-selector.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-auth-realtime.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-oidc-token.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-federated-login.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-auth-page.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-telegram-account-link.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-checkout-date-compatibility.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-persian-time-formatter.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-checkout-experience.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-order-documents.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-order-payment-experience.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-sidebar-login.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-desktop-app.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-wp-rocket-etag.php';
@@ -176,8 +196,26 @@ final class Digitalogic {
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-call-verification.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-voice-notifications.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-product-identity.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-specifications.php';
+		if ( ! class_exists( 'Digitalogic_Product_Experience', false ) ) {
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-experience.php';
+		}
+		if ( ! class_exists( 'Digitalogic_Currency_Storefront_Freshness', false ) ) {
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-currency-storefront-freshness.php';
+		}
+		if ( ! function_exists( 'digitalogic_is_themepunch_update_url' ) ) {
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-http-resilience.php';
+		}
+		if ( ! class_exists( 'Digitalogic_Patris_Incomplete_Alert_Private_Adapter', false ) ) {
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-patris-incomplete-alert-adapter.php';
+		}
+		if ( ! function_exists( 'digitalogic_resolve_product_price_update' ) ) {
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-price-updated-display.php';
+		}
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-product-resources.php';
+        require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-knowledge-hub.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-storefront-catalog.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-design-system.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-homepage-showcase.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-storefront-product-table.php';
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-storefront-order-forms.php';
@@ -196,11 +234,16 @@ final class Digitalogic {
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/api/class-webhooks.php';
 
         // WP-CLI
-        if (defined('WP_CLI') && WP_CLI) {
+		if (defined('WP_CLI') && WP_CLI) {
             require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-cli-commands.php';
 			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-product-type-cache-cli.php';
             require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-product-supplier-links-cli.php';
+            require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-product-research-cli.php';
             require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-seo-monitor-status-cli.php';
+			require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-order-document-cli.php';
+			if ( ! class_exists( 'Digitalogic_Human_Contacts_CLI', false ) ) {
+				require_once DIGITALOGIC_PLUGIN_DIR . 'includes/cli/class-digitalogic-human-contacts-cli.php';
+			}
         }
     }
 
@@ -208,19 +251,40 @@ final class Digitalogic {
      * Register integrations that must hook before plugins_loaded.
      */
     private function init_early_integrations() {
+		Digitalogic_Login_Proxy::normalize();
         Digitalogic_Patris_Catalog_Backfill::instance();
         require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/viewer-bridge/class-runtime.php';
         \Digitalogic\ViewerBridge\Runtime::register();
 		Digitalogic_WP_Rocket_ETag::init();
+		if ( ! class_exists( 'WPR_CF_Intkey_Fix', false ) ) {
+			Digitalogic_WP_Rocket_Cloudflare_Fix::boot();
+		}
+		if ( ! has_filter( 'pre_http_request', array( 'Digitalogic_Shatel_SMS_Primary', 'maybe_route_smsir' ) ) ) {
+			Digitalogic_Shatel_SMS_Primary::bootstrap();
+		}
+		Digitalogic_Admin_Suite::init();
         Digitalogic_Label_Overrides::init();
+        Digitalogic_Storefront_UX::init();
+        Digitalogic_Product_Topology_Guard::init();
+        Digitalogic_Variation_Selector::init();
         Digitalogic_Plugin_Admin_Branding::init();
         Digitalogic_Plugin_Auth_Routes::init();
+        Digitalogic_Federated_Login::init();
         Digitalogic_Checkout_Date_Compatibility::init();
+		Digitalogic_Persian_Time_Formatter::init();
+		Digitalogic_Checkout_Experience::init();
+		Digitalogic_Order_Documents::init();
+		Digitalogic_Order_Payment_Experience::init();
         Digitalogic_Sidebar_Login::init();
         Digitalogic_Desktop_App::init();
         Digitalogic_Frontend_Search::instance();
 		Digitalogic_Call_Verification::instance();
         Digitalogic_Product_Identity::instance();
+		Digitalogic_Product_Specifications::instance();
+		Digitalogic_Product_Experience::init();
+		Digitalogic_Currency_Storefront_Freshness::register();
+		Digitalogic_Patris_Incomplete_Alert_Private_Adapter::register();
+		Digitalogic_Storefront_Design_System::init();
     }
 
     /**
@@ -261,6 +325,8 @@ final class Digitalogic {
         Digitalogic_Product_Manager::instance();
 		Digitalogic_Product_Code_Editor::instance();
         Digitalogic_Product_Supplier_Links::instance();
+        Digitalogic_Product_Research::boot();
+        Digitalogic_Product_Content_Queue::boot();
         Digitalogic_Pricing::instance();
         Digitalogic_Import_Export::instance();
         Digitalogic_Patris_Feed::instance();
@@ -278,9 +344,12 @@ final class Digitalogic {
         Digitalogic_Panel::instance();
         Digitalogic_Storefront_Realtime::instance();
         Digitalogic_Event_Mesh::instance();
-		Digitalogic_Patris_Incomplete_Product_Notifier::instance();
+		// Patris alerts are projected from the durable post-commit Panel event
+		// ledger; the legacy timer-driven notifier remains disabled.
+		Digitalogic_Patris_Incomplete_Product_Notifier::deactivate();
         Digitalogic_Comment_Guard::instance();
         Digitalogic_Product_Resources::instance();
+        Digitalogic_Knowledge_Hub::instance();
         Digitalogic_Storefront_Catalog::instance();
         Digitalogic_Product_Category_Slugs::instance();
         Digitalogic_Homepage_Showcase::instance();
@@ -356,6 +425,7 @@ final class Digitalogic {
      */
 	public function activate() {
 		\Digitalogic\ViewerBridge\Store::activate();
+		Digitalogic_Admin_Suite::activate();
 		// Create database tables
 		$this->create_tables();
 		$this->install_pbx_schema();
@@ -368,6 +438,8 @@ final class Digitalogic {
         $this->set_default_options();
 		Digitalogic_Pricing_Snapshot::instance()->install_freshness_boundary_schedule();
 		Digitalogic_Panel::install_event_wake_retry();
+		Digitalogic_Patris_Feed::instance()->schedule_sync( '' );
+		Digitalogic_Patris_Catalog_Backfill::deactivate_reconciliation_watchdog();
 
         // Flush rewrite rules
         flush_rewrite_rules();
@@ -401,6 +473,7 @@ final class Digitalogic {
 		Digitalogic_Pricing_Snapshot::instance()->deactivate_freshness_boundary_schedule();
 		Digitalogic_Panel::deactivate_event_wake_retry();
 		Digitalogic_Patris_Incomplete_Product_Notifier::deactivate();
+		Digitalogic_Patris_Catalog_Backfill::deactivate_reconciliation_watchdog();
         Digitalogic_Telegram_Account_Link::deactivate();
         flush_rewrite_rules();
     }
@@ -555,9 +628,9 @@ final class Digitalogic {
     public function plugin_row_meta($links, $file) {
         if ($file === DIGITALOGIC_PLUGIN_BASENAME) {
             $row_meta = array(
-                'docs'    => '<a href="https://github.com/atomicdeploy/digitalogic-wp#readme" target="_blank">' . __('Documentation', 'digitalogic') . '</a>',
+                'docs'    => '<a href="https://github.com/DigitalogicIR/digitalogic-wp#readme" target="_blank">' . __('Documentation', 'digitalogic') . '</a>',
                 'api'     => '<a href="' . esc_url(admin_url('admin.php?page=digitalogic-status')) . '">' . __('API & Status', 'digitalogic') . '</a>',
-                'support' => '<a href="https://github.com/atomicdeploy/digitalogic-wp/issues" target="_blank">' . __('Support', 'digitalogic') . '</a>',
+                'support' => '<a href="https://github.com/DigitalogicIR/digitalogic-wp/issues" target="_blank">' . __('Support', 'digitalogic') . '</a>',
             );
 
             $links = array_merge($links, $row_meta);

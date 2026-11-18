@@ -84,6 +84,7 @@ runtime_entries=(
     includes
     laravel
     languages
+    templates
     vendor
     LICENSE
     README.md
@@ -99,7 +100,7 @@ for entry in "${runtime_entries[@]}"; do
     cp -a -- "$root/$entry" "$stage/"
 done
 
-for required in digitalogic.php vendor/autoload.php laravel/bootstrap/app.php laravel/bootstrap/integration.php; do
+for required in digitalogic.php vendor/autoload.php laravel/bootstrap/app.php laravel/bootstrap/integration.php templates/software-archive.php; do
     if [[ ! -f "$stage/$required" ]]; then
         printf 'Required runtime file is missing: %s\n' "$required" >&2
         exit 1
@@ -135,6 +136,18 @@ rm -rf -- "$stage/vendor/bin"
     -delete
 "$find_bin" "$stage/assets" "$stage/includes" "$stage/languages" -type f \
     \( -iname 'README*' -o -iname '*.md' \) -delete
+
+# Fingerprint the complete staged runtime. The persistent WebSocket worker
+# watches this marker so every package replacement, including a same-version
+# emergency rebuild, forces fresh PHP bytecode before it accepts more writes.
+(
+    cd "$work_dir/stage"
+    "$find_bin" "$plugin_slug" -type f -print0 |
+        LC_ALL=C "$sort_bin" -z |
+        xargs -0 sha256sum |
+        sha256sum |
+        awk '{print $1}'
+) > "$stage/.digitalogic-release"
 
 if "$find_bin" "$stage" -type l -print -quit | grep -q .; then
     printf 'Symlinks are not allowed in the plugin package.\n' >&2
@@ -211,7 +224,9 @@ if (("${#archive_roots[@]}" != 1)) || [[ "${archive_roots[0]}" != "$plugin_slug"
 fi
 
 for required_entry in \
+    "$plugin_slug/.digitalogic-release" \
     "$plugin_slug/digitalogic.php" \
+    "$plugin_slug/templates/software-archive.php" \
     "$plugin_slug/vendor/autoload.php" \
     "$plugin_slug/laravel/bootstrap/app.php" \
     "$plugin_slug/laravel/bootstrap/integration.php"; do
@@ -229,6 +244,7 @@ fi
 
 for entry in "${archive_entries[@]}"; do
     case "$entry" in
+        "$plugin_slug/.digitalogic-release" | \
         "$plugin_slug/digitalogic.php" | \
         "$plugin_slug/LICENSE" | \
         "$plugin_slug/README.md" | \
@@ -238,6 +254,7 @@ for entry in "${archive_entries[@]}"; do
         "$plugin_slug/includes/"* | \
         "$plugin_slug/laravel/"* | \
         "$plugin_slug/languages/"* | \
+        "$plugin_slug/templates/software-archive.php" | \
         "$plugin_slug/vendor/"*)
             ;;
         *)

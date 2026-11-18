@@ -106,6 +106,23 @@ final class ProductSyncReceiverTest extends TestCase {
         $this->resetSingleton(Digitalogic_Product_Sync_Receiver::class);
     }
 
+	/** Legacy pull settings can only clear polling; they can never recreate it. */
+	public function test_legacy_patris_pull_schedule_is_removed(): void {
+		$GLOBALS['digitalogic_test_scheduled_events'] = array(
+			array(
+				'timestamp'  => time() + 60,
+				'hook'       => 'digitalogic_patris_feed_sync',
+				'args'       => array(),
+				'recurrence' => 'hourly',
+			),
+		);
+
+		Digitalogic_Patris_Feed::instance()->schedule_sync( 'hourly' );
+
+		$this->assertFalse( wp_next_scheduled( 'digitalogic_patris_feed_sync', array() ) );
+		$this->assertSame( array(), $GLOBALS['digitalogic_test_scheduled_events'] );
+	}
+
     public function test_accepts_current_golden_fixture_and_requires_catalog_arrays(): void {
         $path   = __DIR__ . '/fixtures/patris-product-sync-golden.json';
         $result = Digitalogic_Product_Sync_Receiver::instance()->receive_json(file_get_contents($path));
@@ -121,6 +138,7 @@ final class ProductSyncReceiverTest extends TestCase {
             'input_products',
             'generated_at',
             'generated_at_order',
+			'last_accepted_generated_at',
             'last_event_id',
             'last_event_type',
             'products',
@@ -133,6 +151,12 @@ final class ProductSyncReceiverTest extends TestCase {
             'deferred_products',
             'received_at',
         ), array_keys($state));
+		$raw_state  = $GLOBALS['digitalogic_test_options'][ Digitalogic_Product_Sync_Receiver::STATE_OPTION ];
+		$source_key = hash( 'sha256', "patris-export\nALLANBAR" );
+		$this->assertSame(
+			'2026-07-20T00:00:00Z',
+			$raw_state['sources'][ $source_key ]['last_accepted_generated_at']
+		);
 
         $payload = json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
         unset($payload['categories']);
@@ -140,6 +164,47 @@ final class ProductSyncReceiverTest extends TestCase {
         $this->assertInstanceOf(WP_Error::class, $invalid);
         $this->assertSame('digitalogic_product_sync_missing_field', $invalid->get_error_code());
     }
+
+	/** Every atomic option write backfills the accepted high-water in raw storage. */
+	public function test_persistence_backfills_accepted_high_water_for_legacy_state(): void {
+		$source_id    = 'legacy-source';
+		$dataset      = 'kala.db';
+		$source_key   = hash( 'sha256', $source_id . "\n" . $dataset );
+		$event_id     = 'sha256:' . str_repeat( 'a', 64 );
+		$generated_at = '2026-09-28T09:02:27.1294653Z';
+		$state        = array(
+			'sources' => array(
+				$source_key => array(
+					'source'        => array(
+						'id'       => $source_id,
+						'dataset'  => $dataset,
+						'revision' => 'sha256:' . str_repeat( 'b', 64 ),
+					),
+					'generated_at'  => $generated_at,
+					'last_event_id' => $event_id,
+					'recent_events' => array(
+						$event_id => array(
+							'generated_at'    => $generated_at,
+							'source_revision' => 'sha256:' . str_repeat( 'b', 64 ),
+						),
+					),
+				),
+			),
+		);
+		$method       = new ReflectionMethod( Digitalogic_Product_Sync_Receiver::class, 'persist_and_read_back' );
+		$stored       = $method->invoke( Digitalogic_Product_Sync_Receiver::instance(), $state );
+
+		$this->assertNotInstanceOf( WP_Error::class, $stored );
+		$this->assertSame( $generated_at, $stored['sources'][ $source_key ]['last_accepted_generated_at'] );
+		$this->assertSame(
+			$generated_at,
+			$GLOBALS['digitalogic_test_options'][ Digitalogic_Product_Sync_Receiver::STATE_OPTION ]['sources'][ $source_key ]['last_accepted_generated_at']
+		);
+		$this->assertSame(
+			$generated_at,
+			Digitalogic_Product_Sync_Receiver::instance()->get_source_state( $source_id, $dataset )['last_accepted_generated_at']
+		);
+	}
 
 	/** A 101001001-like incomplete row is public, exact, idempotent, and later promotable. */
 	public function test_incomplete_source_product_is_materialized_once_then_promoted_without_a_duplicate(): void {
@@ -273,6 +338,138 @@ final class ProductSyncReceiverTest extends TestCase {
 		$this->assertSame( 2, $completed );
 		$this->assertTrue( $observed[1]['purchasable'] );
 	}
+
+	// phpcs:disable -- Watchdog tests follow this legacy test class' compact fixture style.
+	/** A GL850-like source miss is retained, synchronously recovered, and never duplicated. */
+	public function test_gl850_like_pending_source_recovers_through_exact_replay_idempotently(): void {
+		$GLOBALS['digitalogic_test_scheduled_events'] = array();
+		$observed = array();
+		add_action(
+			'digitalogic_patris_materializer_product_committed',
+			static function ( $snapshot ) use ( &$observed ) {
+				$observed[] = $snapshot;
+			}
+		);
+		$policy = array(
+			'enabled'            => true,
+			'status'             => 'publish',
+			'allow_non_positive' => false,
+			'batch_limit'        => 100,
+			'source_id'          => 'tests',
+			'dataset'            => 'ALLANBAR',
+		);
+		$GLOBALS['digitalogic_test_options'][ Digitalogic_Patris_Catalog_Backfill::POLICY_OPTION ] = $policy;
+		$product = array(
+			'product_code' => '116038',
+			'name'         => 'GL850G 4 PORT USB2/0 HUB',
+			'weight_grams' => 18,
+			'total_stock'  => 2,
+			'warnings'     => array( 'final_price_unavailable' ),
+		);
+		$product['record_hash'] = $this->recordHash( $product, true );
+		$receiver               = Digitalogic_Product_Sync_Receiver::instance();
+
+		$envelope = $this->snapshot( array( $product ) );
+		$blocked = $receiver->receive( $envelope );
+		$this->assertNotInstanceOf( WP_Error::class, $blocked );
+		$this->assertSame( 'unapplied', $blocked['status'] );
+		$this->assertSame( 'pending', $blocked['delivery']['status'] );
+		$this->assertFalse( $blocked['retryable'] );
+		$this->assertSame( 1, $blocked['pending_products'] );
+		$this->assertSame( 'digitalogic_patris_creation_policy_blocked', $blocked['woocommerce']['errors'][0]['code'] );
+		$this->assertSame( array(), $GLOBALS['digitalogic_test_posts'] );
+
+		$policy['allow_non_positive'] = true;
+		$GLOBALS['digitalogic_test_options'][ Digitalogic_Patris_Catalog_Backfill::POLICY_OPTION ] = $policy;
+		$recovered = $receiver->receive( $envelope );
+		$this->assertNotInstanceOf( WP_Error::class, $recovered );
+		$this->assertSame( 'recovered', $recovered['status'] );
+		$this->assertSame( 0, $recovered['pending_products'] );
+		$this->assertSame( 0, $recovered['deferred_products'] );
+		$this->assertSame( 'complete', $recovered['delivery']['status'] );
+		$this->assertCount( 1, $GLOBALS['digitalogic_test_posts'] );
+		$product_id = (int) array_key_first( $GLOBALS['digitalogic_test_posts'] );
+		$woo        = wc_get_product( $product_id );
+		$this->assertSame( '116038', $woo->get_sku() );
+		$this->assertSame( 'GL850G 4 PORT USB2/0 HUB', $woo->get_name() );
+		$this->assertSame( 'publish', $woo->get_status() );
+		$this->assertSame( 'visible', $woo->get_catalog_visibility() );
+		$this->assertSame( '', $woo->get_regular_price() );
+		$this->assertSame( '', $woo->get_sale_price() );
+		$this->assertSame( '', $woo->get_price() );
+		$this->assertSame( 2, $woo->get_stock_quantity() );
+		$this->assertSame( 'canonical_missing_unpriced', $woo->get_meta( '_digitalogic_patris_price_status', true ) );
+		$this->assertCount( 1, $observed );
+		$this->assertFalse( $observed[0]['purchasable'] );
+
+		$repeat = $receiver->receive( $envelope );
+		$this->assertNotInstanceOf( WP_Error::class, $repeat );
+		$this->assertSame( 'replayed', $repeat['status'] );
+		$this->assertCount( 1, $GLOBALS['digitalogic_test_posts'] );
+
+		$status = $receiver->get_status();
+		$this->assertSame( 'synchronous', $status['delivery_mode'] );
+		$this->assertFalse( $status['scheduled_reconciliation'] );
+		$this->assertSame( array(), $GLOBALS['digitalogic_test_scheduled_events'] );
+	}
+
+	/** Legacy product-sync watchdog schedules are removed and never recreated. */
+	public function test_catalog_reconciliation_watchdog_is_disabled(): void {
+		$GLOBALS['digitalogic_test_scheduled_events'] = array(
+			array( 'timestamp' => time() + 900, 'hook' => Digitalogic_Patris_Catalog_Backfill::WATCHDOG_HOOK, 'args' => array(), 'recurrence' => '' ),
+		);
+		Digitalogic_Patris_Catalog_Backfill::deactivate_reconciliation_watchdog();
+		$this->assertSame( array(), $GLOBALS['digitalogic_test_scheduled_events'] );
+		$status = Digitalogic_Product_Sync_Receiver::instance()->get_status();
+		$this->assertSame( 'synchronous', $status['delivery_mode'] );
+		$this->assertFalse( $status['scheduled_reconciliation'] );
+		$this->assertArrayNotHasKey( 'reconciliation_watchdog', $status );
+	}
+
+	/** CNY and weight changes update the exact Product Code owner and name only changed fields. */
+	public function test_cny_and_weight_update_the_same_unique_product_synchronously(): void {
+		$observed = array();
+		add_action(
+			'digitalogic_patris_materializer_product_committed',
+			static function ( $snapshot ) use ( &$observed ) {
+				$observed[] = $snapshot;
+			}
+		);
+		$product = array(
+			'product_code'    => '116038',
+			'name'            => 'GL850G 4 PORT USB2/0 HUB',
+			'foreign_currency'=> 'CNY',
+			'foreign_price'   => 10,
+			'weight_grams'    => 18,
+			'total_stock'     => 2,
+			'warnings'        => array( 'final_price_unavailable' ),
+		);
+		$product['record_hash'] = $this->recordHash( $product, true );
+		$receiver = Digitalogic_Product_Sync_Receiver::instance();
+		$created  = $receiver->receive( $this->snapshot( array( $product ) ) );
+		$this->assertSame( 'accepted', $created['status'] );
+		$this->assertCount( 1, $GLOBALS['digitalogic_test_posts'] );
+		$product_id = (int) array_key_first( $GLOBALS['digitalogic_test_posts'] );
+
+		$product['foreign_price'] = 11;
+		$product['weight_grams']  = 20;
+		unset( $product['record_hash'] );
+		$product['record_hash'] = $this->recordHash( $product, true );
+		$updated = $receiver->receive( $this->snapshot( array( $product ), array(), false, '2026-07-20T00:01:00Z' ) );
+
+		$this->assertSame( 'accepted', $updated['status'] );
+		$this->assertCount( 1, $GLOBALS['digitalogic_test_posts'] );
+		$this->assertSame( $product_id, (int) array_key_first( $GLOBALS['digitalogic_test_posts'] ) );
+		$this->assertSame( '116038', wc_get_product( $product_id )->get_sku() );
+		$this->assertSame( '11', (string) get_post_meta( $product_id, '_digitalogic_patris_foreign_price', true ) );
+		$this->assertSame( '20', (string) get_post_meta( $product_id, '_digitalogic_patris_weight_grams', true ) );
+		$this->assertCount( 2, $observed );
+		$this->assertSame( 'created', $observed[0]['change_type'] );
+		$this->assertSame( 'updated', $observed[1]['change_type'] );
+		$this->assertSame( array( 'cny', 'weight' ), $observed[1]['changed_fields'] );
+		$this->assertSame( $updated['event_id'], $observed[1]['event_id'] );
+	}
+	// phpcs:enable
 
 	/** A positive-stock legacy leaf must pass through the canonical writer before marker repair. */
 	public function test_unpriced_positive_stock_legacy_leaf_is_repaired_without_a_duplicate_or_hidden_save(): void {
@@ -682,7 +879,9 @@ final class ProductSyncReceiverTest extends TestCase {
 		$this->assertSame( 1, $result['woocommerce']['missing'] );
 		$this->assertSame( 1, $result['pending_products'] );
 		$this->assertSame( 0, $result['deferred_products'] );
-		$this->assertTrue( $result['retryable'] );
+		$this->assertFalse( $result['retryable'] );
+		$this->assertSame( 'unapplied', $result['status'] );
+		$this->assertSame( 'pending', $result['delivery']['status'] );
 		$this->assertSame( array(), $GLOBALS['digitalogic_test_posts'] );
 	}
 
@@ -715,7 +914,9 @@ final class ProductSyncReceiverTest extends TestCase {
 		$this->assertSame( 0, $result['woocommerce']['identity_hazard'] );
 		$this->assertSame( 1, $result['pending_products'] );
 		$this->assertSame( 0, $result['deferred_products'] );
-		$this->assertTrue( $result['retryable'] );
+		$this->assertFalse( $result['retryable'] );
+		$this->assertSame( 'unapplied', $result['status'] );
+		$this->assertSame( 'pending', $result['delivery']['status'] );
 		$this->assertSame( '', get_post_meta( 902, '_digitalogic_patris_record_hash', true ) );
 	}
 

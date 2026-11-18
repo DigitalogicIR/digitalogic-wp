@@ -42,11 +42,10 @@ final class Digitalogic_Patris_Mapping_Guard {
 		add_filter( 'update_post_metadata', array( self::class, 'price_metadata' ), 100, 4 );
 	}
 
-	/** Keep stock-bearing mapped models selectable even before a price is available. */
+	/** Keep stock-bearing models visible independently of price eligibility. */
 	private static function unpriced_stock_variation( $product ) {
 		return $product instanceof WC_Product_Variation
 			&& 'publish' === $product->get_status()
-			&& self::connected( $product )
 			&& $product->is_in_stock()
 			&& (float) $product->get_stock_quantity() > 0
 			&& '' === $product->get_price();
@@ -59,12 +58,41 @@ final class Digitalogic_Patris_Mapping_Guard {
 
 	/** An absent price is not a zero price; purchasing remains unavailable. */
 	public static function variation_data( $data, $parent, $variation ) {
-		if ( self::unpriced_stock_variation( $variation ) ) {
-			$data['price_html']            = '';
-			$data['display_price']         = null;
-			$data['display_regular_price'] = null;
-			$data['is_purchasable']        = false;
+		$raw_price = trim( (string) $variation->get_price() );
+		if ( ! $variation->is_in_stock() || ! self::priceable( $variation ) || '' === $raw_price || ! is_numeric( $raw_price ) ) {
+			$data['price_html']                         = '';
+			$data['display_price']                      = null;
+			$data['display_regular_price']              = null;
+			$data['digitalogic_price_contract']         = 1;
+			$data['digitalogic_price_raw']              = null;
+			$data['digitalogic_price_html']             = '';
+			$data['digitalogic_price_currency']         = get_woocommerce_currency();
+			$data['digitalogic_price_decimals']         = wc_get_price_decimals();
+			$data['is_purchasable']                     = false;
+			$data['digitalogic_price_hidden_for_stock'] = ! $variation->is_in_stock();
+			return $data;
 		}
+
+		$price_html = trim( (string) ( $data['price_html'] ?? '' ) );
+		if ( '' === $price_html ) {
+			$variation_html = trim( (string) $variation->get_price_html() );
+			if ( '' !== $variation_html ) {
+				$price_html = '<span class="price">' . $variation_html . '</span>';
+			}
+		}
+
+		if ( '' !== $price_html ) {
+			$price_html = '<span class="digitalogic-variation-price-contract" data-digitalogic-price-raw="'
+				. esc_attr( $raw_price ) . '">' . $price_html . '</span>';
+		}
+
+		$data['price_html']                         = $price_html;
+		$data['digitalogic_price_contract']         = 1;
+		$data['digitalogic_price_raw']              = $raw_price;
+		$data['digitalogic_price_html']             = $price_html;
+		$data['digitalogic_price_currency']         = get_woocommerce_currency();
+		$data['digitalogic_price_decimals']         = wc_get_price_decimals();
+		$data['digitalogic_price_hidden_for_stock'] = false;
 		return $data;
 	}
 	/**
@@ -79,7 +107,7 @@ final class Digitalogic_Patris_Mapping_Guard {
 	 * @return array
 	 */
 	public static function price_hash( $hash ) {
-		$hash['patris_mapping_policy'] = 1;
+		$hash['patris_mapping_policy'] = 2;
 		return $hash; }
 
 	/**
@@ -122,7 +150,8 @@ final class Digitalogic_Patris_Mapping_Guard {
 		$owner_code = (string) $product->get_meta( '_digitalogic_patris_owner_product_code', true );
 		$key        = (string) $product->get_meta( '_digitalogic_patris_owner_source_id', true ) . "\n"
 		. (string) $product->get_meta( '_digitalogic_patris_owner_dataset', true ) . "\n" . $code;
-		return '' !== $code && $owner_code === $code && isset( self::$index[ $key ] )
+		return '' !== $code && (string) $product->get_sku( 'edit' ) === $code
+		&& $owner_code === $code && isset( self::$index[ $key ] )
 		&& self::$index[ $key ] === (int) $product->get_id();
 	}
 
@@ -211,15 +240,149 @@ final class Digitalogic_Patris_Mapping_Guard {
 		}
 		return $check;
 	}
-	/**
-	 * Display the persisted mapping integrity warning.
-	 */
+	/** Show a compact review of mapping failures on relevant admin screens. */
 	public static function notice() {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) { // phpcs:ignore WordPress.WP.Capabilities.Unknown -- Registered by WooCommerce.
-			return; }
-		$report = get_option( 'digitalogic_patris_mapping_integrity', array() );
-		if ( ! empty( $report['unmapped_ids'] ) ) {
-			echo '<div class="notice notice-error"><p>' . esc_html( 'CRITICAL — نگاشت Patris نامعتبر است؛ قیمت و خرید این کالاها مسدود است: ' . implode( ', ', array_map( 'intval', $report['unmapped_ids'] ) ) ) . '</p></div>';
+			return;
 		}
+		$screen = get_current_screen();
+		if ( ! $screen || ! in_array( $screen->id, array( 'dashboard', 'edit-product', 'product' ), true ) ) {
+			return;
+		}
+
+		$groups = self::unresolved_admin_mappings();
+		$ids    = array_merge( $groups['published'] ?? array(), $groups['other'] ?? array() );
+		if ( 'product' === $screen->id ) {
+			$product_id = (int) get_the_ID();
+			if ( ! $product_id ) {
+				return;
+			}
+			$ids = array_filter(
+				$ids,
+				static fn ( int $id ): bool => $id === $product_id || (int) wp_get_post_parent_id( $id ) === $product_id
+			);
+		}
+		if ( ! $ids ) {
+			return;
+		}
+
+		$affected = count( $ids );
+		$preview  = array_slice( $ids, 0, 6 );
+		$name     = self::admin_product_name( reset( $preview ) );
+		$more     = $affected - 1;
+		echo '<div class="notice notice-error dg-patris-notice"><details class="dg-patris-disclosure">';
+		printf(
+			'<summary><span class="dg-patris-summary-heading"><strong>%s</strong><span class="dg-patris-count">%s</span></span><span class="dg-patris-preview"><bdi class="dg-patris-ellipsis">%s</bdi>',
+			esc_html( Digitalogic_Admin_Workspace::label( 'Patris pricing is blocked for unmapped products', 'قیمت‌گذاری پاتریس برای کالاهای بدون نگاشت مسدود است' ) ),
+			esc_html( sprintf( Digitalogic_Admin_Workspace::label( '%s affected', '%s مورد' ), number_format_i18n( $affected ) ) ),
+			esc_html( $name )
+		);
+		if ( $more > 0 ) {
+			printf( '<span class="dg-patris-count">%s</span>', esc_html( sprintf( Digitalogic_Admin_Workspace::label( '… %s more', '… %s مورد دیگر' ), number_format_i18n( $more ) ) ) );
+		}
+		echo '</span></summary><div class="dg-patris-disclosure-body">';
+		self::render_admin_product_links( $preview );
+		printf(
+			'<p class="dg-patris-report-link"><a href="%s">%s</a></p>',
+			esc_url( Digitalogic_Admin_Workspace::maintenance_url() . '#patris-mappings' ),
+			esc_html( Digitalogic_Admin_Workspace::label( 'Open the full mapping report', 'مشاهده گزارش کامل نگاشت‌ها' ) )
+		);
+		echo '</div></details></div>';
+	}
+
+	/**
+	 * Return the WooCommerce name, including the variation attributes where available.
+	 *
+	 * @param int $id WooCommerce object ID.
+	 */
+	private static function admin_product_name( int $id ): string {
+		$product = wc_get_product( $id );
+		$name    = $product ? trim( $product->get_name() ) : '';
+		return '' !== $name ? $name : Digitalogic_Admin_Workspace::label( 'Untitled product', 'کالای بدون نام' );
+	}
+
+	/**
+	 * Render WooCommerce records as named editor links.
+	 *
+	 * @param int[] $ids WooCommerce object IDs.
+	 */
+	private static function render_admin_product_links( array $ids ): void {
+		echo '<ul class="dg-patris-products">';
+		foreach ( $ids as $id ) {
+			$parent_id = 'product_variation' === get_post_type( $id ) ? (int) wp_get_post_parent_id( $id ) : 0;
+			$url       = get_edit_post_link( $parent_id ? $parent_id : $id, 'raw' );
+			$name      = self::admin_product_name( $id );
+			$object_id = $parent_id ? Digitalogic_Admin_Workspace::label( 'Variation', 'مدل' ) . ' #' . $id : '#' . $id;
+			echo '<li>';
+			if ( $url ) {
+				printf( '<a class="dg-patris-product" href="%s" title="%s">', esc_url( $url ), esc_attr( $name ) );
+			} else {
+				echo '<span class="dg-patris-product">';
+			}
+			printf( '<bdi class="dg-patris-ellipsis">%s</bdi><bdi class="dg-patris-product-id">%s</bdi>', esc_html( $name ), esc_html( $object_id ) );
+			echo $url ? '</a>' : '</span>';
+			echo '</li>';
+		}
+		echo '</ul>';
+	}
+
+	/**
+	 * Check recorded pricing failures against current Patris source identities.
+	 *
+	 * @param bool $refresh Recheck the products directly on the maintenance screen.
+	 * @return array<string,int[]>
+	 */
+	private static function unresolved_admin_mappings( bool $refresh = false ): array {
+		$report = get_option( 'digitalogic_patris_mapping_integrity', array() );
+		$ids    = array_unique( array_filter( array_map( 'absint', (array) ( $report['unmapped_ids'] ?? array() ) ) ) );
+		if ( ! $ids ) {
+			return array();
+		}
+
+		$key = 'patris_mapping_review_' . md5( implode( ',', $ids ) );
+		if ( ! $refresh ) {
+			$cached = wp_cache_get( $key, 'digitalogic' );
+			if ( is_array( $cached ) ) {
+				return $cached;
+			}
+		}
+
+		$unmapped = array();
+		foreach ( $ids as $id ) {
+			$product = wc_get_product( $id );
+			if ( $product && ! self::connected( $product ) ) {
+				$unmapped[ 'publish' === $product->get_status() ? 'published' : 'other' ][] = $id;
+			}
+		}
+		wp_cache_set( $key, $unmapped, 'digitalogic', 2 * MINUTE_IN_SECONDS );
+		return $unmapped;
+	}
+
+	/** Show the recorded products that still lack a current Patris mapping. */
+	public static function render_admin_report(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) { // phpcs:ignore WordPress.WP.Capabilities.Unknown -- Registered by WooCommerce.
+			return;
+		}
+		$unmapped = self::unresolved_admin_mappings( true );
+
+		echo '<section id="patris-mappings" class="dg-workspace-panel"><h2>' . esc_html( Digitalogic_Admin_Workspace::label( 'Patris product mappings', 'نگاشت کالاهای پاتریس' ) ) . '</h2>';
+		if ( ! $unmapped ) {
+			echo '<p>' . esc_html( Digitalogic_Admin_Workspace::label( 'No unresolved product mappings in the recorded pricing failures.', 'در خطاهای ثبت‌شده قیمت‌گذاری، کالای بدون نگاشت باقی نمانده است.' ) ) . '</p></section>';
+			return;
+		}
+
+		$groups = array(
+			'published' => Digitalogic_Admin_Workspace::label( 'Published products and variations', 'کالاها و مدل‌های منتشرشده' ),
+			'other'     => Digitalogic_Admin_Workspace::label( 'Other product statuses', 'کالاها با وضعیت‌های دیگر' ),
+		);
+		foreach ( $groups as $status => $label ) {
+			if ( empty( $unmapped[ $status ] ) ) {
+				continue;
+			}
+			printf( '<details class="dg-patris-disclosure"><summary><span class="dg-patris-summary-heading"><strong>%s</strong><span class="dg-patris-count">%s</span></span></summary><div class="dg-patris-disclosure-body">', esc_html( $label ), esc_html( number_format_i18n( count( $unmapped[ $status ] ) ) ) );
+			self::render_admin_product_links( $unmapped[ $status ] );
+			echo '</div></details>';
+		}
+		echo '</section>';
 	}
 }

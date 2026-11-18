@@ -1,0 +1,123 @@
+<?php
+/**
+ * Accessible storefront presentation for the existing model attribute.
+ *
+ * @package Digitalogic
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+if ( ! class_exists( 'Digitalogic_Storefront_Icons', false ) ) {
+	require_once __DIR__ . '/class-digitalogic-storefront-icons.php';
+}
+
+/** Keep WooCommerce's select as the only variation selection authority. */
+final class Digitalogic_Variation_Selector {
+	/** Register presentation hooks, including dynamically rendered product forms. */
+	public static function init() {
+		add_filter( 'woocommerce_dropdown_variation_attribute_options_html', array( self::class, 'render' ), 30, 2 );
+		add_action( 'wp_enqueue_scripts', array( self::class, 'enqueue_assets' ), 100 );
+	}
+
+	/** Load small assets globally so quick views and Elementor forms can initialize. */
+	public static function enqueue_assets() {
+		if ( ! class_exists( 'WooCommerce' ) ) {
+			return;
+		}
+		wp_enqueue_style( 'digitalogic-variation-selector', DIGITALOGIC_PLUGIN_URL . 'assets/css/variation-selector.css', array(), (string) filemtime( DIGITALOGIC_PLUGIN_DIR . 'assets/css/variation-selector.css' ) );
+		wp_enqueue_script( 'digitalogic-variation-selector', DIGITALOGIC_PLUGIN_URL . 'assets/js/variation-selector.js', array( 'jquery' ), (string) filemtime( DIGITALOGIC_PLUGIN_DIR . 'assets/js/variation-selector.js' ), true );
+		$price_asset = DIGITALOGIC_PLUGIN_DIR . 'assets/js/variation-price-presentation.js';
+		if ( file_exists( $price_asset ) ) {
+			wp_enqueue_script(
+				'digitalogic-variation-price-presentation',
+				DIGITALOGIC_PLUGIN_URL . 'assets/js/variation-price-presentation.js',
+				array( 'jquery', 'wc-add-to-cart-variation' ),
+				(string) filemtime( $price_asset ),
+				true
+			);
+		}
+	}
+
+	/**
+	 * Wrap only the model dropdown and supply child-owned display metadata.
+	 *
+	 * @param string $html Original WooCommerce select HTML.
+	 * @param array  $args Dropdown arguments.
+	 * @return string Progressive enhancement wrapper, or unchanged select.
+	 */
+	public static function render( $html, $args ) {
+		$attribute = $args['attribute'] ?? '';
+		$product   = $args['product'] ?? null;
+		$labels    = array(
+			'model'           => __( 'مدل', 'digitalogic' ),
+			'pa_model'        => __( 'مدل', 'digitalogic' ),
+			'source_model'    => __( 'مدل', 'digitalogic' ),
+			'pa_source_model' => __( 'مدل', 'digitalogic' ),
+			'ram'             => __( 'حافظه رم', 'digitalogic' ),
+			'pa_ram'          => __( 'حافظه رم', 'digitalogic' ),
+		);
+		if ( ! isset( $labels[ $attribute ] ) || ! $product instanceof WC_Product_Variable ) {
+			return $html;
+		}
+		$label = $labels[ $attribute ];
+		$items = array();
+		foreach ( $product->get_children() as $child_id ) {
+			$child = wc_get_product( $child_id );
+			if ( ! $child instanceof WC_Product_Variation || 'publish' !== $child->get_status() ) {
+				continue;
+			}
+			$attributes = $child->get_variation_attributes();
+			$value      = $attributes[ 'attribute_' . $attribute ] ?? '';
+			if ( '' === $value ) {
+				continue;
+			}
+			$image_id = $child->get_image_id();
+			if ( ! $image_id ) {
+				$image_id = $product->get_image_id();
+			}
+			$image = $image_id ? wp_get_attachment_image_url( $image_id, 'woocommerce_thumbnail' ) : '';
+			$title = $child->get_meta( '_digitalogic_persian_name', true );
+			if ( '' === trim( (string) $title ) ) {
+				$title = $child->get_meta( '_digitalogic_patris_name', true );
+			}
+			$description  = $child->get_description();
+			$product_code = class_exists( 'Digitalogic_Product_Identifier_Resolver' )
+				? trim( (string) $child->get_meta( Digitalogic_Product_Identifier_Resolver::PATRIS_CODE_META, true ) )
+				: '';
+			$is_available = $child->is_in_stock();
+			$price_raw    = $is_available ? trim( (string) $child->get_price() ) : '';
+			$price_html   = $is_available && '' !== $price_raw && is_numeric( $price_raw ) ? (string) $child->get_price_html() : '';
+
+			$items[] = array(
+				'value'       => (string) $value,
+				'attributes'  => $attributes,
+				'title'       => sanitize_text_field( (string) $title ),
+				'description' => sanitize_textarea_field( wp_strip_all_tags( (string) $description ) ),
+				'sku'         => sanitize_text_field( $child->get_sku() ),
+				'productCode' => sanitize_text_field( $product_code ),
+				'priceRaw'    => is_numeric( $price_raw ) ? $price_raw : null,
+				'priceHtml'   => wp_kses_post( $price_html ),
+				'priceText'   => sanitize_text_field( wp_strip_all_tags( $price_html ) ),
+				'image'       => $image ? esc_url_raw( $image ) : '',
+				'available'   => $is_available,
+			);
+		}
+		$data = array(
+			'items'           => $items,
+			'label'           => $label,
+			/* translators: %s: variation attribute label, for example model or RAM. */
+			'placeholder'     => sprintf( __( 'انتخاب %s', 'digitalogic' ), $label ),
+			/* translators: %s: variation attribute label, for example model or RAM. */
+			'search'          => sprintf( __( 'جستجوی %s، توضیحات یا کد کالا…', 'digitalogic' ), $label ),
+			/* translators: %s: variation attribute label, for example model or RAM. */
+			'empty'           => sprintf( __( '%s با این مشخصات پیدا نشد.', 'digitalogic' ), $label ),
+			'skuLabel'        => __( 'کد کالا', 'digitalogic' ),
+			'unavailable'     => __( 'ناموجود', 'digitalogic' ),
+			'imageLabel'      => __( 'تصویر مدل', 'digitalogic' ),
+			'barcodeIconPath' => Digitalogic_Storefront_Icons::barcode_path(),
+		);
+		return '<div class="digitalogic-model-selector" data-digitalogic-model-selector="' . esc_attr( wp_json_encode( $data ) ) . '">' . $html . '</div>';
+	}
+}

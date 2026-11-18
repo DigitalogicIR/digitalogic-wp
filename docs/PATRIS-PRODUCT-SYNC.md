@@ -5,11 +5,29 @@ Digitalogic and Patris Export use one living contract. Because both ends are dep
 ## Endpoints
 
 - `POST /wp-json/digitalogic/patris/product-sync`
+- `POST /wp-json/digitalogic/patris/product-sync/receipt`
 - `GET /wp-json/digitalogic/integration/catalog`
 - `POST /wp-json/digitalogic/integration/pricing-assignments/batch`
 - `GET /wp-json/digitalogic/integration/products/by-code/{code}/pricing`
 
 The product-sync request uses `X-Patris-Product-Sync-Secret`. It may be restricted to exact `{id,dataset}` source pairs.
+
+The receipt endpoint uses that same header and permission boundary. Send the
+exact `event_id`, `generated_at`, plus `source.id`, `source.dataset`, and `source.revision` from
+the original event. Every recognized request returns HTTP 200 with schema
+`digitalogic.product-sync-receipt.v2`, the exact echoed identity including
+`generated_at`, bounded
+pending/deferred counts, and one of `applied`, `pending`, `superseded`, or
+`not_found`. `applied` and `superseded` prove durable acceptance; `pending`
+must suppress another write while Patris keeps probing; only authoritative
+`not_found` permits one controlled POST retry. Authentication and server
+failures retain their normal non-200 status. If the exact event is absent from
+a saturated receipt history, `not_found` is authoritative only when its exact
+`generated_at` is strictly newer than the durable last-accepted timestamp for
+that source. Equal, older, malformed, or unreasonably future chronology fails
+closed rather than authorizing a replay. The receiver permits five minutes of
+positive clock skew before future chronology becomes inconclusive. No event
+payload, secret, stored product, or delivery-error detail is returned.
 
 Product delivery and pricing-assignment lookups match the case-sensitive
 `_digitalogic_patris_product_code` value only. A WooCommerce SKU is never used

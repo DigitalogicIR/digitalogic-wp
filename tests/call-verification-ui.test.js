@@ -50,10 +50,10 @@ test('the call alternative is disclosure-safe and makes no request until start',
 });
 
 test('server-returned dial number and code populate shortcut instructions without an invented IVR digit', () => {
-	assert.match(source, /dial\.textContent = display/);
+	assert.match(source, /dialNumber\.textContent = displayCallNumber\(display, data\.request_country\)/);
 	assert.match(source, /dial\.setAttribute\('href', `tel:\$\{tel\}`\)/);
 	assert.match(source, /code\.textContent = data\.code/);
-	assert.match(source, /body: JSON\.stringify\(\{ phone: phone\.value, purpose \}\)/);
+	assert.match(source, /body: JSON\.stringify\([^\n]+\{ phone: phone\.value, purpose \}\)/);
 	assert.doesNotMatch(source, /ivr_option|ivr_path|data-call-ivr/);
 });
 
@@ -74,7 +74,7 @@ test('cancelling aborts the active status request as well as invalidating its ge
 });
 
 test('cancel invalidates in-flight polling before it can consume a stale proof', () => {
-	const pollRequest = source.indexOf('const data = await request', source.indexOf('async function poll'));
+	const pollRequest = source.indexOf('data = await request', source.indexOf('async function poll'));
 	const postPollGuard = source.indexOf('expectedGeneration !== attemptGeneration', pollRequest);
 	const consumeCall = source.indexOf('await consume(expectedGeneration', pollRequest);
 	const cancelHandler = source.indexOf("cancel?.addEventListener('click'");
@@ -103,5 +103,17 @@ test('cancel is disabled once verified proof consumption becomes irreversible', 
 	assert.ok(disableCancel > verifiedBranch);
 	assert.ok(consumeCall > disableCancel);
 	assert.ok(retryReset > -1);
-	assert.match(source.slice(disableCancel, consumeCall), /widget\.setAttribute\('aria-busy', 'true'\)/);
+	assert.match(source.slice(verifiedBranch, consumeCall), /countdown\.hidden = true/);
+});
+
+test('a lost consume response recovers the server-confirmed return for the same challenge', () => {
+	const start = source.indexOf('catch (consumeError)');
+	const end = source.indexOf('resetForRetry(consumeError.message);', start);
+	const recovery = source.slice(start, end);
+
+	assert.match(recovery, /if \(isBrandedLogin\(\)\)/);
+	assert.match(recovery, /new URLSearchParams\(\{ redirect_to: redirect \}\)/);
+	assert.match(recovery, /request\(url, \{ headers: headers\(expectedCsrfToken\) \}\)/);
+	assert.match(recovery, /await request[\s\S]*?expectedChallengeId !== challengeId[\s\S]*?if \(recovered\?\.redirect_url\)/);
+	assert.match(recovery, /finish\(recovered\.redirect_url\)/);
 });
