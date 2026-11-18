@@ -54,5 +54,11 @@ class QueueWorkerTest(unittest.TestCase):
             self.assertEqual('source_verification_required', result['result']['reason'])
             wp.assert_not_called()
 
+    def test_existing_html_excerpt_is_verified_as_rendered_text(self):
+        body = '<meta name="description" content="An amplifier."><p>A <strong>useful</strong>\n module’s output.</p>'
+        copy = {'short_description': "<p>A <b>useful</b> module's output.</p>", 'seo_description': 'An amplifier.'}
+        with patch.object(worker, 'fetch', return_value=(body.encode(), 'text/html')):
+            worker.public_copy_check(self.job(), copy)
+
 
 if __name__ == '__main__': unittest.main()

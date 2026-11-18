@@ -335,12 +335,17 @@ class Digitalogic_Product_Content_Queue {
 			static function () use ( $stage, $id ) {
 				global $wpdb;
 				$j   = static::table( 'jobs' );
-				$row = $wpdb->get_row( $wpdb->prepare( "SELECT q.* FROM %i q WHERE q.stage=%s AND ((q.status IN ('queued','retry','blocked','waiting_google') AND q.available_at<=UTC_TIMESTAMP()) OR (q.status='processing' AND q.lease_until<UTC_TIMESTAMP())) AND (%d=0 OR q.product_id=%d) AND NOT EXISTS (SELECT 1 FROM %i c WHERE c.product_id=q.product_id AND c.generation=q.generation AND c.stage='content' AND c.status<>'done' AND q.stage='seo') ORDER BY q.priority DESC,q.id LIMIT 1", $j, $stage, $id, $id, $j ), ARRAY_A );
+				$s   = static::table( 'state' );
+				$row = $wpdb->get_row( $wpdb->prepare( "SELECT q.* FROM %i q JOIN %i s ON s.product_id=q.product_id AND s.generation=q.generation WHERE q.stage=%s AND ((q.status IN ('queued','retry','blocked','waiting_google') AND q.available_at<=UTC_TIMESTAMP()) OR (q.status='processing' AND q.lease_until<UTC_TIMESTAMP())) AND (%d=0 OR q.product_id=%d) AND NOT EXISTS (SELECT 1 FROM %i c WHERE c.product_id=q.product_id AND c.generation=q.generation AND c.stage='content' AND c.status<>'done' AND q.stage='seo') ORDER BY q.priority DESC,q.id LIMIT 1", $j, $s, $stage, $id, $id, $j ), ARRAY_A );
 				if ( ! $row ) {
 					return null;
 				}
 				$token = bin2hex( random_bytes( 24 ) );
-				static::write( $wpdb->query( $wpdb->prepare( "UPDATE %i SET status='processing',token=%s,attempts=attempts+1,lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 45 MINUTE),updated_at=UTC_TIMESTAMP() WHERE id=%d", $j, $token, $row['id'] ) ) );
+				// Observation can commit a new generation between selection and reservation.
+				$claimed = $wpdb->query( $wpdb->prepare( "UPDATE %i q JOIN %i s ON s.product_id=q.product_id AND s.generation=q.generation SET q.status='processing',q.token=%s,q.attempts=q.attempts+1,q.lease_until=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 45 MINUTE),q.updated_at=UTC_TIMESTAMP() WHERE q.id=%d AND ((q.status IN ('queued','retry','blocked','waiting_google') AND q.available_at<=UTC_TIMESTAMP()) OR (q.status='processing' AND q.lease_until<UTC_TIMESTAMP()))", $j, $s, $token, $row['id'] ) );
+				static::write( $claimed );
+				if ( 1 !== $claimed ) {
+					return null; }
 				$row['token']    = $token;
 				$row['attempts'] = (int) $row['attempts'] + 1;
 				$row['snapshot'] = static::snapshot( (int) $row['product_id'] );
