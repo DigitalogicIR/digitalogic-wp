@@ -267,12 +267,16 @@ final class MobileBrowserSession {
 	 * @param array  $context Validated browser generation.
 	 * @param string $request_id Stable UUID for challenge retries.
 	 * @param string $network Server-selected remote address scope.
+	 * @param string $flow Explicit ID-token or authorization-code contract.
 	 * @return array|\WP_Error Public challenge or closed failure.
 	 */
-	public static function googleChallenge( array $context, string $request_id, string $network ) {
+	public static function googleChallenge( array $context, string $request_id, string $network, string $flow = 'id_token' ) {
 		global $wpdb;
-		if ( ! preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/iD', $request_id ) ) {
+		if ( ! in_array( $flow, array( 'id_token', 'code' ), true ) || ! preg_match( '/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/iD', $request_id ) ) {
 			return self::error( 'browser_google_invalid_request', 400 );
+		}
+		if ( 'code' === $flow && ! MobileBrowserGoogleCode::configured() ) {
+			return self::error( 'browser_google_code_unavailable', 503 );
 		}
 		$key  = '_dgl_pwa_google_' . MobileIdentityStore::hash( $context['id'] . ':' . strtolower( $request_id ) );
 		$lock = 'dgl-pwa-google-' . substr( $key, -40 );
@@ -282,23 +286,34 @@ final class MobileBrowserSession {
 		try {
 			$receipt = get_transient( $key );
 			if ( is_array( $receipt ) ) {
+				if ( ( $receipt['public']['flow'] ?? 'id_token' ) !== $flow ) {
+					return self::error( 'browser_google_challenge_conflict', 409 );
+				}
 				return ( $receipt['expires_at_epoch'] ?? 0 ) > time() ? $receipt['public'] : self::error( 'browser_google_expired', 410 );
 			}
 			if ( ! MobileIdentityStore::admit( 'pwa-google:' . $context['id'], 10, 300 ) || ! MobileIdentityStore::admit( 'pwa-google-ip:' . $network, 20, 300 ) || ! MobileIdentityStore::admit( 'pwa-google-global', 200, 300 ) ) {
 				return self::error( 'rate_limited', 429 );
 			}
-			$proof = array(
-				'purpose'    => 'pwa_google_login',
+			$created = time();
+			$proof   = array(
+				'purpose'    => 'code' === $flow ? 'pwa_google_code' : 'pwa_google_login',
 				'context_id' => $context['id'],
 				'nonce'      => bin2hex( random_bytes( 32 ) ),
-				'created_at' => time(),
-				'expires_at' => time() + 300,
+				'created_at' => $created,
+				'expires_at' => $created + 300,
 			);
-			$data  = array(
-				'challenge_id' => MobileRegistrationStore::seal( wp_json_encode( $proof ), 'pwa-google-v1' ),
+			if ( 'code' === $flow ) {
+				$proof['origin']   = self::ORIGIN;
+				$proof['audience'] = MobileGoogleIdentity::audience();
+			}
+			$data = array(
+				'challenge_id' => MobileRegistrationStore::seal( wp_json_encode( $proof ), 'code' === $flow ? 'pwa-google-code-v1' : 'pwa-google-v1' ),
 				'nonce'        => $proof['nonce'],
 				'expires_at'   => gmdate( 'c', $proof['expires_at'] ),
 			);
+			if ( 'code' === $flow ) {
+				$data['flow'] = 'code';
+			}
 			if ( ! set_transient(
 				$key,
 				array(

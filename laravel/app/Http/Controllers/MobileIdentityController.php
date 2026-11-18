@@ -590,6 +590,36 @@ final class MobileIdentityController {
 			if ( is_wp_error( $fresh ) ) {
 				return $this->error( $fresh->get_error_code(), 'تأیید تازه گوگل معتبر نیست؛ دوباره تلاش کنید.', (int) ( $fresh->get_error_data()['status'] ?? 403 ) ); }
 		}
+		return $this->completeGoogle( $request, $claims, $token, $fresh );
+	}
+
+	/**
+	 * Exchange only an origin/cookie/state-bound browser popup code.
+	 *
+	 * @param Request $request Browser gateway request with generation-bound CSRF.
+	 */
+	public function googleCode( Request $request ): Response {
+		$browser = $request->attributes->get( 'digitalogic_browser' );
+		$context = $browser['context'] ?? null;
+		if ( ! self::googleEnabled() || ! \Digitalogic\Laravel\Services\MobileBrowserSession::active( $request ) || ! is_array( $context ) ) {
+			return $this->error( 'browser_google_code_unavailable', 'ورود گوگل در این مسیر در دسترس نیست.', 403 );
+		}
+		$result = \Digitalogic\Laravel\Services\MobileBrowserGoogleCode::exchange( $context, $request->json()->all(), \Digitalogic\Laravel\Services\MobileBrowserSession::network( $request ) );
+		if ( is_wp_error( $result ) ) {
+			return $this->error( $result->get_error_code(), $result->get_error_message(), (int) ( $result->get_error_data()['status'] ?? 409 ) );
+		}
+		return $this->completeGoogle( $request, $result['claims'], $result['token'], $result['fresh'] );
+	}
+
+	/**
+	 * Resolve verified claims through the same canonical subject and enrollment policy.
+	 *
+	 * @param Request    $request Original native or browser request.
+	 * @param array      $claims Cryptographically verified provider claims.
+	 * @param string     $token Provider identity proof, never logged.
+	 * @param array|null $fresh Server-verified fresh proof metadata.
+	 */
+	private function completeGoogle( Request $request, array $claims, string $token, ?array $fresh ): Response {
 		$user_id = Google::owner( $claims['sub'] );
 		if ( $user_id < 0 ) {
 			return $this->error( 'ambiguous_google_identity', 'این شناسه به بیش از یک حساب متصل است؛ ایجاد حساب تازه متوقف شد.', 409 );

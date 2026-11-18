@@ -289,7 +289,7 @@ final class Digitalogic_Mobile_API {
 		if ( preg_match( '~^/app-api/(account/merge(?:/plan|/operations/[0-9a-fA-F-]{36})?)/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/' . $matches[1];
 		}
-		if ( preg_match( '~^/app-api/(bootstrap|categories|links/resolve|forms|checkout(?:/quote|/operations/[A-Za-z0-9-]{16,64})?|cart(?:/claim)?|uploads(?:/[a-f0-9]{32})?|requests(?:/[A-Za-z0-9-]{16,64})?|products(?:/[1-9][0-9]{0,9})?|auth/(?:otp/request|otp/verify|google(?:/challenge)?|register|sessions|logout)|account/(?:profile|orders|favorites|recently-viewed|events|requests|messages(?:/schema|/operations/[A-Za-z0-9-]{16,64}|/[1-9][0-9]{0,9}(?:/messages|/close|/reopen)?)?|phone/request|phone/verify|phone/eligibility|phone/resolution|reauth/google(?:/challenge)?))/?$~D', $path, $matches ) ) {
+		if ( preg_match( '~^/app-api/(bootstrap|categories|links/resolve|forms|checkout(?:/quote|/operations/[A-Za-z0-9-]{16,64})?|cart(?:/claim)?|uploads(?:/[a-f0-9]{32})?|requests(?:/[A-Za-z0-9-]{16,64})?|products(?:/[1-9][0-9]{0,9})?|auth/(?:otp/request|otp/verify|google(?:/challenge|/code)?|register|sessions|logout)|account/(?:profile|orders|favorites|recently-viewed|events|requests|messages(?:/schema|/operations/[A-Za-z0-9-]{16,64}|/[1-9][0-9]{0,9}(?:/messages|/close|/reopen)?)?|phone/request|phone/verify|phone/eligibility|phone/resolution|reauth/google(?:/challenge)?))/?$~D', $path, $matches ) ) {
 			return '/_digitalogic/mobile/' . $matches[1];
 		}
 		return null;
@@ -339,7 +339,7 @@ final class Digitalogic_Mobile_API {
 		if ( str_ends_with( $route, '/cart/claim' ) ) {
 			return array( 'POST' );
 		}
-		if ( preg_match( '~/(?:uploads|requests|auth/(?:otp/request|otp/verify|google(?:/challenge)?|register|logout))$~D', $route ) && ! str_ends_with( $route, '/account/requests' ) ) {
+		if ( preg_match( '~/(?:uploads|requests|auth/(?:otp/request|otp/verify|google(?:/challenge|/code)?|register|logout))$~D', $route ) && ! str_ends_with( $route, '/account/requests' ) ) {
 			return array( 'POST' );
 		}
 		if ( preg_match( '~/uploads/[a-f0-9]{32}$~D', $route ) ) {

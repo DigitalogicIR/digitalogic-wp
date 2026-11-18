@@ -62,10 +62,10 @@ final class MobileBrowserController {
 			return response()->json( array( 'code' => 'browser_google_unavailable' ), 403 );
 		}
 		$input = $request->json()->all();
-		if ( array_diff( array_keys( $input ), array( 'request_id' ) ) || ! is_string( $input['request_id'] ?? null ) ) {
+		if ( array_diff( array_keys( $input ), array( 'request_id', 'flow' ) ) || ! is_string( $input['request_id'] ?? null ) || ! is_string( $input['flow'] ?? 'id_token' ) ) {
 			return response()->json( array( 'code' => 'browser_google_invalid_request' ), 400 );
 		}
-		$result = Browser::googleChallenge( $context, $input['request_id'], Browser::network( $request ) );
+		$result = Browser::googleChallenge( $context, $input['request_id'], Browser::network( $request ), $input['flow'] ?? 'id_token' );
 		$status = is_wp_error( $result ) ? (int) $result->get_error_data()['status'] : 200;
 		return response()->json(
 			is_wp_error( $result ) ? array(
