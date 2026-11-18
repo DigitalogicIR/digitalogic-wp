@@ -1932,7 +1932,7 @@ final class Digitalogic_Call_Verification {
 			<?php if ( $is_voice ) : ?>
 				<label><input type="checkbox" data-contact-voice <?php checked( $contact['voice_opt_in'] ); ?>> <?php esc_html_e( 'Voice order updates', 'digitalogic' ); ?></label>
 				<div class="digitalogic-contact-events">
-					<?php foreach ( array( 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
+					<?php foreach ( array( 'pending', 'review', 'processing', 'shipped', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
 						<?php $event_enabled = ! empty( $contact['voice_events'][ $event ] ); ?>
 						<label><input type="checkbox" value="<?php echo esc_attr( $event ); ?>" data-contact-event <?php checked( $event_enabled ); ?>> <?php echo esc_html( function_exists( 'wc_get_order_status_name' ) ? wc_get_order_status_name( $event ) : ucfirst( str_replace( '-', ' ', $event ) ) ); ?></label>
 					<?php endforeach; ?>
@@ -1966,7 +1966,7 @@ final class Digitalogic_Call_Verification {
 						<label><input type="checkbox" name="digitalogic_contacts[<?php echo esc_attr( (string) $contact['id'] ); ?>][voice_opt_in]" value="1" <?php checked( $contact['voice_opt_in'] ); ?>> <?php esc_html_e( 'Voice notifications enabled', 'digitalogic' ); ?></label>
 						<label><input type="checkbox" name="digitalogic_contacts[<?php echo esc_attr( (string) $contact['id'] ); ?>][admin_suppressed]" value="1" <?php checked( $contact['admin_suppressed'] ); ?>> <?php esc_html_e( 'Administratively suppress calls', 'digitalogic' ); ?></label>
 						<fieldset><legend><?php esc_html_e( 'Explicitly allowed voice events', 'digitalogic' ); ?></legend>
-						<?php foreach ( array( 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
+						<?php foreach ( array( 'pending', 'review', 'processing', 'shipped', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ) as $event ) : ?>
 							<label><input type="checkbox" name="digitalogic_contacts[<?php echo esc_attr( (string) $contact['id'] ); ?>][voice_events][]" value="<?php echo esc_attr( $event ); ?>" <?php checked( ! empty( $contact['voice_events'][ $event ] ) ); ?>> <?php echo esc_html( function_exists( 'wc_get_order_status_name' ) ? wc_get_order_status_name( $event ) : ucfirst( str_replace( '-', ' ', $event ) ) ); ?></label>
 						<?php endforeach; ?>
 						</fieldset>
