@@ -103,6 +103,8 @@ HTML;
     }
 
     public static function enqueue_login_assets(): void {
+        // The shared components own authentication styles, including the retired instance refinements.
+        wp_dequeue_style('digitalogic-auth-refinements');
         self::enqueue_digits_secure_form_assets();
         self::enqueue_assets(true);
     }

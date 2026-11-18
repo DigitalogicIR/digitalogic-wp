@@ -5500,8 +5500,12 @@
     }
 
     function decorateAuthControls() {
+        document.querySelectorAll('.digits-form_heading:not([data-call-preview-title], [data-call-code-title])').forEach(function (heading) {
+            var icon = heading.querySelector('.dg-recovery-heading') ? 'lock' :
+                heading.querySelector('.dg-otp-heading') ? 'key' : 'user';
+            putAuthIcon(heading, icon);
+        });
         var selectors = {
-            '.digits-form_heading:not([data-call-preview-title], [data-call-code-title])': 'user',
             '.dg-passkey-options summary': 'more',
             '.dg-passkey-options .digitalogic-call-toggle, [data-call-start]': 'phone',
             '.dg-otp-resend': 'sms',
