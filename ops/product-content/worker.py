@@ -89,11 +89,16 @@ def public_copy_check(job, copy):
     body, _ = fetch(job['product']['url'])
     text = body.decode('utf-8', 'replace')
     import html
-    normalized = re.sub(r'\s+', ' ', html.unescape(text))
-    excerpt = html.unescape(copy['short_description']).strip()
-    if excerpt and excerpt not in normalized:
+    def normalize(value, strip_tags=False):
+        if strip_tags:
+            value = re.sub('<[^>]+>', ' ', value)
+        value = html.unescape(value).translate(str.maketrans({'‘': "'", '’': "'", '“': '"', '”': '"'}))
+        return ' '.join(value.split())
+    normalized = normalize(text)
+    excerpt = normalize(copy['short_description'], True)
+    if excerpt and excerpt not in normalize(text, True):
         raise ValueError('Public product excerpt readback failed')
-    if html.unescape(copy['seo_description']) not in normalized:
+    if normalize(copy['seo_description']) not in normalized:
         raise ValueError('Public SEO description readback failed')
 
 
@@ -250,7 +255,7 @@ def main():
             try:
                 outcome = content(job) if args.stage == 'content' else seo(job)
             except Exception as error:
-                outcome = dict(status='retry', result={'reason': type(error).__name__, 'detail': str(error)[:180] if isinstance(error, ValueError) else 'Worker failed; claim retained for bounded retry'})
+                outcome = dict(status='retry', result={'reason': type(error).__name__, 'http': getattr(error, 'code', None), 'detail': str(error)[:180] if isinstance(error, ValueError) else 'Worker failed; claim retained for bounded retry'})
             try:
                 wp('finish', dict(id=job['id'], token=job['token'], **outcome))
             except RuntimeError:
