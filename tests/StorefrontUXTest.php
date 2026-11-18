@@ -36,8 +36,8 @@ final class StorefrontUXTest extends TestCase {
 		$this->assertSame( 'در حال پردازش', $output['wc-processing'] );
 		$this->assertSame( 'پیش‌سفارش‌شده', $output['wc-pre-ordered'] );
 		$this->assertSame( 'سفارش مشکوک', $output['wc-spamorder'] );
-		$this->assertSame( 'بخشی پرداخت‌شده', $output['wc-partial-payment'] );
-		$this->assertSame( 'زمان‌بندی‌شده', $output['wc-scheduled-payment'] );
+		$this->assertSame( 'پرداخت جزئی', $output['wc-partial-payment'] );
+		$this->assertSame( 'پرداخت زمان‌بندی شده', $output['wc-scheduled-payment'] );
 		$this->assertSame( 'در انتظار پرداخت بیعانه', $output['wc-pending-deposit'] );
 	}
 

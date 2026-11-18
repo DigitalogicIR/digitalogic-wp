@@ -4,6 +4,219 @@
     var root = document.documentElement;
     var lastPersistedTheme = config.initialTheme === 'dark' ? 'dark' : 'light';
     var loadingFailSafeTimer = null;
+    var digitsSmsWaits = new WeakMap();
+    var digitsOtpEditors = new WeakMap();
+    var digitsOtpAutoSubmitted = new WeakSet();
+    var digitsOtpContinuations = new WeakMap();
+    var digitsOtpChecking = new WeakSet();
+    var digitsOtpStorageKey = 'digitalogic-login-otp-v1';
+    var digitsResendTimers = new WeakMap();
+    var digitsEmailChecks = new WeakMap();
+    var loginAccountPickers = new WeakMap();
+    var digitsSmsSelections = new WeakSet();
+    var authRecovery = false;
+    var passkeySupport;
+    var authSocket = null;
+    var authSocketSequence = 0;
+    var authSocketRetryAt = 0;
+    var authSocketPending = new Map();
+    var authFlow = '';
+    var authStep = '';
+    var authStepSent = '';
+    var authStream = null;
+    var authRevision = null;
+    var authSynchronizing = false;
+    var authRetryTimer = null;
+
+    if (config.authEventsUrl && window.crypto?.randomUUID) {
+        authFlow = window.crypto.randomUUID();
+        try {
+            var storedFlow = window.sessionStorage.getItem('digitalogic-auth-flow');
+            var loginParams = new URLSearchParams(window.location.search);
+            if (storedFlow && !loginParams.has('loggedout') && !loginParams.has('reauth')) { authFlow = storedFlow; }
+            window.sessionStorage.setItem('digitalogic-auth-flow', authFlow);
+        } catch (error) { /* The page can still use a new flow if storage is disabled. */ }
+    }
+
+    function authEventsUrl() {
+        var url = new URL(config.authEventsUrl, window.location.href);
+        if (url.origin !== window.location.origin || !authFlow) { return null; }
+        url.searchParams.set('flow', authFlow);
+        return url;
+    }
+
+    function receiveAuthSnapshot(state) {
+        if (!state || typeof state.revision !== 'string' || state.revision === authRevision) { return; }
+        authRevision = state.revision;
+        if (state.authenticated) {
+            try { window.sessionStorage.removeItem('digitalogic-auth-flow'); } catch (error) { /* Storage is optional. */ }
+        }
+        window.dispatchEvent(new CustomEvent('digitalogic:auth-state', { detail: state }));
+    }
+
+    function retryAuthState(delay = 4500) {
+        window.clearTimeout(authRetryTimer);
+        authRetryTimer = window.setTimeout(function () {
+            authRetryTimer = null;
+            void synchronizeAuth();
+        }, delay);
+    }
+
+    async function synchronizeAuth() {
+        if (!authFlow || !authStep || authSynchronizing) { return; }
+        authSynchronizing = true;
+        var step = authStep;
+        try {
+            var state = await authSocketRequest('digitalogic_auth_watch', { flow: authFlow, step: step });
+            if (state) {
+                authStream?.close();
+                authStream = null;
+                authStepSent = step;
+                receiveAuthSnapshot(state);
+                if (!state.authenticated) { retryAuthState(25000); }
+            } else {
+                var url = authEventsUrl();
+                if (!url) { return; }
+                if (step !== authStepSent) {
+                    var response = await window.fetch(url, {
+                        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                        body: new URLSearchParams({ step: step }),
+                        signal: window.AbortSignal?.timeout?.(4000)
+                    });
+                    if (response.ok) {
+                        authStepSent = step;
+                        receiveAuthSnapshot(await response.json());
+                    }
+                }
+                if (!authStream && window.EventSource) {
+                    authStream = new window.EventSource(url);
+                    authStream.addEventListener('snapshot', function (event) {
+                        try { receiveAuthSnapshot(JSON.parse(event.data)); } catch (error) { /* Ignore malformed snapshots. */ }
+                    });
+                }
+                retryAuthState();
+            }
+        } catch (error) {
+            retryAuthState();
+        } finally {
+            authSynchronizing = false;
+            if (step !== authStep) { void synchronizeAuth(); }
+        }
+    }
+
+    async function readCallEvent(id, proof, signal) {
+        var url = authEventsUrl();
+        if (!url) { return null; }
+        url.searchParams.set('call', id);
+        try {
+            var response = await window.fetch(url, {
+                credentials: 'same-origin', cache: 'no-store', signal: signal,
+                headers: { Accept: 'text/event-stream', 'X-Digitalogic-CSRF': proof }
+            });
+            if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) { return null; }
+            var line = (await response.text()).split('\n').find(function (entry) { return entry.startsWith('data: '); });
+            return line ? JSON.parse(line.slice(6)).call : null;
+        } catch (error) {
+            if (signal?.aborted) { throw error; }
+            return null;
+        }
+    }
+
+    function openAuthSocket() {
+        var settings = config.authWebSocket;
+        if (!settings || !settings.enabled || !window.WebSocket) {
+            return null;
+        }
+        if (authSocket && authSocket.readyState < 2) {
+            return authSocket;
+        }
+        if (Date.now() < authSocketRetryAt) { return null; }
+        var url = new window.URL(settings.url, window.location.href);
+        if (url.protocol !== 'wss:' || url.host !== window.location.host) {
+            return null;
+        }
+        url.searchParams.set(settings.token ? 'token' : 'nonce', settings.token || settings.nonce);
+        if (authFlow) { url.searchParams.set('auth', '1'); }
+        var socket = new window.WebSocket(url);
+        authSocket = socket;
+        socket.addEventListener('message', function (event) {
+            try {
+                var response = JSON.parse(event.data);
+                if (socket === authSocket && response.event === 'auth_snapshot') { receiveAuthSnapshot(response.data); }
+                if (socket === authSocket && response.event === 'auth_call_changed') {
+                    window.dispatchEvent(new Event('digitalogic:auth-call-changed'));
+                }
+                var pending = authSocketPending.get(response.id);
+                if (pending && pending.socket === socket) {
+                    pending.finish(response.success ? response.data : null);
+                }
+            } catch (error) { /* Other events are irrelevant to this request. */ }
+        });
+        socket.addEventListener('close', function () {
+            if (socket === authSocket) {
+                authSocketRetryAt = Date.now() + 3000;
+                if (authStep) { retryAuthState(); }
+            }
+            authSocketPending.forEach(function (pending) {
+                if (pending.socket === socket) {
+                    pending.finish(null);
+                }
+            });
+        });
+        return socket;
+    }
+
+    function authSocketRequest(command, data) {
+        return new Promise(function (resolve) {
+            var socket;
+            try { socket = openAuthSocket(); } catch (error) { resolve(null); return; }
+            if (!socket) {
+                resolve(null);
+                return;
+            }
+            var id = 'auth-' + (++authSocketSequence);
+            var timeout = window.setTimeout(function () {
+                finish(null);
+                if (socket === authSocket && socket.readyState < 2) { socket.close(); }
+            }, 1500);
+            function finish(result) {
+                window.clearTimeout(timeout);
+                socket.removeEventListener('open', send);
+                authSocketPending.delete(id);
+                resolve(result);
+            }
+            function send() {
+                try { socket.send(JSON.stringify({ id: id, command: command, data: data })); }
+                catch (error) { finish(null); }
+            }
+            authSocketPending.set(id, { socket: socket, finish: finish });
+            if (socket.readyState === 1) {
+                send();
+            } else {
+                socket.addEventListener('open', send, { once: true });
+            }
+        });
+    }
+
+    // The first call challenge sets a new HttpOnly cookie. Reconnect so the
+    // server sees it in the handshake rather than sharing it with JavaScript.
+    window.DigitalogicAuthRealtime = {
+        refreshBinding: function () {
+            if (authSocket) { authSocket.close(); authSocket = null; }
+            authSocketRetryAt = 0;
+            if (authStep) { void synchronizeAuth(); }
+        },
+        flowId: function () { return authFlow; },
+        callStatus: async function (id, proof, signal) {
+            var command = authFlow ? 'digitalogic_auth_call_watch' : 'digitalogic_call_status';
+            var state = await authSocketRequest(command, { challenge_id: id, csrf_token: proof });
+            if (signal?.aborted) { throw new DOMException('Aborted', 'AbortError'); }
+            return state || readCallEvent(id, proof, signal);
+        },
+        stopCall: function () {
+            if (authFlow && authSocket?.readyState === 1) { void authSocketRequest('digitalogic_auth_call_unwatch', {}); }
+        }
+    };
     var feedbackSelector = [
         '#login_error',
         '.notice-error',
@@ -25,7 +238,6 @@
         '.dig_notice_message',
         '.dig_popmessage',
         '.dig_ma-box',
-        '.dg-digits-inline-message',
         '.woocommerce-error',
         '.woocommerce-message'
     ].join(',');
@@ -50,8 +262,9 @@
     }
 
     function isPersianLocale() {
-        var locale = (document.documentElement.lang || navigator.language || '').toLowerCase();
-        return locale.indexOf('fa') === 0 || !!(document.body && document.body.classList.contains('locale-fa-ir'));
+        var locale = document.documentElement.lang;
+        if (locale) { return /^fa(?:[-_]|$)/i.test(locale); }
+        return document.body?.classList.contains('locale-fa-ir') || /^fa(?:[-_]|$)/i.test(navigator.language);
     }
 
     function cleanText(value, fallback) {
@@ -86,13 +299,6 @@
         }
 
         return 'light';
-    }
-
-    function themeToggleMarkup(theme, label) {
-        var icon = theme === 'dark' ? 'dashicons-lightbulb' : 'dashicons-hidden';
-
-        return '<span class="dashicons ' + icon + '" aria-hidden="true"></span>' +
-            '<span class="dg-toggle-text">' + escapeHtml(label) + '</span>';
     }
 
     function broadcastTheme(theme) {
@@ -149,7 +355,29 @@
         }
 
         syncToggleLabels(value);
-        syncPasswordToggle();
+    }
+
+    function setLoginTheme(mode, persist) {
+        var scheme = window.matchMedia('(prefers-color-scheme: dark)');
+        root.setAttribute('data-dg-theme-mode', mode);
+        setTheme(mode === 'auto' ? (scheme.matches ? 'dark' : 'light') : mode, false);
+        if (persist) {
+            try { window.localStorage.setItem(storageKey + ':login', mode); } catch (error) {}
+        }
+    }
+
+    function bindLoginTheme() {
+        var stored;
+        try { stored = window.localStorage.getItem(storageKey + ':login'); } catch (error) {}
+        setLoginTheme(stored === 'light' || stored === 'dark' ? stored : 'auto', false);
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+            if (root.getAttribute('data-dg-theme-mode') === 'auto') { setLoginTheme('auto', false); }
+        });
+        window.addEventListener('storage', function (event) {
+            if (event.key === storageKey + ':login') {
+                setLoginTheme(event.newValue === 'light' || event.newValue === 'dark' ? event.newValue : 'auto', false);
+            }
+        });
     }
 
     function toggleTheme(event) {
@@ -186,18 +414,14 @@
     function syncToggleLabels(theme) {
         var nextLabel = theme === 'dark'
             ? getLabel('toggleToLight', 'تغییر به حالت روشن')
-            : getLabel('toggleToDark', 'تغییر به حالت تیره');
-        var buttonLabel = theme === 'dark'
-            ? getLabel('light', 'روشن')
-            : getLabel('dark', 'تیره');
+            : getLabel('toggleToDark', 'تغییر به حالت تاریک');
 
         document.querySelectorAll('[data-dg-theme-toggle-label]').forEach(function (node) {
             node.textContent = nextLabel;
         });
 
-        document.querySelectorAll('[data-dg-theme-toggle-button]').forEach(function (node) {
-            node.setAttribute('aria-label', nextLabel);
-            node.innerHTML = themeToggleMarkup(theme, buttonLabel);
+        document.querySelectorAll('[data-dg-theme-choice]').forEach(function (node) {
+            node.setAttribute('aria-pressed', String(node.dataset.dgThemeChoice === (root.getAttribute('data-dg-theme-mode') || theme)));
         });
     }
 
@@ -217,15 +441,56 @@
 
         var toast = document.createElement('div');
         toast.className = 'dg-toast dg-toast--' + (tone || 'warning');
-        toast.textContent = message;
+        var text = document.createElement('p');
+        text.className = 'dg-toast__message';
+        text.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+        toast.appendChild(text);
         container.appendChild(toast);
+        text.textContent = message;
+        enhanceToast(toast);
+    }
 
-        window.setTimeout(function () {
+    function enhanceToast(toast) {
+        var icon = document.createElement('span');
+        icon.className = 'dg-toast__icon';
+        putAuthIcon(icon, toast.classList.contains('dg-toast--success') ? 'check' : 'info');
+        toast.prepend(icon);
+
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'dg-toast__close';
+        close.setAttribute('aria-label', authRequestLabel('Dismiss notification', 'بستن اعلان'));
+        putAuthIcon(close, 'close');
+        toast.appendChild(close);
+
+        var timer;
+        function dismiss() {
+            window.clearTimeout(timer);
+            if (toast.classList.contains('is-leaving')) { return; }
             toast.classList.add('is-leaving');
             window.setTimeout(function () {
+                var stack = toast.parentElement;
                 toast.remove();
-            }, 220);
-        }, 5200);
+                if (stack && !stack.firstElementChild) { stack.remove(); }
+            }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200);
+        }
+
+        function scheduleDismissal() {
+            window.clearTimeout(timer);
+            if (!toast.matches(':hover, :focus-within')) {
+                timer = window.setTimeout(dismiss, 6500);
+            }
+        }
+
+        close.addEventListener('click', dismiss);
+        close.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') { dismiss(); }
+        });
+        toast.addEventListener('pointerenter', scheduleDismissal);
+        toast.addEventListener('pointerleave', scheduleDismissal);
+        toast.addEventListener('focusin', scheduleDismissal);
+        toast.addEventListener('focusout', function () { queueMicrotask(scheduleDismissal); });
+        scheduleDismissal();
     }
 
     function observeInlineMessages() {
@@ -239,6 +504,10 @@
             if (!node) {
                 return;
             }
+
+            if (document.body.classList.contains('login') && node.closest(
+                '#login, .dig_popmessage, .dig_error_message, .dig_notice_message, .dig_ma-box'
+            )) { return; }
 
             var text = cleanText(node.textContent, '');
             if (!text || seen.has(text)) {
@@ -259,23 +528,158 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    function injectLoginToggle() {
-        if (!document.body || !document.body.classList.contains('login') || document.querySelector('[data-dg-theme-toggle-button]')) {
-            return;
+    function createAuthDisclosure(className, triggerClass, label, icon, showLabel) {
+        var disclosure = document.createElement('details');
+        disclosure.className = className;
+        var trigger = document.createElement('summary');
+        trigger.className = triggerClass;
+        trigger.setAttribute('aria-label', label);
+        trigger.title = label;
+        putAuthIcon(trigger, icon);
+        if (showLabel) {
+            var text = document.createElement('span');
+            text.className = 'dg-toggle-text';
+            text.textContent = label;
+            trigger.appendChild(text);
+        }
+        var panel = document.createElement('div');
+        panel.className = 'dg-auth-disclosure-panel';
+        disclosure.append(trigger, panel);
+        disclosure.addEventListener('keydown', function (event) {
+            if (event.key !== 'Escape' || !disclosure.open) { return; }
+            event.preventDefault();
+            disclosure.open = false;
+            trigger.focus();
+        });
+        document.addEventListener('click', function (event) {
+            if (!disclosure.contains(event.target)) { disclosure.open = false; }
+        });
+        return { disclosure: disclosure, trigger: trigger, panel: panel };
+    }
+
+    function createLoginThemePicker() {
+        var fa = isPersianLocale();
+        var picker = createAuthDisclosure('dg-login-theme', 'dg-theme-toggle-button', getLabel('theme', fa ? 'قالب' : 'Theme'), 'theme', true);
+        var caption = document.createElement('span');
+        caption.className = 'dg-theme-caption';
+        caption.textContent = picker.trigger.textContent;
+        picker.panel.appendChild(caption);
+        var choices = [
+            ['auto', 'device', fa ? 'خودکار' : 'Auto'],
+            ['light', 'sun', fa ? 'روشن' : 'Light'],
+            ['dark', 'moon', fa ? 'تاریک' : 'Dark']
+        ];
+        choices.forEach(function ([theme, icon, label]) {
+            var choice = document.createElement('button');
+            choice.type = 'button';
+            choice.dataset.dgThemeChoice = theme;
+            choice.textContent = getLabel(theme, label);
+            putAuthIcon(choice, icon);
+            choice.addEventListener('click', function () {
+                setLoginTheme(theme, true);
+                picker.disclosure.open = false;
+                picker.trigger.focus();
+            });
+            picker.panel.appendChild(choice);
+        });
+        return picker.disclosure;
+    }
+
+    function mountMobileLoginHeader(login, footer, exit, theme, language) {
+        var shell = login.querySelector(':scope > :is(.dg-digits-login-shell, .dg-digits-register-shell)');
+        var logo = login.querySelector(':scope > .wp-login-logo');
+        if (!shell || !logo) { return; }
+
+        var narrow = window.matchMedia('(width < 720px)');
+        var logoPosition = document.createComment('Login logo');
+        logo.before(logoPosition);
+        var header = document.createElement('header');
+        header.className = 'dg-mobile-auth-header';
+        header.hidden = true;
+        var settings = document.createElement('div');
+        settings.className = 'dg-mobile-auth-preferences dg-login-preferences';
+        header.appendChild(settings);
+        shell.prepend(header);
+        var actions = exit ? createAuthDisclosure('dg-mobile-auth-actions', 'dg-mobile-auth-more',
+            isPersianLocale() ? 'گزینه‌های ورود' : 'Sign-in options', 'ellipsis', false) : null;
+
+        function placeActions() {
+            if (!actions || !narrow.matches) { return; }
+            var heading = Array.from(shell.querySelectorAll('div.digits-form_heading')).find(isVisibleElement);
+            var target = heading || header;
+            if (actions.disclosure.parentElement !== target) {
+                actions.disclosure.open = false;
+                target.appendChild(actions.disclosure);
+            }
         }
 
-        var switcher = document.querySelector('.language-switcher');
-        if (!switcher) {
-            return;
+        function layout() {
+            if (narrow.matches) {
+                header.prepend(logo);
+                if (theme) { settings.appendChild(theme); }
+                if (language) { settings.appendChild(language); }
+                if (actions) { actions.panel.appendChild(exit); }
+                shell.classList.add('dg-mobile-auth-ready');
+                header.hidden = false;
+                placeActions();
+            } else {
+                if (actions) {
+                    actions.disclosure.open = false;
+                    header.appendChild(actions.disclosure);
+                    footer.appendChild(exit);
+                }
+                logoPosition.after(logo);
+                if (theme) { footer.appendChild(theme); }
+                if (language) { footer.appendChild(language); }
+                header.hidden = true;
+                shell.classList.remove('dg-mobile-auth-ready');
+            }
         }
 
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'dg-theme-toggle-button';
-        button.setAttribute('data-dg-theme-toggle-button', 'true');
-        button.addEventListener('click', toggleTheme);
-        switcher.prepend(button);
+        layout();
+        narrow.addEventListener('change', layout);
+        new MutationObserver(placeActions).observe(shell, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'class', 'style']
+        });
+    }
+
+    function mountLoginFooter() {
+        if (!document.body?.classList.contains('login') || document.querySelector('.dg-login-preferences')) { return; }
+        var login = document.getElementById('login');
+        var exit = login?.querySelector(':scope > #backtoblog');
+        var exitLink = exit?.querySelector('a');
+        var language = document.querySelector('.language-switcher');
+        if (!login || (!exitLink && !language && !config.showLoginThemeSwitcher)) { return; }
+        var controls = document.createElement('div');
+        controls.className = 'dg-login-preferences';
+        login.insertBefore(controls, exitLink ? exit : null);
+        if (exitLink) {
+            var label = document.createElement('span');
+            label.className = 'dg-login-exit-label';
+            label.append(...exitLink.childNodes);
+            if (label.firstChild?.nodeType === Node.TEXT_NODE) {
+                label.firstChild.textContent = label.firstChild.textContent.replace(/^\s*[←→]\s*/, '');
+            }
+            exitLink.append(label);
+            var isBack = exitLink.dataset.dgExitIcon === 'back';
+            var shortLabel = isPersianLocale() ? (isBack ? 'بازگشت' : 'صفحه اصلی') : (isBack ? 'Back' : 'Home');
+            if (label.textContent.trim() !== shortLabel) {
+                var compact = document.createElement('span');
+                compact.className = 'dg-login-exit-compact';
+                compact.textContent = shortLabel;
+                compact.setAttribute('aria-hidden', 'true');
+                if (!exitLink.hasAttribute('aria-label')) { exitLink.setAttribute('aria-label', label.textContent.trim()); }
+                exitLink.append(compact);
+            }
+            exitLink.classList.add('dg-auth-home');
+            putAuthIcon(exitLink, isBack ? 'back' : 'home');
+            controls.append(exit);
+        }
+        var theme = config.showLoginThemeSwitcher ? createLoginThemePicker() : null;
+        if (theme) { controls.append(theme); }
+        if (language) { controls.append(language); }
         syncToggleLabels(currentTheme());
+        mountMobileLoginHeader(login, controls, exitLink ? exit : null, theme, language);
     }
 
     function buildLanguageSwitcher() {
@@ -299,12 +703,12 @@
         form.setAttribute('novalidate', 'novalidate');
 
         function submitLanguageForm() {
-            if (typeof form.requestSubmit === 'function') {
-                form.requestSubmit();
-                return;
-            }
-
-            nativeSubmit.click();
+            var url = new URL(window.location.href);
+            url.searchParams.set('wp_lang', select.value);
+            form.querySelectorAll('input[type="hidden"][name]').forEach(function (field) {
+                if (!url.searchParams.has(field.name)) { url.searchParams.set(field.name, field.value); }
+            });
+            window.location.replace(url.href);
         }
 
         var picker = document.createElement('div');
@@ -323,6 +727,7 @@
         menu.className = 'dg-language-menu';
         menu.setAttribute('role', 'listbox');
         menu.setAttribute('aria-hidden', 'true');
+        menu.inert = true;
 
         function syncChevron(open) {
             var chevron = trigger.querySelector('.dg-language-chevron');
@@ -337,6 +742,7 @@
         function closeMenu(restoreFocus) {
             picker.classList.remove('is-open');
             menu.setAttribute('aria-hidden', 'true');
+            menu.inert = true;
             trigger.setAttribute('aria-expanded', 'false');
             syncChevron(false);
             if (restoreFocus) {
@@ -361,6 +767,7 @@
         function openMenu(focusIndex) {
             picker.classList.add('is-open');
             menu.setAttribute('aria-hidden', 'false');
+            menu.inert = false;
             trigger.setAttribute('aria-expanded', 'true');
             syncChevron(true);
             if (typeof focusIndex === 'number') {
@@ -371,8 +778,11 @@
         function syncSelection() {
             var selected = select.options[select.selectedIndex];
             var text = selected ? selected.text : 'فارسی';
+            var languageName = text.match(/^(.*?)\s+(\([^()]+\))$/);
             trigger.innerHTML = '<span class="dashicons dashicons-translation" aria-hidden="true"></span>' +
-                '<span class="dg-select-text">' + escapeHtml(text) + '</span>' +
+                '<span class="dg-select-text">' + (languageName
+                    ? escapeHtml(languageName[1]) + ' <span class="dg-language-region">' + escapeHtml(languageName[2]) + '</span>'
+                    : escapeHtml(text)) + '</span>' +
                 '<span class="dashicons dg-language-chevron dashicons-arrow-down-alt2" aria-hidden="true"></span>';
 
             menu.querySelectorAll('.dg-language-option').forEach(function (option) {
@@ -487,14 +897,12 @@
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body:not(.digits-tab_active),body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body[hidden]{display:none!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-form_tab_body.digits-tab_active{display:block!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity:not([data-dg-identity="phone"]) .digits-form_countrycode{display:none!important;}',
-            'body.login .dg-digits-login-shell :is(.digits-form_input_row, .digits-form_input){border-color:var(--dg-border)!important;border-radius:16px!important;color:var(--dg-text)!important;}',
-            'body.login .dg-digits-login-shell .digits-form_input_row{min-height:58px!important;margin-block:11px!important;padding-inline:14px!important;background:var(--dg-input-bg)!important;}',
-            'body.login .dg-digits-login-shell .digits-form_rememberme{display:flex!important;align-items:center!important;justify-content:flex-start!important;min-height:auto!important;height:auto!important;margin-block:4px 14px!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;}',
+            'body.login .dg-digits-login-shell :is(.digits-form_input_row, .digits-form_input):not(.dg-auth-field){border-color:var(--dg-border)!important;border-radius:16px!important;color:var(--dg-text)!important;}',
+            'body.login .dg-digits-login-shell .digits-form_input_row:not(.digits-form_rememberme,:has(.dg-otp-editor,.dg-password-field)){min-height:58px!important;margin-block:11px!important;padding-inline:14px!important;}',
+            'body.login .dg-digits-login-shell .digits-form_rememberme:not([hidden]){display:flex!important;align-items:center!important;justify-content:flex-start!important;min-height:auto!important;height:auto!important;margin-block:4px 24px!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme :is(.digits-form_input,.dig_opt_mult_con,.dig_opt_mult,label,.dig_input_wrapper,.dig_input_wrapper>div){display:inline-flex!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;width:auto!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;line-height:1.35!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .dig_input_wrapper::before,body.login .dg-digits-login-shell .digits-form_rememberme .dig_input_wrapper::after,body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::before,body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::after,html[dir="rtl"] body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::before,html[dir="rtl"] body.login .dg-digits-login-shell .digits-form_input_row .digits-field-type_tac .dig_input_wrapper::after{content:none!important;display:none!important;opacity:0!important;visibility:hidden!important;}',
-            'body.login .dg-digits-login-shell .digits-form_input input:not(.digits_login_remember_me){min-height:48px!important;margin:0!important;border:0!important;background:transparent!important;color:var(--dg-text)!important;box-shadow:none!important;font-family:var(--dg-font)!important;}',
-            'body.login .dg-digits-login-shell :is(input[type="password"],input.dg-password-visible,#user_pass,.dg-username-password-input){direction:ltr!important;text-align:left!important;font-family:ui-monospace,"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace!important;font-variant-numeric:tabular-nums!important;}',
-            'body.login .dg-digits-login-shell :is(input[type="password"],input.dg-password-visible,#user_pass,.dg-username-password-input)::placeholder{font-family:var(--dg-placeholder-font,var(--dg-font))!important;font-variant-numeric:normal!important;letter-spacing:0!important;}',
+            'body.login .dg-digits-login-shell .digits-form_input input:not(.digits_login_remember_me,.dg-auth-input){min-height:48px!important;margin:0!important;border:0!important;background:transparent!important;color:var(--dg-text)!important;box-shadow:none!important;font-family:var(--dg-font)!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me{appearance:none!important;-webkit-appearance:none!important;display:inline-grid!important;place-items:center!important;visibility:visible!important;opacity:1!important;inline-size:22px!important;block-size:22px!important;width:22px!important;height:22px!important;min-width:22px!important;min-height:22px!important;max-width:22px!important;max-height:22px!important;flex:0 0 22px!important;margin:0!important;padding:0!important;line-height:1!important;border:1px solid var(--dg-border)!important;border-radius:8px!important;background:color-mix(in srgb,var(--dg-panel-soft) 72%,transparent)!important;box-shadow:inset 0 1px 0 color-mix(in srgb,#ffffff 10%,transparent),var(--dg-shadow-soft)!important;transform:scale(1)!important;transition:background-color .18s ease,background-image .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s cubic-bezier(.2,.8,.2,1)!important;}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me::before{content:""!important;display:block!important;visibility:visible!important;width:6px!important;height:11px!important;margin:-1px 0 0!important;border:solid #fff!important;border-width:0 2px 2px 0!important;opacity:0;transform:rotate(45deg) scale(.62);transform-origin:center;transition:opacity .16s ease,transform .18s cubic-bezier(.2,.8,.2,1);}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me:active,body.login #rememberme:active{transform:scale(.92)!important;}',
@@ -502,20 +910,16 @@
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me:checked::before{opacity:1;transform:rotate(45deg) scale(1);}',
             'body.login .dg-digits-login-shell .digits-form_rememberme .digits_login_remember_me::after{content:none!important;display:none!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity .digits-mobile_wrapper{direction:ltr!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity:not([data-dg-identity="phone"]) .mobile_field{padding-inline-start:46px!important;padding-inline-end:16px!important;direction:ltr!important;text-align:left!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="email"] .digits-form_tab_body.digits-tab_active .digits-form_input_row{direction:ltr!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="email"] input[name="digits_email"]{padding-inline-start:46px!important;padding-inline-end:16px!important;direction:ltr!important;text-align:left!important;}',
+            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="email"] .digits-form_input_row:has(input[name="digits_email"]){direction:ltr!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper{display:flex!important;align-items:center!important;gap:10px!important;width:100%!important;direction:ltr;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper:before{content:none!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-form_countrycode{position:static!important;z-index:60!important;display:inline-flex!important;min-width:104px!important;min-height:40px!important;justify-content:center!important;padding-inline:10px!important;border:0!important;border-inline-end:1px solid var(--dg-border)!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-form_countrycode input{width:42px!important;min-height:0!important;height:auto!important;padding:0!important;line-height:1!important;text-align:left!important;}',
             'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .digits-mobile_wrapper>.digits-form_input:not(.digits-form_countrycode){flex:1 1 auto!important;min-width:0!important;width:auto!important;}',
-            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .mobile_field{flex:1 1 auto!important;min-width:0!important;width:100%!important;padding-inline:12px!important;direction:ltr!important;text-align:left!important;}',
-            'body.login .dg-digits-login-shell :is(.digits-form_button,.digits-form_submit-btn){min-height:56px!important;border:0!important;border-radius:18px!important;background:linear-gradient(135deg,var(--dg-accent),var(--dg-accent-strong))!important;color:#fff!important;font-family:var(--dg-font)!important;font-size:16px!important;font-weight:800!important;overflow:hidden!important;}',
+            'body.login .dg-digits-login-shell.dg-digits-auto-identity[data-dg-identity="phone"] .mobile_field{flex:1 1 auto!important;min-width:0!important;width:100%!important;direction:ltr!important;text-align:left!important;}',
+            'body.login .dg-digits-login-shell :is(.digits-form_button,.digits-form_submit-btn):not(.digits-form_passwordless_login){min-height:56px!important;border:0!important;border-radius:18px!important;background:linear-gradient(135deg,var(--dg-accent),var(--dg-accent-strong))!important;color:#fff!important;font-family:var(--dg-font)!important;font-size:16px!important;font-weight:800!important;overflow:hidden!important;}',
             'body.login .dg-digits-login-shell :is(.digits-form_button,.digits-form_submit,.digits-form_submit-btn).is-loading .digits-form_button_ic{display:none!important;inline-size:0!important;flex-basis:0!important;opacity:0!important;visibility:hidden!important;}',
             'body.login .dg-digits-login-shell .digits-social-logins-box{background:transparent!important;border-top:0!important;border-color:transparent!important;}',
             'body.login .dg-digits-login-shell .digits-social-btn{min-height:56px!important;padding:12px 18px!important;border-color:var(--dg-border)!important;border-radius:18px!important;background:var(--dg-panel)!important;color:var(--dg-text)!important;font-size:16px!important;}',
-            'body.login .dg-digits-login-shell .digits-social-btn:hover{transform:translateY(-1px)!important;border-color:var(--dg-border-strong)!important;background:var(--dg-panel-strong)!important;}'
+            'body.login .dg-digits-login-shell .digits-social-btn:hover{border-color:var(--dg-border-strong)!important;background:var(--dg-panel-strong)!important;}'
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -553,9 +957,40 @@
         return 'username';
     }
 
-    function phonePartsFromValue(value) {
+    function emailDomain(value) {
+        if (value.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(value)) {
+            return '';
+        }
+        var local = value.split('@', 1)[0];
+        var domain = value.slice(local.length + 1).toLowerCase();
+        return /(^\.|\.\.|\.$)/.test(local) || !/\.(?:[a-z]{2,63}|xn--[a-z0-9-]{1,58}[a-z0-9])$/.test(domain) ? '' : domain;
+    }
+
+    function phonePartsFromValue(value, selectedCountry) {
         var normalized = normalizeDigits(value).trim();
         var compact = normalized.replace(/[\s().-]+/g, '');
+        var country = selectedCountry || '+98';
+        if (selectedCountry && !isCountryCallingCode(selectedCountry) && /^\d+$/.test(compact)) {
+            return { type: 'phone', national: compact, normalized: normalized, valid: false, countryCode: selectedCountry };
+        }
+        // The picker already displays +98. Wait for the second digit so a typed 00 can still start an international number.
+        var iranTrunkPrefix = country === '+98' && /^0[1-9]\d*$/.test(compact);
+        if (window.libphonenumber && /^(?:\+\d*|\d+)$/.test(compact)) {
+            var explicit = /^(?:\+|00)/.test(compact);
+            var candidate = compact.replace(/^00/, '+');
+            var countries = window.libphonenumber.getCountries();
+            var region = country === '+98' ? 'IR' : countries.find(function (code) {
+                return '+' + window.libphonenumber.getCountryCallingCode(code) === country;
+            });
+            if (!explicit && !region) { candidate = country + candidate; }
+            var parsed = window.libphonenumber.parsePhoneNumberFromString(candidate, region);
+            if (parsed && parsed.isValid()) {
+                return { type: 'phone', national: parsed.nationalNumber, normalized: normalized, valid: true,
+                    countryCode: '+' + parsed.countryCallingCode, kind: parsed.getType(), e164: parsed.number };
+            }
+            return { type: 'phone', national: iranTrunkPrefix ? compact.slice(1) : compact,
+                normalized: normalized, valid: false, countryCode: country };
+        }
         var numeric = compact.replace(/[^\d+]/g, '');
         var digits = numeric.replace(/\D/g, '');
         var national = digits;
@@ -569,26 +1004,27 @@
         if (digits.indexOf('0098') === 0) {
             national = digits.slice(4);
             matchedCountry = '+98';
-        } else if (digits.indexOf('98') === 0 && digits.length > 2) {
+        } else if (digits.indexOf('98') === 0 && (explicitInternational || digits.length > 10)) {
             national = digits.slice(2);
             matchedCountry = '+98';
-        } else if (digits.indexOf('0') === 0 && digits.length > 1) {
+        } else if (iranTrunkPrefix) {
             national = digits.slice(1);
             matchedCountry = '+98';
         } else if (explicitInternational) {
+            var internationalDigits = compact.indexOf('00') === 0 ? digits.slice(2) : digits;
             matchedCountry = dgCountryOptions
                 .map(function (option) {
                     return { option: option, digits: option.code.replace(/\D/g, '') };
                 })
                 .filter(function (item) {
-                    return digits.indexOf(item.digits) === 0;
+                    return internationalDigits.indexOf(item.digits) === 0;
                 })
                 .sort(function (a, b) {
                     return b.digits.length - a.digits.length;
                 })[0];
 
             if (matchedCountry) {
-                national = digits.slice(matchedCountry.digits.length);
+                national = internationalDigits.slice(matchedCountry.digits.length);
                 matchedCountry = matchedCountry.option.code;
             }
         }
@@ -643,7 +1079,29 @@
     }
 
     function sanitizeIdentityValue(value) {
-        return normalizeDigits(value).replace(/[^A-Za-z0-9@._+\-]/g, '');
+        var normalized = normalizeDigits(value).replace(/\s/gu, '');
+        var at = normalized.indexOf('@');
+        if (at < 0) { return normalized; }
+        var domain = normalized.slice(at + 1).replace(/[^a-z0-9.-]/gi, '');
+        return (normalized.slice(0, at + 1) + domain).toLowerCase();
+    }
+
+    function preventInvalidEmailInsertion(input, event, data = event.data) {
+        if (!data || event.isComposing || input.selectionStart === null) { return; }
+        var at = input.value.indexOf('@');
+        if (at < 0) { return; }
+
+        var text = normalizeDigits(data);
+        if (input.selectionStart <= at) {
+            if (input.selectionEnd <= at && /^@+$/.test(text)) { event.preventDefault(); }
+            return;
+        }
+        var isAppending = input.selectionStart === input.value.length;
+        var verified = config.emailKnownDomains?.includes(emailDomain(input.value))
+            || digitsEmailChecks.get(input.form)?.isVerified(input.value);
+        if (!/[a-z0-9.-]/i.test(text) || (isAppending && verified && /^[^a-z.-]+$/i.test(text))) {
+            event.preventDefault();
+        }
     }
 
     function normalizePhoneOnBlur(input) {
@@ -667,7 +1125,8 @@
         input.setAttribute('dir', 'auto');
 
         var wrapper = document.createElement('span');
-        wrapper.className = 'dg-login-identity-control';
+        wrapper.className = 'dg-auth-field dg-login-identity-control';
+        input.classList.add('dg-auth-input');
         input.parentNode.insertBefore(wrapper, input);
         wrapper.appendChild(input);
 
@@ -753,15 +1212,13 @@
     }
 
     function enhanceLoginLabels() {
-        var identityLabel = authPageAction() === 'lostPassword'
-            ? getLabel('recoveryIdentity', 'Username or email address')
-            : getLabel('usernameEmailPhone', 'نام کاربری، ایمیل یا شماره موبایل');
-
-        setLabel(
-            document.querySelector('label[for="user_login"]'),
-            identityLabel,
-            'dashicons-id'
-        );
+        if (authPageAction() !== 'lostPassword') {
+            setLabel(
+                document.querySelector('label[for="user_login"]'),
+                getLabel('usernameEmailPhone', 'نام کاربری، ایمیل یا شماره موبایل'),
+                'dashicons-id'
+            );
+        }
         setLabel(
             document.querySelector('label[for="user_pass"]'),
             getLabel('password', 'رمز عبور'),
@@ -801,75 +1258,75 @@
         };
     }
 
-    function passwordInputForToggle(button) {
-        var scope = button && button.closest('.wp-pwd, .user-pass-wrap, .dg-username-password-row, .password-input-wrapper, p, div');
-        var input = scope ? scope.querySelector('input[type="password"], input[type="text"].dg-password-visible, input.dg-username-password-input, #user_pass') : null;
-
-        return input || document.querySelector('#user_pass');
-    }
+    var passwordFieldSelector = 'input:is([type="password"], .dg-password-input, [autocomplete="current-password"], [autocomplete="new-password"], #user_pass, #pass1):not([type="hidden"])';
 
     function syncPasswordToggle(button, input) {
-        if (!document.body || !document.body.classList.contains('login')) {
-            return;
-        }
-
-        if (!button || !input) {
-            document.querySelectorAll('.wp-hide-pw').forEach(function (toggle) {
-                syncPasswordToggle(toggle, passwordInputForToggle(toggle));
-            });
-            return;
-        }
-
-        if (!button || !input) {
-            return;
-        }
-
         var isVisible = input.type === 'text';
         var label = isVisible
             ? getLabel('hidePassword', 'Hide password')
             : getLabel('showPassword', 'Show password');
-        var icon = isVisible ? 'dashicons-hidden' : 'dashicons-visibility';
-
-        button.classList.toggle('is-visible', isVisible);
+        button.disabled = input.disabled;
         button.setAttribute('aria-label', label);
-        button.innerHTML = '<span class="dashicons ' + icon + '" aria-hidden="true"></span>';
-        input.classList.toggle('dg-password-visible', isVisible);
+        putAuthIcon(button, isVisible ? 'eyeOff' : 'eye');
     }
 
-    function bindPasswordToggle() {
-        document.querySelectorAll('.wp-hide-pw').forEach(function (visibilityButton) {
-            var password = passwordInputForToggle(visibilityButton);
-            var restoreSelection = null;
+    function mountPasswordField(input) {
+        var parent = input.parentElement;
+        if (parent.classList.contains('dg-password-field')) {
+            syncPasswordToggle(parent.querySelector('.dg-password-toggle'), input);
+            return;
+        }
 
-            if (!password || visibilityButton.dataset.dgPasswordReady === 'true') {
-                return;
-            }
+        // Keep the provider's input, including its name, validation and event handlers.
+        var providerField = input.closest('.wp-pwd, .digits_password_inp_row, .password-input-wrapper') || parent;
+        providerField.querySelectorAll('.wp-hide-pw, .digits_password_eye').forEach(function (button) { button.remove(); });
+        var field = document.createElement('div');
+        field.className = 'dg-auth-field dg-password-field';
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'dg-password-toggle';
+        if (input.id) { toggle.setAttribute('aria-controls', input.id); }
+        input.classList.add('dg-auth-input', 'dg-password-input');
+        input.dir = 'ltr';
+        input.before(field);
+        field.append(input, toggle);
+        putAuthIcon(field, 'lock');
+        syncPasswordToggle(toggle, input);
 
-            visibilityButton.dataset.dgPasswordReady = 'true';
-            visibilityButton.addEventListener('mousedown', function (event) {
-                restoreSelection = capturePasswordSelection(password);
+        toggle.addEventListener('pointerdown', function (event) {
+            if (event.button === 0 && document.activeElement === input) {
                 event.preventDefault();
-            });
-            visibilityButton.addEventListener('touchstart', function () {
-                restoreSelection = capturePasswordSelection(password);
-            }, { passive: true });
-            visibilityButton.addEventListener('click', function () {
-                var previousType = password.type;
-                var restore = restoreSelection || capturePasswordSelection(password);
-
-                window.setTimeout(function () {
-                    if (password.type === previousType) {
-                        password.type = previousType === 'password' ? 'text' : 'password';
-                    }
-
-                    syncPasswordToggle(visibilityButton, password);
-                    restore();
-                    restoreSelection = null;
-                }, 0);
-            });
+            }
         });
+        toggle.addEventListener('click', function () {
+            if (input.disabled || toggle.getAttribute('aria-disabled') === 'true') { return; }
+            var restore = capturePasswordSelection(input);
+            input.type = input.type === 'password' ? 'text' : 'password';
+            syncPasswordToggle(toggle, input);
+            restore();
+        });
+    }
 
-        syncPasswordToggle();
+    function observePasswordFields() {
+        var login = document.querySelector('#login');
+        if (!login) { return; }
+        login.querySelectorAll(passwordFieldSelector).forEach(mountPasswordField);
+        new MutationObserver(function (mutations) {
+            var fields = new Set();
+            mutations.forEach(function (mutation) {
+                if (mutation.type === 'attributes' && mutation.target.matches(passwordFieldSelector)) {
+                    fields.add(mutation.target);
+                }
+                mutation.addedNodes.forEach(function (node) {
+                    if (node.nodeType !== 1 || node.matches('.dg-password-field')) { return; }
+                    if (node.matches(passwordFieldSelector)) { fields.add(node); }
+                    node.querySelectorAll(passwordFieldSelector).forEach(function (input) { fields.add(input); });
+                });
+            });
+            fields.forEach(function (input) {
+                if (login.contains(input)) { mountPasswordField(input); }
+            });
+        }).observe(login, { childList: true, subtree: true, attributes: true, attributeFilter: ['type', 'disabled'] });
     }
 
     function lockPendingForm(form, button) {
@@ -929,17 +1386,17 @@
     function scheduleLoadingFailSafe() {
         window.clearTimeout(loadingFailSafeTimer);
         loadingFailSafeTimer = window.setTimeout(function () {
-            if (!document.querySelector('[data-dg-loading="true"]')) {
+            var button = document.querySelector('[data-dg-loading="true"]');
+            if (!button) {
                 return;
             }
 
             clearLoading();
-            showLoginFailureMessage(
-                document.querySelector('.dg-digits-login-shell form, .dg-digits-register-shell form'),
-                getLabel('requestTimeout', 'پاسخی از سرور دریافت نشد. اتصال یا افزونه ورود به‌موقع پاسخ نداد؛ دوباره تلاش کنید.'),
-                'error'
-            );
-        }, 9000);
+            var message = digitsRequestFailure(null, 'timeout');
+            var form = button.closest('form');
+            if (form) { showDigitsInlineMessage(form, message, 'error'); }
+            else { showToast(message, 'error'); }
+        }, 35000);
     }
 
     function markLoading(button, disable, form) {
@@ -963,6 +1420,12 @@
         window.clearTimeout(loadingFailSafeTimer);
         document.body.classList.remove('dg-login-submitting');
         unlockPendingForms();
+        document.querySelectorAll('.dg-otp-progress[data-state="verifying"]').forEach(function (status) {
+            if (!digitsOtpChecking.has(status.closest('form'))) {
+                status.textContent = '';
+                delete status.dataset.state;
+            }
+        });
         document.querySelectorAll('.digits_form_processing').forEach(function (form) {
             form.classList.remove('digits_form_processing');
         });
@@ -989,7 +1452,7 @@
             return null;
         }
 
-        var buttons = Array.prototype.slice.call(form.querySelectorAll('.digits-form_submit-btn, .digits-form_submit, [type="submit"]'));
+        var buttons = Array.prototype.slice.call(form.querySelectorAll(':is(.digits-form_submit-btn, .digits-form_submit, [type="submit"]):not(.digits-form_passwordless_login)'));
         return buttons.find(function (button) {
             return isVisibleElement(button) && !button.hidden;
         }) || buttons[0] || null;
@@ -1010,24 +1473,29 @@
         return fallback;
     }
 
-    function showLoginFailureMessage(form, message, tone) {
-        form = form || document.querySelector('.dg-digits-login-shell form, .dg-digits-register-shell form');
-
-        if (form) {
-            showDigitsInlineMessage(form, message, tone || 'error');
-            return;
-        }
-
-        showToast(message, tone || 'error');
+    function renderAuthMessage(box, message, tone, action) {
+        box.classList.add('dg-auth-message');
+        box.dataset.tone = tone;
+        box.replaceChildren();
+        if (!message) { return; }
+        var text = document.createElement('span');
+        text.textContent = message;
+        box.appendChild(text);
+        putAuthIcon(box, tone === 'success' ? 'check' : tone === 'progress' ? 'clock' : 'info');
+        if (action) { box.appendChild(action); }
     }
 
-    function showDigitsInlineMessage(form, message, tone) {
+    window.DigitalogicAuthFeedback = renderAuthMessage;
+
+    function showDigitsInlineMessage(form, message, tone, anchor) {
         message = cleanText(message, '');
 
         if (!message) {
             return;
         }
 
+        var otp = form && visibleDigitsOtpInput(form);
+        var otpRow = otp?.closest('.digits-form_input_row') || otp?.parentElement;
         var host = form && (form.querySelector('.digits-form_heading') || form.firstElementChild);
         var box = form && form.querySelector('.dg-digits-inline-message');
 
@@ -1036,20 +1504,91 @@
             box.className = 'dg-digits-inline-message';
             box.setAttribute('role', 'alert');
 
-            if (host && host.parentNode) {
+            if (anchor) {
+                anchor.after(box);
+            } else if (!otpRow && host && host.parentNode) {
                 host.parentNode.insertBefore(box, host.nextSibling);
-            } else {
+            } else if (!otpRow) {
                 form.prepend(box);
             }
         }
 
         if (box) {
-            box.classList.toggle('dg-digits-inline-message--error', tone !== 'success');
-            box.classList.toggle('dg-digits-inline-message--success', tone === 'success');
-            box.textContent = message;
+            if (otpRow && box.previousElementSibling !== otpRow) { otpRow.after(box); }
+            box.classList.toggle('dg-otp-feedback', !!otpRow);
+            if (anchor && box.previousElementSibling !== anchor) { anchor.after(box); }
+            renderAuthMessage(box, message, tone);
         }
+    }
 
-        showToast(message, tone === 'success' ? 'success' : 'error');
+    function authRequestLabel(english, persian) {
+        return isPersianLocale() ? persian : english;
+    }
+
+    function digitsRequestFailure(request, state) {
+        var status = Number(request?.status) || 0;
+        if (state === 'timeout' || status === 408 || status === 504) {
+            return authRequestLabel('The sign-in service took too long to respond. Try again.', 'سرویس ورود به‌موقع پاسخ نداد. دوباره تلاش کنید.');
+        }
+        if (navigator.onLine === false) {
+            return authRequestLabel('You’re offline. Reconnect to the internet and try again.', 'اینترنت قطع است. اتصال را برقرار کنید و دوباره تلاش کنید.');
+        }
+        if (status === 429) {
+            return authRequestLabel('Too many attempts. Wait a few minutes before trying again.', 'تعداد تلاش‌ها بیش از حد مجاز است. چند دقیقه صبر کنید و دوباره تلاش کنید.');
+        }
+        if (status === 401 || status === 403) {
+            return authRequestLabel('The sign-in request was blocked. Check your details and try again here.',
+                'درخواست ورود پذیرفته نشد. اطلاعات را بررسی کنید و همین‌جا دوباره تلاش کنید.');
+        }
+        if (status >= 400) {
+            return authRequestLabel('The sign-in service returned HTTP ' + status + '. Try again in a moment.',
+                'سرویس ورود با وضعیت HTTP ' + status + ' پاسخ داد. کمی بعد دوباره تلاش کنید.');
+        }
+        if (state === 'parsererror' || state === 'malformed') {
+            return authRequestLabel('The sign-in service returned an unreadable response. Try again here.',
+                'پاسخ سرویس ورود قابل پردازش نبود. همین‌جا دوباره تلاش کنید.');
+        }
+        if (state === 'callback') {
+            return authRequestLabel('The browser received the sign-in response but could not open the next step. Try again here.',
+                'پاسخ ورود دریافت شد، اما مرورگر نتوانست مرحلهٔ بعد را باز کند. همین‌جا دوباره تلاش کنید.');
+        }
+        return authRequestLabel('The browser could not reach the sign-in service. Check your connection and try again.',
+            'مرورگر نتوانست به سرویس ورود وصل شود. اتصال اینترنت را بررسی کنید و دوباره تلاش کنید.');
+    }
+
+    function digitsResponseFailure(form, payload, verifiesCode, sendsCode) {
+        var detail = responseMessage(payload, '');
+        if (!detail || /^(?:error|failed|undefined|null|false|خطا)[.!\s]*$/i.test(detail)
+            || detail === window.dig_script?.ErrorPleasetryagainlater) {
+            detail = verifiesCode
+                ? authRequestLabel('The service did not confirm this code. Check the digits or request a new code.',
+                    'سرویس ورود این کد را تأیید نکرد. رقم‌ها را بررسی کنید یا کد تازه بگیرید.')
+                : sendsCode
+                    ? authRequestLabel('The service did not send a verification code. Wait a moment and request it again.',
+                        'سرویس ورود کد تأیید را ارسال نکرد. کمی صبر کنید و دوباره کد بگیرید.')
+                    : authRequestLabel('The service did not complete this sign-in step. Check the details you entered and try again.',
+                        'سرویس ورود این مرحله را تکمیل نکرد. اطلاعات واردشده را بررسی کنید و دوباره تلاش کنید.');
+        }
+        if (verifiesCode && !payload?.data?.notice) {
+            digitsOtpEditors.get(visibleDigitsOtpInput(form))?.reject();
+        }
+        showDigitsInlineMessage(form, detail, payload?.data?.notice ? 'warning' : 'error');
+    }
+
+    function withoutDigitsToast(callback, context, args) {
+        if (typeof callback !== 'function') { return; }
+        // The provider callbacks also release its loading and captcha state. Keep those side effects.
+        var names = ['showDigErrorMessage', 'showDigNoticeMessage'];
+        var previous = names.map(function (name) { return window[name]; });
+        names.forEach(function (name) { window[name] = function () {}; });
+        try {
+            return callback.apply(context, args);
+        } finally {
+            names.forEach(function (name, index) {
+                if (previous[index] === undefined) { delete window[name]; }
+                else { window[name] = previous[index]; }
+            });
+        }
     }
 
     function digitsIdentityValue(form) {
@@ -1077,6 +1616,172 @@
         return value || window.location.href;
     }
 
+    function showAuthSuccess(continueSignIn) {
+        var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        if (!shell) { continueSignIn(); return; }
+        if (shell.classList.contains('dg-auth-is-success')) { return; }
+        clearLoading();
+        var persian = isPersianLocale();
+        var step = document.createElement('section');
+        step.className = 'dg-auth-success';
+        step.setAttribute('aria-labelledby', 'dg-auth-success-title');
+        var previous = Array.from(shell.children).find(function (node) {
+            return node.matches('.digits-form_container, .dg-call-unified, form') && isVisibleElement(node);
+        });
+        if (previous) { step.style.minBlockSize = previous.getBoundingClientRect().height + 'px'; }
+        var icon = document.createElement('span');
+        icon.className = 'dg-auth-success-icon';
+        putAuthIcon(icon, 'check');
+        var title = document.createElement('h2');
+        title.id = 'dg-auth-success-title';
+        title.tabIndex = -1;
+        title.textContent = persian ? 'ورود موفق بود' : 'Signed in successfully';
+        var detail = document.createElement('p');
+        detail.setAttribute('role', 'status');
+        detail.textContent = persian ? 'در حال انتقال…' : 'Redirecting…';
+        var spinner = document.createElement('span');
+        spinner.className = 'dg-auth-success-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        step.append(icon, title, detail, spinner);
+        shell.appendChild(step);
+        shell.classList.add('dg-auth-is-success');
+        title.focus({ preventScroll: true });
+        window.requestAnimationFrame(function () {
+            window.requestAnimationFrame(function () { window.setTimeout(continueSignIn, 650); });
+        });
+    }
+
+    window.DigitalogicAuthSuccess = showAuthSuccess;
+
+    function finishBrandedDigitsLogin(form, data) {
+        if (!data || !data.process || !form || !form.closest || !form.closest('.dg-digits-login-shell')
+            || (data.process_type !== 'login' && !form.matches('.digits_register'))) {
+            return;
+        }
+
+        // Digits has already authenticated the user. Enrollment is a separate action.
+        data.setup_biometric = false;
+        data.force_biometric = false;
+        data.login_reg_success_msg = 0;
+        data.delay = 0;
+
+        try {
+            var page = new window.URL(window.location.href);
+            var destination = page.searchParams.get('redirect_to') || digitsLoginRedirect(form);
+            var target = new window.URL(destination, page);
+            if (target.origin === page.origin && !target.username && !target.password && target.pathname === '/wp-login.php'
+                && target.searchParams.get('action') === 'openid-authenticate' && target.searchParams.get('client_id')
+                && target.searchParams.get('response_type') === 'code') {
+                data.redirect = target.href;
+            } else if (page.searchParams.has('redirect_to') && target.origin === page.origin && !target.username && !target.password
+                && !/^\/(?:login\/?|wp-login\.php)$/.test(target.pathname)) {
+                data.redirect = target.href;
+            }
+        } catch (error) {
+            // Keep the native Digits redirect when the return URL is malformed.
+        }
+    }
+
+    function completeRecovery(data, loginForm) {
+        if (!data || !data.process || !authRecovery) { return false; }
+        showRecoveryDialog(data.redirect, loginForm);
+        return true;
+    }
+
+    window.DigitalogicFinishBrowserPasskey = function (form, data) {
+        if (!data?.process || data.process_type !== 'login') { return false; }
+        finishBrandedDigitsLogin(form, data);
+        try {
+            var destination = new URL(data.redirect || config.loginUrl || '/', window.location.href);
+            if (destination.origin !== window.location.origin || destination.username || destination.password) { return false; }
+            showAuthSuccess(function () { window.location.assign(destination.href); });
+            return true;
+        } catch (error) { return false; }
+    };
+
+    async function showRecoveryDialog(destination, loginForm) {
+        var endpoint = config.ajaxUrl || '/wp-admin/admin-ajax.php';
+        async function post(action, fields) {
+            var body = new URLSearchParams(fields);
+            body.set('action', action);
+            var response = await window.fetch(endpoint, { method: 'POST', credentials: 'same-origin', body: body });
+            return response.json();
+        }
+
+        var next = new window.URL('/my-account/', window.location.origin);
+        if (typeof destination === 'string' && destination && !['-1', '-2'].includes(destination)) {
+            try {
+                var target = new window.URL(destination, window.location.origin);
+                if (target.origin === next.origin && !target.username && !target.password && target.pathname !== '/login/') {
+                    next = target;
+                }
+            } catch (error) { /* Keep the account page as the fallback. */ }
+        }
+        function continueSignIn() {
+            dialog?.close();
+            showAuthSuccess(function () {
+                if (loginForm) { clearDigitsOtpContinuation(loginForm); }
+                window.location.assign(next.href);
+            });
+        }
+
+        var proof;
+        try { proof = await post('digitalogic_recovery_nonce'); } catch (error) { /* Continue on network failure. */ }
+        if (!proof || !proof.success || !proof.data || !proof.data.nonce) {
+            continueSignIn();
+            return;
+        }
+
+        var persian = isPersianLocale();
+        var dialog = document.createElement('dialog');
+        dialog.className = 'dg-recovery-dialog';
+        dialog.setAttribute('aria-labelledby', 'dg-recovery-dialog-title');
+        var form = document.createElement('form');
+        form.innerHTML = [
+            '<h2 id="dg-recovery-dialog-title">' + (persian ? 'تعیین رمز عبور جدید' : 'Set a new password') + '</h2>',
+            '<label for="dg-recovery-password">' + (persian ? 'رمز عبور جدید' : 'New password') + '</label>',
+            '<input id="dg-recovery-password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required>',
+            '<p class="dg-recovery-password-hint">' + (persian ? 'حداقل ۱۲ نویسه وارد کنید.' : 'Use at least 12 characters.') + '</p>',
+            '<p class="dg-recovery-password-error" role="alert" hidden></p>',
+            '<button class="button button-primary" type="submit">' + (persian ? 'ذخیره رمز عبور' : 'Save password') + '</button>',
+            '<button class="button dg-recovery-cancel" type="button">' + (persian ? 'ادامه بدون تغییر رمز' : 'Continue without changing it') + '</button>'
+        ].join('');
+        var input = form.querySelector('input');
+        var submit = form.querySelector('[type="submit"]');
+        var skip = form.querySelector('[type="button"]');
+        var error = form.querySelector('[role="alert"]');
+        input.setAttribute('aria-describedby', 'dg-recovery-password-hint');
+        form.querySelector('.dg-recovery-password-hint').id = 'dg-recovery-password-hint';
+        dialog.appendChild(form);
+        document.body.appendChild(dialog);
+        mountPasswordField(input);
+        skip.addEventListener('click', continueSignIn);
+        dialog.addEventListener('cancel', function (event) {
+            event.preventDefault();
+            if (!submit.disabled) { continueSignIn(); }
+        });
+        form.addEventListener('submit', async function (event) {
+            event.preventDefault();
+            if (submit.disabled) { return; }
+            submit.disabled = true;
+            skip.disabled = true;
+            error.hidden = true;
+            try {
+                var result = await post('digitalogic_recovery_password', { nonce: proof.data.nonce, password: input.value });
+                if (result && result.success) {
+                    continueSignIn();
+                    return;
+                }
+            } catch (failure) { /* Keep the signed-in user on the dialog. */ }
+            error.textContent = persian ? 'ذخیره رمز عبور انجام نشد. دوباره تلاش کنید یا بدون تغییر ادامه دهید.'
+                : 'Could not save the password. Try again or continue without changing it.';
+            error.hidden = false;
+            submit.disabled = false;
+            skip.disabled = false;
+        });
+        dialog.showModal();
+    }
+
     function hideDigitsIdentityContainer(form) {
         var phoneInput = form && form.querySelector('input[name="digits_phone"]');
         var container = phoneInput ? phoneInput.closest('.digits-form_tab_container') : null;
@@ -1097,9 +1802,318 @@
         }
     }
 
+    function visibleDigitsPassword(form) {
+        return Array.prototype.find.call(
+            form.querySelectorAll('.digits-form_tab_wrapper input:is([type="password"], [autocomplete="current-password"], .dg-password-input)'),
+            function (input) { return !input.disabled && isVisibleElement(input); }
+        );
+    }
+
+    function digitsOtpSelector(smsOnly) {
+        return smsOnly
+            ? '.digits-form_otp_selector[data-type="sms_otp"]'
+            : '.digits-form_otp_selector:is([data-type="sms_otp"], [data-type="email_otp"])';
+    }
+
+    function digitsOtpTab(password, smsOnly) {
+        var step = password && password.closest('.digits-form_tab_container');
+        var input = smsOnly ? 'input[name="sms_otp"]' : 'input:is([name="sms_otp"], [name="email_otp"])';
+        if (step && step.querySelector(digitsOtpSelector(smsOnly) + ', ' + input)) {
+            return step.querySelector('.digits-form_tab-item[data-value="otp"]');
+        }
+        return null;
+    }
+
+    function startNativeDigitsSms(password, tab, smsOnly) {
+        password.value = '';
+        password.type = 'password';
+        tab.click();
+        var step = tab.closest?.('.digits-form_tab_container');
+        var channel = step?.querySelector('.digits-tab_active ' + digitsOtpSelector(smsOnly) + ':not(.auto-click)');
+        if (channel && !channel.closest('.digits-tab_active').querySelector('input:is([name="sms_otp"], [name="email_otp"])')) {
+            channel.click();
+        }
+    }
+
+    function setDigitsIdentityPrompt(form, mode) {
+        var contactOnly = form.dataset.dgSmsIdentity === 'true' || form.closest('[data-dg-recovery]');
+        var prompt = contactOnly
+            ? getLabel('contactPlaceholder', 'Email address or phone number')
+            : getLabel('identityPlaceholder', 'Username, email, or phone number');
+        form.querySelectorAll('input:is([name="digits_phone"], [name="digits_email"])').forEach(function (input) {
+            // An empty verification field still accepts either email or phone.
+            var label = mode === 'phone' && input.name === 'digits_phone' && (!contactOnly || input.value)
+                ? getLabel('phonePlaceholder', 'Phone number')
+                : prompt;
+            input.placeholder = label;
+            input.setAttribute('aria-label', label);
+        });
+    }
+
+    function showDigitsSmsIdentity(form, submitEmail) {
+        var identity = digitsIdentityValue(form);
+        var email = !!emailDomain(identity);
+        var back = form.querySelector('.dg-username-password-step:not([hidden]) .dg-username-login-back, .digits_form_back:not(.digits_hide_back)');
+        if (back) { back.click(); }
+        form.dataset.dgSmsIdentity = 'true';
+        if (email) {
+            selectDigitsMode('email', submitEmail === false);
+            if (submitEmail !== false) { submitDigitsSecureForm(form); }
+            return;
+        }
+        var currentPhone = form.querySelector('[name="digits_phone"]');
+        if (classifyIdentity(currentPhone.value) !== 'phone') {
+            form.querySelector('[name="digits_email"]').value = '';
+            currentPhone.value = '';
+        }
+        selectDigitsMode('phone', true);
+        var help = form.querySelector('.dg-sms-identity-help');
+        if (help) { help.hidden = false; }
+    }
+
+    function isDigitsIdentityStep(form) {
+        return digitsEmailChecks.has(form) && form.classList.contains('digits_form_index_section')
+            && form.dataset.dgUsernameStep !== 'password';
+    }
+
+    function callVerificationEnabled(shell) {
+        return !!shell.querySelector('[data-call-unified][data-call-available="true"]');
+    }
+
+    function canChoosePhoneChannel(number, shell) {
+        return number.valid && ['MOBILE', 'FIXED_LINE_OR_MOBILE'].includes(number.kind) && callVerificationEnabled(shell);
+    }
+
+    function digitsIdentityAction(form) {
+        var shell = form.closest('.dg-digits-login-shell');
+        var mode = shell.dataset.dgIdentity;
+        var value = digitsIdentityValue(form);
+        var passwordless = form.dataset.dgSmsIdentity === 'true';
+        if (mode === 'email' && emailDomain(value)) {
+            return { type: passwordless ? 'email' : 'password', enabled: digitsEmailChecks.get(form).isVerified(value) };
+        }
+        if (mode === 'username' && value && !passwordless) {
+            return { type: 'password', enabled: true };
+        }
+        if (mode === 'phone') {
+            var prefix = form.querySelector('[name="login_digt_countrycode"]');
+            if (prefix && !isCountryCallingCode(prefix.value)) { return { type: 'continue', enabled: false }; }
+            var number = phonePartsFromValue(value, prefix?.value);
+            if (number.valid && (!number.kind || ['MOBILE', 'FIXED_LINE_OR_MOBILE', 'FIXED_LINE'].includes(number.kind))) {
+                var byCall = number.kind === 'FIXED_LINE'
+                    || (form.dataset.dgPhoneChannel === 'call' && canChoosePhoneChannel(number, shell));
+                return { type: byCall ? 'call' : 'sms', enabled: !byCall || callVerificationEnabled(shell), number: number };
+            }
+        }
+        return { type: 'continue', enabled: false };
+    }
+
+    function syncDigitsIdentityButton(form) {
+        if (!digitsEmailChecks.has(form)) { return; }
+        var button = form.querySelector('.digits-form_login > .digits-form_submit-btn');
+        if (!button) { return; }
+        var action = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
+        var label = getLabel('continue', 'Continue');
+        if (action?.type === 'email') {
+            label = getLabel('sendEmailCode', 'Send email code');
+        } else if (action?.type === 'call') {
+            label = getLabel('continueByCall', isPersianLocale() ? 'ادامه با تماس تلفنی' : 'Continue by phone call');
+        } else if (action?.type === 'sms') {
+            label = action.number.kind === 'MOBILE' ? getLabel('sendSmsCode', 'Send SMS code') : getLabel('continueBySms', 'Continue by SMS');
+        } else if (!action && form.classList.contains('dg-otp-step')) {
+            label = getLabel('verifyCode', 'Verify code');
+        } else if (!action && visibleDigitsPassword(form)) {
+            label = getLabel('login', 'Log in');
+        }
+        var text = button.querySelector('.digits-form_button-text');
+        if (text && text.textContent !== label) { text.textContent = label; }
+        if (action && !action.enabled) {
+            button.dataset.dgIdentityBlocked = 'true';
+        } else if (button.dataset.dgIdentityBlocked === 'true') {
+            delete button.dataset.dgIdentityBlocked;
+        }
+    }
+
+    function reportInvalidDigitsIdentity(form, action) {
+        var mode = form.closest('.dg-digits-login-shell').dataset.dgIdentity;
+        if (mode === 'email') {
+            digitsEmailChecks.get(form).report();
+            return;
+        }
+
+        var input = form.querySelector('input[name="digits_phone"]');
+        var prefix = form.querySelector('[name="login_digt_countrycode"]');
+        var invalidPrefix = mode === 'phone' && prefix && !isCountryCallingCode(prefix.value);
+        var message = invalidPrefix
+            ? authRequestLabel('Select a valid country code.', 'پیش‌شمارهٔ معتبر کشور را انتخاب کنید.')
+            : mode === 'phone'
+                ? getLabel('invalidPhone', 'Enter a valid phone number.')
+                : authRequestLabel('Enter your username, email, or phone number.', 'نام کاربری، ایمیل یا شماره تلفن خود را وارد کنید.');
+        if (form.dataset.dgSmsIdentity === 'true' && mode !== 'phone') {
+            message = getLabel('smsIdentity', 'Enter your email address or phone number to receive a verification code.');
+        }
+        if (action.type === 'call') {
+            message = getLabel('callLoadFailed', 'Phone call verification is currently unavailable.');
+        }
+        var field = invalidPrefix ? prefix : input;
+        var row = field?.closest('.digits-form_input_row') || field?.closest('.digits-mobile_wrapper');
+        var prefixStatus = invalidPrefix && form.querySelector('#dg-country-code-status');
+        if (prefixStatus) {
+            field.focus({ preventScroll: true });
+            field.setAttribute('aria-invalid', 'true');
+            renderAuthMessage(prefixStatus, message, 'error');
+            return;
+        }
+        showDigitsInlineMessage(form, message, 'error', row);
+        if (field) {
+            field.setAttribute('aria-invalid', 'true');
+            field.focus({ preventScroll: true });
+            var reset = function () {
+                field.removeAttribute('aria-invalid');
+                form.querySelector('.dg-digits-inline-message')?.remove();
+            };
+            field.addEventListener('input', reset, { once: true });
+        }
+    }
+
+    function createPasswordlessAction(captionId, onClick) {
+        var action = document.createElement('div');
+        action.className = 'dg-passwordless-action';
+
+        var button = document.createElement('button');
+        button.className = 'dg-skip-password dg-icon-label-action';
+        button.type = 'button';
+        button.setAttribute('aria-describedby', captionId);
+        button.addEventListener('click', onClick);
+
+        var label = document.createElement('span');
+        label.className = 'dg-passwordless-label';
+        label.textContent = getLabel('skipPassword', 'Sign in without a password');
+        button.appendChild(label);
+        putAuthIcon(button, 'sms');
+
+        var caption = document.createElement('p');
+        caption.className = 'dg-passwordless-caption';
+        caption.id = captionId;
+        caption.textContent = getLabel('skipPasswordCaption', 'Forgot your password?');
+        action.append(caption, button);
+        return action;
+    }
+
+    function prepareDigitsSkipPassword(form) {
+        var wrapper = form.querySelector('.digits-form_tab_wrapper');
+        var primary = form.querySelector('.digits-form_login > .digits-form_submit-btn');
+
+        if (!primary || !wrapper || form.dataset.dgSmsReady === 'true') {
+            return;
+        }
+
+        form.dataset.dgSmsReady = 'true';
+        var action = createPasswordlessAction('dg-native-passwordless-caption', function () {
+            var password = visibleDigitsPassword(form);
+            var tab = digitsOtpTab(password);
+            if (tab && form.dataset.dgPending !== 'true') {
+                authRecovery = true;
+                startNativeDigitsSms(password, tab);
+            }
+        });
+        primary.after(action);
+        var remember = form.querySelector('.digits-form_rememberme');
+        if (remember) { primary.before(remember); }
+
+        function updateRememberMe() {
+            if (remember) {
+                var hidden = !form.classList.contains('digits_form_index_section') || form.dataset.dgUsernameStep === 'password';
+                if (remember.hidden !== hidden) { remember.hidden = hidden; }
+            }
+        }
+
+        function updateVisibility() {
+            var password = visibleDigitsPassword(form);
+            var tab = digitsOtpTab(password);
+            var otp = visibleDigitsOtpInput(form);
+            action.hidden = !tab;
+
+            var smsSelected = !form.classList.contains('digits_form_index_section') && digitsSmsSelections.delete(form);
+            if ((form.dataset.dgSmsIdentity === 'true' || smsSelected) && !form.classList.contains('digits_form_index_section')) {
+                delete form.dataset.dgSmsIdentity;
+                setDigitsIdentityPrompt(form, form.closest('.dg-digits-login-shell')?.dataset.dgIdentity);
+                var help = form.querySelector('.dg-sms-identity-help');
+                if (help) { help.hidden = true; }
+                if (smsSelected) { tab = digitsOtpTab(password, true); }
+                if (tab) {
+                    startNativeDigitsSms(password, tab, smsSelected);
+                } else {
+                    var selector = wrapper.querySelector('.digits-form_tab_body.digits-tab_active ' + digitsOtpSelector(smsSelected) + ':not(.auto-click)');
+                    if (!otp && selector && isVisibleElement(selector)) { selector.click(); }
+                }
+            }
+
+            if (otp) {
+                // An SMS code has no remote approval step. Keep Digits from polling it on focus.
+                if (!otp.classList.contains('disable_auto_read')) {
+                    otp.classList.add('disable_auto_read');
+                }
+                prepareDigitsOtpEditor(otp);
+            }
+            if (form.classList.contains('dg-otp-step') !== Boolean(otp)) {
+                form.classList.toggle('dg-otp-step', Boolean(otp));
+            }
+            updateRememberMe();
+            updateDigitsResend(form);
+            syncDigitsIdentityButton(form);
+        }
+
+        updateVisibility();
+        var observer = new MutationObserver(updateVisibility);
+        observer.observe(wrapper, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'type', 'disabled']
+        });
+        observer.observe(form, { attributes: true, attributeFilter: ['class'] });
+        form.addEventListener('input', function (event) {
+            if (event.target.matches('input:is([name="sms_otp"], [name="email_otp"])')) {
+                stopDigitsSmsWait(form);
+            }
+        });
+        form.addEventListener('click', function (event) {
+            if (event.target.closest('.digits_form_back')) {
+                digitsSmsSelections.delete(form);
+                clearDigitsOtpContinuation(form);
+                stopDigitsSmsWait(form);
+                if (!form.closest('[data-dg-recovery]')) { authRecovery = false; }
+            }
+            var resend = event.target.closest('.dg-otp-resend');
+            if (resend && resend.getAttribute('aria-disabled') === 'true') {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+        }, true);
+        window.addEventListener('pagehide', function () { stopDigitsSmsWait(form); });
+    }
+
+    async function matchesWorkstationIdentity(value, workstation) {
+        if (!workstation?.login) { return false; }
+        var identity = value.toLowerCase();
+        if (identity === workstation.login.toLowerCase()) { return true; }
+        if (!workstation.emailDigest || !emailDomain(identity) || !window.crypto?.subtle) { return false; }
+        try {
+            var digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
+            var hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+            return hex === workstation.emailDigest;
+        } catch (_error) {
+            return false;
+        }
+    }
+
     function showDigitsUsernamePasswordStep(form, username) {
+        var shell = form.closest('.dg-digits-login-shell');
         var wrapper = form.querySelector('.digits-form_tab_wrapper') || form;
         var step = form.querySelector('.dg-username-password-step');
+        var lanAction = shell?.querySelector('[data-call-lan-action]');
+        var callWidget = shell?.querySelector('[data-call-unified]');
 
         hideDigitsIdentityContainer(form);
         form.dataset.dgUsernameStep = 'password';
@@ -1107,41 +2121,48 @@
         form.classList.add('dg-username-step-active');
 
         if (!step) {
-            var backIcon = isPersianLocale() ? 'dashicons-arrow-right-alt' : 'dashicons-arrow-left-alt';
             var backLabel = getLabel('back', 'Back');
             var loginLabel = getLabel('login', 'Log in');
+            var passwordLabel = escapeHtml(getLabel('password', 'Password'));
             step = document.createElement('div');
             step.className = 'digits-form_tab_container dg-username-password-step';
             step.innerHTML = [
                 '<div class="digits-form_body_wrapper">',
                 '<div class="digits-form_tab_body digits-tab_active">',
-                '<div class="dg-username-login-summary">',
-                '<span class="dashicons dashicons-admin-users" aria-hidden="true"></span>',
-                '<span class="dg-username-login-value"></span>',
-                '</div>',
-                '<div class="digits-form_input_row dg-username-password-row">',
-                '<span class="dashicons dashicons-lock dg-digits-row-icon" aria-hidden="true"></span>',
-                '<button type="button" class="button wp-hide-pw dg-username-password-toggle" aria-label="' + escapeHtml(getLabel('showPassword', 'Show password')) + '"><span class="dashicons dashicons-visibility" aria-hidden="true"></span></button>',
-                '<input class="dg-username-password-input" type="password" autocomplete="current-password" required placeholder="رمز عبور">',
-                '</div>',
+                '<div class="dg-username-login-profile"></div>',
+                '<input class="dg-username-password-input" type="password" autocomplete="current-password" required aria-label="' + passwordLabel + '" placeholder="' + passwordLabel + '">',
                 '<div class="dg-username-login-actions">',
-                '<button type="button" class="button dg-username-login-back"><span class="dashicons ' + backIcon + '" aria-hidden="true"></span><span>' + escapeHtml(backLabel) + '</span></button>',
+                '<button type="button" class="button dg-username-login-back"><span class="dashicons dashicons-arrow-left-alt" aria-hidden="true"></span><span>' + escapeHtml(backLabel) + '</span></button>',
                 '<button type="submit" class="digits-form_button digits-form_submit digits-form_submit-btn dg-username-login-submit"><span>' + escapeHtml(loginLabel) + '</span></button>',
                 '</div>',
                 '</div>',
                 '</div>'
             ].join('');
             wrapper.appendChild(step);
-            bindPasswordToggle();
+            mountPasswordField(step.querySelector('.dg-username-password-input'));
+
+            var passwordlessAction = createPasswordlessAction('dg-identity-passwordless-caption', function () {
+                authRecovery = true;
+                showDigitsSmsIdentity(form);
+            });
+            step.querySelector('.dg-username-login-actions').appendChild(passwordlessAction);
+            if (lanAction && callWidget) {
+                putAuthIcon(lanAction, 'phone');
+                passwordlessAction.appendChild(lanAction);
+            }
 
             step.querySelector('.dg-username-login-back').addEventListener('click', function () {
-                step.hidden = true;
-                step.style.display = 'none';
+                if (lanAction && callWidget) {
+                    lanAction.hidden = true;
+                    callWidget.appendChild(lanAction);
+                }
+                // Digits counts every tab container when handling Back, including hidden ones.
+                step.remove();
                 delete form.dataset.dgUsernameStep;
                 form.classList.remove('dg-username-step-active');
                 showDigitsIdentityContainer(form);
 
-                var input = form.querySelector('input[name="digits_phone"]');
+                var input = form.querySelector('.digits-tab_active input[autocomplete="username"]');
                 if (input) {
                     input.focus({ preventScroll: true });
                 }
@@ -1150,15 +2171,33 @@
 
         step.hidden = false;
         step.style.display = '';
-        step.querySelector('.dg-username-login-value').textContent = username;
-        step.querySelector('.dg-username-password-input').placeholder = getLabel('password', 'Password');
-
-        window.setTimeout(function () {
-            var password = step.querySelector('.dg-username-password-input');
-            if (password) {
-                password.focus({ preventScroll: true });
-            }
-        }, 0);
+        var profile = step.querySelector('.dg-username-login-profile');
+        var kind = emailDomain(username) ? 'email' : 'user';
+        function renderProfile(photo) {
+            var identity = createAuthIdentity(username, kind, photo);
+            identity.classList.add('dg-username-login-summary');
+            identity.querySelector('.dg-auth-identity-mark').classList.add('dg-username-login-avatar');
+            identity.querySelector('.dg-auth-identity-value').classList.add('dg-username-login-value');
+            profile.replaceChildren(identity);
+        }
+        renderProfile();
+        var account = config.rememberedAccount;
+        if (account?.assigned && account.avatar) {
+            matchesWorkstationIdentity(username, account).then(function (match) {
+                if (match && step.isConnected && form.dataset.dgUsernameValue === username) { renderProfile(account.avatar); }
+            });
+        }
+        if (lanAction) {
+            lanAction.hidden = true;
+            matchesWorkstationIdentity(username, lanAction.dataset).then(function (match) {
+                if (step.isConnected && form.dataset.dgUsernameValue === username) {
+                    lanAction.hidden = !match || !callVerificationEnabled(shell);
+                }
+            });
+        }
+        var password = step.querySelector('.dg-username-password-input');
+        password.disabled = false;
+        password.focus({ preventScroll: true });
     }
 
     function submitDigitsUsernameLogin(form) {
@@ -1169,14 +2208,6 @@
             delete form.dataset.dgUsernameStep;
             showDigitsIdentityContainer(form);
             return false;
-        }
-
-        if (!password || !cleanText(password.value, '')) {
-            showDigitsInlineMessage(form, getLabel('requiredPassword', 'رمز عبور را وارد کنید.'), 'warning');
-            if (password) {
-                password.focus({ preventScroll: true });
-            }
-            return true;
         }
 
         var coreForm = document.createElement('form');
@@ -1190,6 +2221,8 @@
         [
             ['log', username],
             ['pwd', password.value],
+            ['dg_branded_email', classifyIdentity(username) === 'email' ? '1' : ''],
+            ['dg_auth_flow', authFlow],
             ['rememberme', remember && remember.checked ? 'forever' : ''],
             ['redirect_to', digitsLoginRedirect(form)],
             ['wp-submit', 'Log In']
@@ -1204,24 +2237,6 @@
         document.body.appendChild(coreForm);
         markLoading(submit, true, form);
         coreForm.submit();
-        return true;
-    }
-
-    function maybeHandleDigitsUsernameSubmit(form) {
-        if (!form || !form.closest('.dg-digits-login-shell')) {
-            return false;
-        }
-
-        if (form.dataset.dgUsernameStep === 'password') {
-            return submitDigitsUsernameLogin(form);
-        }
-
-        var value = digitsIdentityValue(form);
-        if (!value || classifyIdentity(value) === 'phone') {
-            return false;
-        }
-
-        showDigitsUsernamePasswordStep(form, value);
         return true;
     }
 
@@ -1269,36 +2284,232 @@
         return true;
     }
 
+    function readDigitsOtpContinuation() {
+        try { return JSON.parse(window.sessionStorage.getItem(digitsOtpStorageKey)); }
+        catch (error) { return null; }
+    }
+
+    function persistDigitsOtpContinuation(state) {
+        try { window.sessionStorage.setItem(digitsOtpStorageKey, JSON.stringify(state)); }
+        catch (error) { /* The live form works when tab storage is unavailable. */ }
+    }
+
+    function clearDigitsOtpContinuation(form) {
+        var state = digitsOtpContinuations.get(form);
+        if (!state) { return; }
+        digitsOtpContinuations.delete(form);
+        try {
+            if (readDigitsOtpContinuation()?.id === state.id) { window.sessionStorage.removeItem(digitsOtpStorageKey); }
+        } catch (error) { /* Storage is optional. */ }
+    }
+
+    function digitsOtpAttempt(form) {
+        var state = digitsOtpContinuations.get(form);
+        if (!state) {
+            var id = window.crypto?.randomUUID?.();
+            if (!id) { return null; }
+            state = { id: id };
+            digitsOtpContinuations.set(form, state);
+        }
+        return state;
+    }
+
+    function isDigitsOtpContinuationField(name) {
+        return /^(?:login_digt_countrycode|digt_countrycode|digits_phone|digits_email|phone|instance_id|action_type|digits_form|digits_login_email_token|digits_step_[1-3]_(?:type|value)|otp_step_1|otp_token_verify_status|otp_token_key|type|action|digits)$/.test(name);
+    }
+
+    function saveDigitsOtpContinuation(form) {
+        var input = visibleDigitsOtpInput(form);
+        if (!input || !form.closest('.dg-digits-login-shell, .dg-digits-register-shell')) { return; }
+        var tab = input.closest('.digits-form_tab_body, .digits_signup_form_step');
+        if (!tab) { return; }
+        var state = digitsOtpAttempt(form);
+        if (!state) { return; }
+
+        // Keep only the provider's current step and allowlisted continuation fields.
+        // Passwords, OTP digits, and captcha answers are never saved.
+        var clone = tab.cloneNode(true);
+        clone.querySelectorAll('.dg-otp-stack, .digits-form_otp_selector, script, iframe, object, embed, textarea').forEach(function (node) { node.remove(); });
+        clone.querySelectorAll('input').forEach(function (node) {
+            if (node.matches('input[name="sms_otp"], input[name="email_otp"]')) {
+                node.value = '';
+                node.removeAttribute('value');
+            } else if (node.type !== 'hidden' || !isDigitsOtpContinuationField(node.name)) {
+                node.remove();
+            }
+        });
+        clone.querySelectorAll('input.dg-otp-native').forEach(function (node) {
+            node.classList.remove('dg-otp-native');
+            node.removeAttribute('aria-hidden');
+            node.removeAttribute('tabindex');
+        });
+        clone.querySelectorAll('.digits-form_resend_otp').forEach(function (node) {
+            node.classList.remove('dg-otp-resend');
+            node.removeAttribute('aria-disabled');
+            delete node.dataset.dgResendKeyboard;
+        });
+        var fields = Array.from(new FormData(form)).filter(function (field) {
+            return typeof field[1] === 'string' && isDigitsOtpContinuationField(field[0]);
+        });
+        var timer = digitsResendTimers.get(form);
+        state.verifying = false;
+        state.path = window.location.pathname + window.location.search;
+        state.signup = form.matches('.digits_register');
+        state.recovery = authRecovery;
+        state.remember = !!form.querySelector('input[name="rememberme"]:checked');
+        state.autoSubmitted = digitsOtpAutoSubmitted.has(form);
+        state.fields = fields;
+        state.html = clone.outerHTML;
+        state.resend = timer ? { seconds: timer.seconds, until: timer.until } : null;
+        persistDigitsOtpContinuation(state);
+    }
+
+    function attachDigitsOtpAttempt(form) {
+        var state = digitsOtpAttempt(form);
+        if (state?.html) {
+            state.verifying = true;
+            state.autoSubmitted = digitsOtpAutoSubmitted.has(form);
+            persistDigitsOtpContinuation(state);
+        }
+        return state?.id;
+    }
+
+    async function recoverDigitsOtpCompletion(form, onFailure) {
+        var state = digitsOtpContinuations.get(form);
+        if (state) {
+            digitsOtpChecking.add(form);
+            setOtpProgress(form, 'verifying');
+            try {
+                var completion;
+                if (authFlow && config.authWebSocket?.enabled) {
+                    window.DigitalogicAuthRealtime.refreshBinding();
+                    completion = await authSocketRequest('digitalogic_auth_completion', { attempt: state.id });
+                }
+                var response = completion?.redirect ? null : await window.fetch((window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    signal: window.AbortSignal?.timeout?.(8000),
+                    body: new URLSearchParams({ action: 'digitalogic_otp_completion', dg_otp_attempt: state.id })
+                });
+                var reply = response?.ok ? await response.json() : { success: Boolean(completion?.redirect), data: completion };
+                if (digitsOtpContinuations.get(form) !== state) { return; }
+                if (reply?.success && reply.data?.redirect) {
+                    var data = { process: true, process_type: 'login', redirect: reply.data.redirect };
+                    finishBrandedDigitsLogin(form, data);
+                    if (!completeRecovery(data, form)) {
+                        showAuthSuccess(function () {
+                            clearDigitsOtpContinuation(form);
+                            window.location.assign(data.redirect);
+                        });
+                    }
+                    return;
+                }
+            } catch (error) { /* Keep the current challenge available on a failed check. */ }
+            finally {
+                digitsOtpChecking.delete(form);
+                setOtpProgress(form, '');
+            }
+            if (digitsOtpContinuations.get(form) !== state) { return; }
+            state.verifying = false;
+            if (state.html) { persistDigitsOtpContinuation(state); }
+        }
+        if (onFailure) { onFailure(); }
+    }
+
+    function restoreDigitsOtpFields(form, state) {
+        state.fields.forEach(function (field) {
+            if (!isDigitsOtpContinuationField(field[0])) { return; }
+            var input = form.elements.namedItem(field[0]);
+            if (input && 'defaultValue' in input) {
+                input.defaultValue = field[1];
+                input.value = field[1];
+                input.disabled = false;
+            }
+        });
+    }
+
+    function restoreDigitsOtpContinuation() {
+        var state = readDigitsOtpContinuation();
+        function continuationRoute(value) {
+            if (typeof value !== 'string') { return ''; }
+            try {
+                var address = new URL(value, window.location.origin);
+                address.searchParams.delete('wp_lang');
+                return address.origin + address.pathname + address.search;
+            } catch (_error) { return ''; }
+        }
+        if (!state || !state.html || !Array.isArray(state.fields)
+            || continuationRoute(state.path) !== continuationRoute(window.location.href)) { return; }
+        var selector = state.signup ? 'form.digits_register' : 'form.digloginpage';
+        var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        var form = shell?.querySelector(selector);
+        if (!form || !form.classList.contains('digits_form_index_section')) { return; }
+        if (state.signup) { setBrandedAuthForm(shell, true); }
+        authRecovery = state.recovery === true;
+        restoreDigitsOtpFields(form, state);
+        var remember = form.querySelector('input[name="rememberme"]');
+        if (remember) { remember.checked = state.remember === true; }
+        var html = '<div class="digits-form_tab_container"><div class="digits-form_body_wrapper">' + state.html + '</div></div>';
+        if (!appendDigitsStep(form, html, null)) { return; }
+        state.restored = true;
+        digitsOtpContinuations.set(form, state);
+        // The native Digits initializer may still update the original identity inputs.
+        var restoreFields = function () {
+            if (digitsOtpContinuations.get(form) === state) { restoreDigitsOtpFields(form, state); }
+        };
+        if (document.readyState !== 'complete') {
+            window.addEventListener('load', restoreFields, { once: true });
+        }
+        if (state.autoSubmitted) { digitsOtpAutoSubmitted.add(form); }
+        if (state.resend?.seconds > 0) { digitsResendTimers.set(form, state.resend); }
+        if (state.verifying) { recoverDigitsOtpCompletion(form); }
+    }
+
     function handleDigitsAjaxResult(form, payload) {
         var data = payload && payload.data !== undefined ? payload.data : payload;
 
-        if (payload && payload.success === false) {
+        if (!hasUsableDigitsPayload(payload)) {
             clearLoading();
-            showDigitsInlineMessage(form, responseMessage(payload, getLabel('requestError', 'درخواست با خطا روبه‌رو شد. دوباره تلاش کنید.')), data && data.notice ? 'warning' : 'error');
+            showDigitsInlineMessage(form, digitsRequestFailure(null, 'malformed'), 'error');
             return;
         }
 
-        if (payload && payload.success === true && (!data || (typeof data === 'object' && !Object.keys(data).length))) {
+        if (payload && payload.success === false) {
             clearLoading();
-            showDigitsInlineMessage(
-                form,
-                getLabel('digitsEmptyResponse', 'افزونه ورود پاسخ ناقص فرستاد: درخواست موفق علامت خورد اما داده مرحله بعدی در پاسخ نبود. دوباره تلاش کنید.'),
-                'error'
-            );
+            if (continueToDigitsSignup(form, data)) { return; }
+            digitsResponseFailure(form, payload, !!visibleDigitsOtpInput(form)?.value, false);
             return;
+        }
+
+        if (payload && payload.success === true) {
+            finishBrandedDigitsLogin(form, data);
         }
 
         if (data && data.reload) {
+            if (payload.success && (data.process || visibleDigitsOtpInput(form))) {
+                showAuthSuccess(function () { clearDigitsOtpContinuation(form); window.location.reload(); });
+                return;
+            }
             window.location.reload();
             return;
         }
 
         if (data && data.redirect) {
+            if (payload.success && (data.process || visibleDigitsOtpInput(form))) {
+                if (!completeRecovery(data, form)) {
+                    showAuthSuccess(function () { clearDigitsOtpContinuation(form); window.location.assign(data.redirect); });
+                }
+                return;
+            }
             window.location.assign(data.redirect);
             return;
         }
 
         if (data && data.html && appendDigitsStep(form, data.html, data)) {
+            startDigitsResendTimer(form, data);
+            updateDigitsResend(form);
+            saveDigitsOtpContinuation(form);
             clearLoading();
             bindDigitsAutoIdentity();
             return;
@@ -1314,6 +2525,19 @@
     function sendDigitsAjaxFallback(form, button) {
         var endpoint = (window.dig_script && window.dig_script.ajax_url) || '/wp-admin/admin-ajax.php';
         var body = new FormData(form);
+        if (authFlow) { body.set('dg_auth_flow', authFlow); }
+        var verifiesCode = Boolean(body.get('sms_otp') || body.get('email_otp'));
+        if (verifiesCode) {
+            var attempt = attachDigitsOtpAttempt(form);
+            if (attempt) { body.set('dg_otp_attempt', attempt); }
+            if (authRecovery) { body.set('dg_recovery', '1'); }
+        }
+        function fail(request, state) {
+            var showFailure = function () { showDigitsInlineMessage(form, digitsRequestFailure(request, state), 'error'); };
+            clearLoading();
+            if (verifiesCode) { recoverDigitsOtpCompletion(form, showFailure); }
+            else { showFailure(); }
+        }
         var controller = window.AbortController ? new AbortController() : null;
         var timeout = window.setTimeout(function () {
             if (controller) {
@@ -1332,38 +2556,18 @@
                 'X-Requested-With': 'XMLHttpRequest'
             }
         }).then(function (response) {
-            window.clearTimeout(timeout);
-            return response.text().then(function (text) {
-                var payload = null;
-
-                try {
-                    payload = JSON.parse(text);
-                } catch (error) {
-                    payload = {
-                        success: false,
-                        data: {
-                            message: text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-                        }
-                    };
-                }
-
-                if (!response.ok && payload && payload.success !== false) {
-                    payload.success = false;
-                }
-
+            if (!response.ok) {
+                fail(response);
+                return;
+            }
+            return response.json().then(function (payload) {
                 handleDigitsAjaxResult(form, payload);
+            }, function (error) {
+                fail(null, error?.name === 'AbortError' ? 'timeout' : 'malformed');
             });
         }).catch(function (error) {
-            window.clearTimeout(timeout);
-            clearLoading();
-            showDigitsInlineMessage(
-                form,
-                error && error.name === 'AbortError'
-                    ? getLabel('requestTimeout', 'پاسخی از سرور دریافت نشد. اتصال یا افزونه ورود به‌موقع پاسخ نداد؛ دوباره تلاش کنید.')
-                    : getLabel('requestError', 'درخواست ورود با خطای شبکه یا سرور روبه‌رو شد. دوباره تلاش کنید.'),
-                'error'
-            );
-        });
+            fail(null, error?.name === 'AbortError' ? 'timeout' : '');
+        }).finally(function () { window.clearTimeout(timeout); });
     }
 
     function isDigitsAjaxRequest(settings) {
@@ -1375,6 +2579,13 @@
 
         if (typeof data === 'string') {
             return data.indexOf('digits_forms_ajax') !== -1 || data.indexOf('digits=1') !== -1;
+        }
+
+        if (Array.isArray(data)) {
+            return data.some(function (field) {
+                return field && ((field.name === 'action' && field.value === 'digits_forms_ajax')
+                    || (field.name === 'digits' && String(field.value) === '1'));
+            });
         }
 
         if (data && typeof data.get === 'function') {
@@ -1391,15 +2602,513 @@
     function hasUsableDigitsPayload(payload) {
         var data = payload && payload.data !== undefined ? payload.data : payload;
 
-        if (!payload) {
+        if (!payload || typeof payload !== 'object' || typeof payload.success !== 'boolean') {
             return false;
         }
 
-        if (payload.success === true && (!data || (typeof data === 'object' && !Object.keys(data).length))) {
-            return false;
+        return !!(data && typeof data === 'object' && Object.keys(data).length);
+    }
+
+    function digitsRequestForm() {
+        var active = document.activeElement;
+        var focused = active && active.closest ? active.closest('form') : null;
+        if (isVisibleElement(focused) && (isDigitsSecureForm(focused) || focused.closest('.dg-digits-login-shell'))) {
+            return focused;
+        }
+        return Array.prototype.find.call(
+            document.querySelectorAll('.dg-digits-login-shell form, form.digits_form_index_section, form.digits-form, .digits-form_page form'),
+            isVisibleElement
+        ) || null;
+    }
+
+    function visibleDigitsSmsInput(form) {
+        return Array.prototype.find.call(form.querySelectorAll('input.otp_input[name="sms_otp"]'), isVisibleElement);
+    }
+
+    function visibleDigitsOtpInput(form) {
+        return form && (visibleDigitsSmsInput(form)
+            || Array.prototype.find.call(form.querySelectorAll('input[name="email_otp"]:not([type="hidden"])'), isVisibleElement));
+    }
+
+    function otpDigits(value) {
+        return normalizeDigits(value).replace(/[^0-9]/g, '');
+    }
+
+    function prepareOtpInformation(tooltip) {
+        var icon = tooltip?.querySelector('.digits_otp_info_ic');
+        var description = tooltip?.querySelector('.digits_otp_info_desc');
+        if (!icon || !description) { return; }
+        var trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'dg-otp-info-trigger';
+        trigger.setAttribute('aria-label', getLabel('otpInfo', isPersianLocale() ? 'اطلاعات ارسال کد' : 'Code delivery information'));
+        trigger.setAttribute('aria-expanded', 'false');
+        icon.before(trigger);
+        trigger.appendChild(icon);
+        trigger.addEventListener('click', function () {
+            trigger.focus({ preventScroll: true });
+            trigger.setAttribute('aria-expanded', String(trigger.getAttribute('aria-expanded') !== 'true'));
+        });
+        trigger.addEventListener('blur', function () { trigger.setAttribute('aria-expanded', 'false'); });
+        trigger.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') { trigger.setAttribute('aria-expanded', 'false'); }
+        });
+    }
+
+    function setOtpProgress(form, state) {
+        var status = form?.querySelector('.dg-otp-progress');
+        if (!status || status.dataset.state === state) { return; }
+        status.dataset.state = state;
+        var message = state === 'verifying'
+            ? authRequestLabel('Verifying your code…', 'در حال بررسی کد تأیید…')
+            : state === 'ready'
+                ? authRequestLabel('Code entered. Select Verify code to continue.', 'کد وارد شد. برای ادامه «تأیید کد» را بزنید.')
+                : '';
+        renderAuthMessage(status, message, 'progress');
+    }
+
+    function submitCompletedOtp(input, count) {
+        var form = input.form;
+        if (!form || input.value.length !== count) { return; }
+        var button = digitsSubmitButton(form);
+        if (!button || button.disabled) { return; }
+        button.focus({ preventScroll: true });
+        if (!digitsOtpAutoSubmitted.has(form)) {
+            digitsOtpAutoSubmitted.add(form);
+            button.click();
+        } else {
+            setOtpProgress(form, 'ready');
+        }
+    }
+
+    function prepareDigitsOtpEditor(input) {
+        var existingEditor = digitsOtpEditors.get(input);
+        if (existingEditor) {
+            existingEditor.moveInformation();
+            return;
         }
 
+        var count = input.maxLength >= 4 && input.maxLength <= 8 ? input.maxLength : 6;
+        var editor = document.createElement('div');
+        editor.className = 'dg-otp-editor';
+        editor.dir = 'ltr';
+        var form = input.form;
+        if (form && !form.hasAttribute('data-dg-otp-cursor')) {
+            form.dataset.dgOtpCursor = config.otpCursor === 'bar' ? 'bar' : 'circle';
+        }
+        editor.style.setProperty('--dg-otp-count', String(count));
+        editor.setAttribute('role', 'group');
+        editor.setAttribute('aria-label', getLabel('otpCode', 'Verification code'));
+        var row = input.closest('.digits-form_input_row') || input.parentElement;
+        var stack = document.createElement('div');
+        stack.className = 'dg-otp-stack';
+        var help = document.createElement('p');
+        help.className = 'dg-otp-instructions';
+        var caption = document.createElement('span');
+        caption.textContent = input.name === 'email_otp'
+            ? getLabel('emailCodeInstructions', 'Enter the code sent to your email address.')
+            : getLabel('smsCodeInstructions', 'Enter the code sent to your phone.');
+        putAuthIcon(help, 'info');
+        help.prepend(caption);
+        function moveInformation() {
+            var info = row.querySelector('.digits-form_input_info');
+            if (info?.contains(input)) {
+                // Digits can use the field wrapper itself as its information target.
+                // Keep the field and its hidden form data in place.
+                var tooltip = info.querySelector(':scope > .digits_otp_info');
+                if (tooltip) {
+                    help.querySelector(':scope > .digits_otp_info')?.remove();
+                    help.append(tooltip);
+                    prepareOtpInformation(tooltip);
+                }
+            } else if (info && info.parentElement !== help) {
+                help.append(info);
+                prepareOtpInformation(info.querySelector('.digits_otp_info'));
+            }
+        }
+
+        moveInformation();
+        stack.appendChild(help);
+        var email = input.name === 'email_otp';
+        var source = form?.querySelector(email ? 'input[name="digits_email"], input[name="email"]'
+            : 'input[name="digits_phone"], input[name="phone"]');
+        var supplied = normalizeDigits(source?.value || '').trim();
+        var country = form?.querySelector('input[name="login_digt_countrycode"], input[name="countrycode"]')?.value;
+        var address = email ? (emailDomain(supplied) && supplied) : phonePartsFromValue(supplied, country)?.e164;
+        if (address && form?.closest('.dg-digits-login-shell, .dg-digits-register-shell')) {
+            var recipient = createAuthIdentity(address, email ? 'email' : 'phone', '', email
+                ? authRequestLabel('Your email', 'ایمیل شما')
+                : authRequestLabel('Your phone number', 'شمارهٔ شما'));
+            recipient.classList.add('dg-auth-identity--recipient');
+            if (!email) { recipient.classList.add('dg-auth-identity--phone'); }
+            recipient.querySelector('bdi').dir = 'ltr';
+            stack.appendChild(recipient);
+        }
+        var progress = document.createElement('p');
+        progress.className = 'dg-otp-progress';
+        progress.setAttribute('role', 'status');
+        progress.setAttribute('aria-atomic', 'true');
+        stack.append(editor, progress);
+        var heading = input.form?.querySelector('.digits-form_heading');
+        if (heading && !heading.querySelector('.dg-otp-heading')) {
+            var title = document.createElement('span');
+            title.className = 'dg-otp-heading';
+            title.textContent = getLabel('otpCode', 'Verification code');
+            heading.appendChild(title);
+        }
+        var cells = [];
+        var digitRolls = new WeakMap();
+        var staticDigits = window.matchMedia('(prefers-reduced-motion: reduce), (forced-colors: active)');
+
+        function setDigit(cell, digit, animate) {
+            var previous = cell.value;
+            cell.value = digit;
+            if (digit === previous) { return; }
+            digitRolls.get(cell)?.();
+            if (!digit || !animate || form?.dataset.dgOtpCursor !== 'bar' || staticDigits.matches || !cell.animate) { return; }
+
+            var roll = document.createElement('span');
+            roll.className = 'dg-otp-roll';
+            roll.setAttribute('aria-hidden', 'true');
+            cell.after(roll);
+            function animateGlyph(text, from, to) {
+                var glyph = document.createElement('span');
+                glyph.textContent = text;
+                roll.appendChild(glyph);
+                return glyph.animate([from, to], { duration: 180, easing: 'cubic-bezier(.2,.72,.25,1)', fill: 'both' });
+            }
+            var outgoing = previous ? animateGlyph(previous,
+                { opacity: 1, transform: 'translateY(0)' },
+                { opacity: 0, transform: 'translateY(-.5em)' }) : null;
+            var incoming = animateGlyph(digit,
+                { opacity: 0, transform: 'translateY(.55em)' },
+                { opacity: 1, transform: 'translateY(0)' });
+            function finish() {
+                if (digitRolls.get(cell) !== finish) { return; }
+                digitRolls.delete(cell);
+                roll.remove();
+                outgoing?.cancel();
+                incoming.cancel();
+            }
+            digitRolls.set(cell, finish);
+            incoming.finished.then(finish, finish);
+        }
+
+        function syncCode() {
+            input.value = cells.every(function (cell) { return cell.value !== ''; })
+                ? cells.map(function (cell) { return cell.value; }).join('') : '';
+            if (editor.hasAttribute('aria-invalid')) { form?.querySelector('.dg-otp-feedback')?.remove(); }
+            editor.removeAttribute('aria-invalid');
+            if (!input.value) { setOtpProgress(form, ''); }
+        }
+
+        function focusDigit(index) {
+            var cell = cells[Math.max(0, Math.min(index, count - 1))];
+            cell.focus({ preventScroll: true });
+            cell.select();
+        }
+
+        function fillDigits(value, index, moveFocus) {
+            var digits = otpDigits(value);
+            var start = digits.length >= count ? 0 : index;
+            digits.slice(0, count - start).split('').forEach(function (digit, offset) {
+                setDigit(cells[start + offset], digit, moveFocus);
+            });
+            syncCode();
+            if (moveFocus && digits.length) {
+                if (input.value.length === count) {
+                    submitCompletedOtp(input, count);
+                } else {
+                    focusDigit(start + digits.length);
+                }
+            }
+        }
+
+        for (var index = 0; index < count; index++) {
+            var slot = document.createElement('span');
+            slot.className = 'dg-auth-field dg-otp-slot';
+            var cell = document.createElement('input');
+            cell.type = 'text';
+            cell.className = 'dg-auth-input dg-otp-input';
+            cell.inputMode = 'numeric';
+            cell.autocomplete = index === 0 ? 'one-time-code' : 'off';
+            cell.placeholder = ' ';
+            cell.setAttribute('aria-label', getLabel('otpDigit', 'Digit %d').replace('%d', String(index + 1)));
+            slot.appendChild(cell);
+            editor.appendChild(slot);
+            cells.push(cell);
+        }
+
+        cells.forEach(function (cell, index) {
+            cell.addEventListener('focus', function () { cell.select(); });
+            cell.addEventListener('click', function () { cell.select(); });
+            cell.addEventListener('select', function () {
+                if (document.activeElement === cell && cell.value && (cell.selectionStart !== 0 || cell.selectionEnd !== cell.value.length)) {
+                    cell.select();
+                }
+            });
+            cell.addEventListener('beforeinput', function (event) {
+                if (event.inputType === 'insertText' && event.data !== null) {
+                    event.preventDefault();
+                    stopDigitsSmsWait(input.form);
+                    fillDigits(event.data, index, true);
+                }
+            });
+            cell.addEventListener('input', function () {
+                stopDigitsSmsWait(input.form);
+                var value = cell.value;
+                setDigit(cell, '', false);
+                fillDigits(value, index, true);
+            });
+            cell.addEventListener('paste', function (event) {
+                if (!event.clipboardData) {
+                    return;
+                }
+                event.preventDefault();
+                stopDigitsSmsWait(input.form);
+                fillDigits(event.clipboardData.getData('text'), index, true);
+            });
+            cell.addEventListener('keydown', function (event) {
+                var key = event.key;
+                var target = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: count - 1 }[key];
+                if (typeof target === 'number') {
+                    event.preventDefault();
+                    focusDigit(target);
+                } else if (key === 'Backspace' || key === 'Delete') {
+                    event.preventDefault();
+                    stopDigitsSmsWait(input.form);
+                    if (key === 'Backspace' && !cell.value && index > 0) {
+                        setDigit(cells[index - 1], '', false);
+                        focusDigit(index - 1);
+                    } else {
+                        setDigit(cell, '', false);
+                    }
+                    syncCode();
+                } else if (key === 'Enter') {
+                    event.preventDefault();
+                    var button = digitsSubmitButton(input.form);
+                    if (button) {
+                        button.focus({ preventScroll: true });
+                        button.click();
+                    }
+                }
+            });
+        });
+
+        var hadFocus = document.activeElement === input;
+        digitsOtpEditors.set(input, {
+            count: count,
+            moveInformation: moveInformation,
+            fill: function (code) {
+                cells.forEach(function (cell) { setDigit(cell, '', false); });
+                fillDigits(code, 0, false);
+            },
+            focus: function () {
+                focusDigit(cells.findIndex(function (cell) { return !cell.value; }));
+            },
+            reject: function () {
+                editor.setAttribute('aria-invalid', 'true');
+                focusDigit(0);
+            }
+        });
+        input.before(stack);
+        input.classList.add('dg-otp-native');
+        input.tabIndex = -1;
+        input.setAttribute('aria-hidden', 'true');
+        input.addEventListener('focus', function () { digitsOtpEditors.get(input).focus(); });
+        fillDigits(input.value, 0, false);
+        if (hadFocus) {
+            focusDigit(0);
+        }
+    }
+
+    function prepareRegistrationOtp(form) {
+        if (form.dataset.dgRegistrationOtp) {
+            return;
+        }
+        form.dataset.dgRegistrationOtp = 'true';
+        var buttonText = form.querySelector('.digits-form_submit-btn .digits-form_button-text');
+        var initialLabel = buttonText?.textContent;
+        function update() {
+            var otp = visibleDigitsOtpInput(form);
+            if (otp) {
+                if (!otp.classList.contains('disable_auto_read')) { otp.classList.add('disable_auto_read'); }
+                prepareDigitsOtpEditor(otp);
+            }
+            if (form.classList.contains('dg-otp-step') !== Boolean(otp)) {
+                form.classList.toggle('dg-otp-step', Boolean(otp));
+            }
+            var label = otp ? getLabel('verifyCode', 'Verify code') : initialLabel;
+            if (buttonText && buttonText.textContent !== label) { buttonText.textContent = label; }
+            updateDigitsResend(form);
+        }
+        var observer = new MutationObserver(update);
+        observer.observe(form, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'] });
+        update();
+        form.addEventListener('click', function (event) {
+            var resend = event.target.closest('.dg-otp-resend[aria-disabled="true"]');
+            if (resend) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+            if (event.target.closest('.digits_form_back')) {
+                clearDigitsOtpContinuation(form);
+                stopDigitsSmsWait(form);
+            }
+        }, true);
+        window.addEventListener('pagehide', function () { stopDigitsSmsWait(form); });
+    }
+
+    function setBrandedAuthForm(shell, signup) {
+        var login = shell.querySelector('form.digloginpage');
+        var register = shell.querySelector('form.digits_register');
+        if (!login || !register) {
+            return null;
+        }
+        stopDigitsSmsWait(signup ? login : register);
+        [login, register].forEach(function (form) {
+            var active = form === (signup ? register : login);
+            form.hidden = !active;
+            form.style.display = active ? '' : 'none';
+        });
+        shell.dataset.dgAuthMode = signup ? 'signup' : 'login';
+        return signup ? register : login;
+    }
+
+    function continueToDigitsSignup(form, data) {
+        var shell = form && form.closest && form.closest('.dg-digits-login-shell');
+        if (!shell || !form.matches('.digloginpage') || !data || data.notice !== true
+            || !['Please signup before logging in.', 'لطفا قبل از ورود عضو شوید.'].concat(config.digitsSignupNotice || [])
+                .includes(cleanText(data.message, ''))
+            || shell.dataset.dgIdentity !== 'phone') {
+            return false;
+        }
+        var phone = form.querySelector('[name="digits_phone"]');
+        var country = form.querySelector('[name="login_digt_countrycode"]');
+        var register = shell.querySelector('form.digits_register');
+        var signupPhone = register && register.querySelector('[name="phone"]');
+        if (!phone || !signupPhone || !register.classList.contains('digits_form_index_section')) {
+            return false;
+        }
+        setBrandedAuthForm(shell, true);
+        var signupCountry = register.querySelector('[name="digt_countrycode"]');
+        if (country && signupCountry) {
+            signupCountry.value = country.value;
+        }
+        signupPhone.value = phone.value;
+        signupPhone.dispatchEvent(new Event('input', { bubbles: true }));
+        signupPhone.focus({ preventScroll: true });
+        window.setTimeout(function () {
+            if (shell.dataset.dgAuthMode === 'signup') {
+                var submit = digitsSubmitButton(register);
+                if (submit) { submit.click(); }
+            }
+        }, 0);
         return true;
+    }
+
+    function startDigitsResendTimer(form, data) {
+        var seconds = Number(data?.resend_timer);
+        if (form && Number.isFinite(seconds) && seconds > 0) {
+            digitsResendTimers.set(form, { seconds: seconds, until: Date.now() + seconds * 1000 });
+        }
+    }
+
+    function updateDigitsResend(form) {
+        var timer = digitsResendTimers.get(form);
+        if (!timer || !visibleDigitsOtpInput(form)) {
+            return;
+        }
+
+        var button = Array.from(form.querySelectorAll('.digits-form_resend_otp')).find(function (item) {
+            return isVisibleElement(item) && !item.closest('.digits-form_footer_content');
+        });
+        if (!button || timer.button === button) {
+            return;
+        }
+        timer.button = button;
+        button.classList.add('dg-otp-resend');
+        putAuthIcon(button, 'sms');
+        button.setAttribute('aria-label', getLabel('otpResend', 'Resend code'));
+        if (!button.matches('button, input') && !button.matches('a[href]')) {
+            button.setAttribute('role', 'button');
+            button.tabIndex = 0;
+        }
+        if (!button.matches('button, input') && !button.dataset.dgResendKeyboard) {
+            button.dataset.dgResendKeyboard = 'true';
+            button.addEventListener('keydown', function (event) {
+                if (event.key === ' ' || (event.key === 'Enter' && !button.matches('a[href]'))) {
+                    event.preventDefault();
+                    button.click();
+                }
+            });
+        }
+
+        function tick() {
+            if (!button.isConnected || timer.button !== button || digitsResendTimers.get(form) !== timer) {
+                return;
+            }
+            var remaining = Math.max(0, timer.until - Date.now());
+            var progress = Math.min(100, Math.max(0, 100 * (1 - remaining / (timer.seconds * 1000))));
+            button.style.setProperty('--dg-resend-progress', progress + '%');
+            button.setAttribute('aria-disabled', remaining > 0 ? 'true' : 'false');
+            if (remaining > 0) {
+                window.setTimeout(tick, 100);
+            } else {
+                button.classList.remove('digits_resend_disabled');
+            }
+        }
+        tick();
+    }
+
+    function stopDigitsSmsWait(form) {
+        var wait = digitsSmsWaits.get(form);
+        if (wait) {
+            digitsSmsWaits.delete(form);
+            wait.controller.abort();
+        }
+    }
+
+    function submitReceivedSmsCode(form, wait) {
+        if (digitsSmsWaits.get(form) !== wait || !wait.ready || !wait.code) {
+            return;
+        }
+
+        var input = visibleDigitsSmsInput(form);
+        var button = digitsSubmitButton(form);
+        stopDigitsSmsWait(form);
+        if (input && button && !input.value && !button.disabled) {
+            var editor = digitsOtpEditors.get(input);
+            if (editor) {
+                editor.fill(wait.code);
+            } else {
+                input.value = wait.code;
+            }
+            submitCompletedOtp(input, editor?.count || 6);
+        }
+    }
+
+    function startDigitsSmsWait(form) {
+        stopDigitsSmsWait(form);
+        if (!('OTPCredential' in window) || !window.AbortController) {
+            return null;
+        }
+
+        var wait = { controller: new window.AbortController(), ready: false, code: '' };
+        digitsSmsWaits.set(form, wait);
+
+        // Register before the SMS request goes out, even if the carrier delivers immediately.
+        navigator.credentials.get({ otp: { transport: ['sms'] }, signal: wait.controller.signal }).then(function (credential) {
+            if (credential && /^[0-9]{4,8}$/.test(credential.code)) {
+                wait.code = credential.code;
+                submitReceivedSmsCode(form, wait);
+            }
+        }).catch(function () {
+            if (digitsSmsWaits.get(form) === wait) {
+                stopDigitsSmsWait(form);
+            }
+        });
+        return wait;
     }
 
     function patchDigitsAjaxFailureGuard() {
@@ -1418,45 +3127,163 @@
                 var guardedSettings = Object.assign({}, settings);
                 var success = guardedSettings.success;
                 var errorHandler = guardedSettings.error;
+                var beforeSend = guardedSettings.beforeSend;
+                var complete = guardedSettings.complete;
+                var requestForm = digitsRequestForm();
+                var brandedAuth = requestForm && requestForm.closest && requestForm.closest('.dg-digits-login-shell, .dg-digits-register-shell');
+                var fields = brandedAuth && Array.isArray(settings.data) ? settings.data : [];
+                var checksStatus = fields.some(function (field) { return field && field.name === 'check_status'; });
+                var sendsSms = fields.some(function (field) { return field && field.name === 'sub_action' && field.value === 'sms_otp'; });
+                var sendsEmail = fields.some(function (field) { return field && field.name === 'sub_action' && field.value === 'email_otp'; });
+                var sendsCode = sendsSms || sendsEmail;
+                var verifiesCode = !sendsCode && !checksStatus && fields.some(function (field) {
+                    return field && ['sms_otp', 'email_otp'].includes(field.name) && field.value;
+                });
+                if (verifiesCode) {
+                    guardedSettings.data = fields.slice();
+                    var attempt = attachDigitsOtpAttempt(requestForm);
+                    if (attempt) { guardedSettings.data.push({ name: 'dg_otp_attempt', value: attempt }); }
+                    if (authRecovery) { guardedSettings.data.push({ name: 'dg_recovery', value: '1' }); }
+                }
+                if (sendsCode || checksStatus) {
+                    guardedSettings.data = fields.map(function (field) {
+                        return field && ['sms_otp', 'email_otp'].includes(field.name) ? { name: field.name, value: '' } : field;
+                    });
+                }
+                if (!checksStatus && fields.length && authFlow) {
+                    guardedSettings.data = (guardedSettings.data === settings.data ? fields.slice() : guardedSettings.data);
+                    guardedSettings.data.push({ name: 'dg_auth_flow', value: authFlow });
+                }
+                if (checksStatus) {
+                    args[settingsIndex] = guardedSettings;
+                    return originalAjax.apply(this, args);
+                }
+                var smsWait = null;
+
+                if (!guardedSettings.timeout) {
+                    guardedSettings.timeout = 30000;
+                }
+
+                guardedSettings.beforeSend = function () {
+                    if (typeof beforeSend === 'function' && beforeSend.apply(this, arguments) === false) {
+                        return false;
+                    }
+                    if (brandedAuth) { requestForm.querySelector('.dg-digits-inline-message')?.remove(); }
+                    if (sendsSms) {
+                        var previousCode = visibleDigitsSmsInput(requestForm);
+                        if (previousCode) {
+                            var editor = digitsOtpEditors.get(previousCode);
+                            if (editor) {
+                                editor.fill('');
+                            } else {
+                                previousCode.value = '';
+                            }
+                        }
+                        smsWait = startDigitsSmsWait(requestForm);
+                    } else {
+                        if (verifiesCode) {
+                            stopDigitsSmsWait(requestForm);
+                            setOtpProgress(requestForm, 'verifying');
+                        }
+                        var action = document.activeElement;
+                        markLoading(action && action.matches && action.matches('.dg-passkey-options .digits-form_passwordless_login')
+                            ? action : digitsSubmitButton(requestForm), false, requestForm);
+                    }
+                };
+
+                guardedSettings.complete = function () {
+                    clearLoading();
+                    if (smsWait && digitsSmsWaits.get(requestForm) === smsWait) {
+                        if (smsWait.ready && visibleDigitsSmsInput(requestForm)) {
+                            submitReceivedSmsCode(requestForm, smsWait);
+                        } else {
+                            stopDigitsSmsWait(requestForm);
+                        }
+                    }
+                    if (typeof complete === 'function') {
+                        return complete.apply(this, arguments);
+                    }
+                };
 
                 guardedSettings.success = function (payload) {
-                    if (!hasUsableDigitsPayload(payload)) {
-                        clearLoading();
-                        showLoginFailureMessage(
-                            null,
-                            getLabel('digitsMalformedAjax', 'خطای افزونه Digits: پاسخ AJAX مرحله ورود بدون داده معتبر برگشت، بنابراین callback افزونه اجرا نشد تا فرم گیر نکند. دوباره تلاش کنید.'),
-                            'error'
-                        );
-                        return;
-                    }
-
                     try {
+                        if (!hasUsableDigitsPayload(payload)) {
+                            clearLoading();
+                            if (brandedAuth) {
+                                // Give Digits a safe failure shape so it can release its own submit lock.
+                                withoutDigitsToast(success, this, [{ success: false, data: {} }]);
+                                showDigitsInlineMessage(requestForm, digitsRequestFailure(null, 'malformed'), 'error');
+                            }
+                            return;
+                        }
+                        if (payload.success) {
+                            finishBrandedDigitsLogin(requestForm, payload.data);
+                            if (brandedAuth) {
+                                if (verifiesCode && completeRecovery(payload.data, requestForm)) { return; }
+                                if (payload.data.process || (verifiesCode && (payload.data.redirect || payload.data.reload))) {
+                                    var successContext = this;
+                                    var successArgs = arguments;
+                                    showAuthSuccess(function () {
+                                        if (verifiesCode) { clearDigitsOtpContinuation(requestForm); }
+                                        success?.apply(successContext, successArgs);
+                                    });
+                                    return;
+                                }
+                            }
+                        } else if (brandedAuth && continueToDigitsSignup(requestForm, payload.data)) {
+                            // Release the vendor's submit lock without displaying its signup notice.
+                            if (typeof success === 'function') {
+                                success.call(this, { success: true, data: {} });
+                            }
+                            return;
+                        } else if (brandedAuth && (verifiesCode || !payload.data?.reload)) {
+                            var callbackArgs = Array.from(arguments);
+                            callbackArgs[0] = Object.assign({}, payload, {
+                                data: typeof payload.data === 'string' ? { message: payload.data } : { ...payload.data, reload: false }
+                            });
+                            withoutDigitsToast(success, this, callbackArgs);
+                            clearLoading();
+                            digitsResponseFailure(requestForm, payload, verifiesCode, sendsCode);
+                            return;
+                        }
+                        if (brandedAuth && payload.success) {
+                            if (sendsSms) { payload.data.check_remote_status = false; }
+                            startDigitsResendTimer(requestForm, payload.data);
+                        }
+                        if (smsWait && payload.success) {
+                            smsWait.ready = true;
+                            // This form already has a cancellable WebOTP request.
+                            payload.data.auto_fill = false;
+                        }
                         if (typeof success === 'function') {
-                            return success.apply(this, arguments);
+                            var result = success.apply(this, arguments);
+                            if (brandedAuth && payload.success && digitsResendTimers.has(requestForm)) {
+                                updateDigitsResend(requestForm);
+                            }
+                            if (brandedAuth && payload.success && !verifiesCode) {
+                                saveDigitsOtpContinuation(requestForm);
+                            }
+                            return result;
                         }
                     } catch (error) {
                         clearLoading();
                         window.console && window.console.error && window.console.error(error);
-                        showLoginFailureMessage(
-                            null,
-                            getLabel('digitsAjaxCallbackError', 'خطای افزونه Digits هنگام پردازش پاسخ ورود: ') + cleanText(error && error.message, 'خطای نامشخص'),
-                            'error'
-                        );
+                        if (brandedAuth) { showDigitsInlineMessage(requestForm, digitsRequestFailure(null, 'callback'), 'error'); }
                     }
                 };
 
-                guardedSettings.error = function () {
+                guardedSettings.error = function (request, state) {
                     clearLoading();
-
-                    if (typeof errorHandler === 'function') {
-                        return errorHandler.apply(this, arguments);
+                    if (!brandedAuth) {
+                        return typeof errorHandler === 'function' ? errorHandler.apply(this, arguments) : undefined;
                     }
-
-                    showLoginFailureMessage(
-                        null,
-                        getLabel('requestError', 'درخواست AJAX ورود شکست خورد. دوباره تلاش کنید.'),
-                        'error'
-                    );
+                    withoutDigitsToast(errorHandler, this, arguments);
+                    if (state === 'abort') { return; }
+                    var showFailure = function () {
+                        showDigitsInlineMessage(requestForm, digitsRequestFailure(request, state), 'error');
+                    };
+                    if (verifiesCode) { recoverDigitsOtpCompletion(requestForm, showFailure); }
+                    else { showFailure(); }
                 };
 
                 args[settingsIndex] = guardedSettings;
@@ -1557,29 +3384,78 @@
     }
 
     function submitDigitsSecureForm(form) {
+        if (digitsOtpChecking.has(form)) { return; }
+        var identityAction = isDigitsIdentityStep(form) ? digitsIdentityAction(form) : null;
+        if (identityAction) { digitsSmsSelections.delete(form); }
+        if (identityAction && !identityAction.enabled) {
+            reportInvalidDigitsIdentity(form, identityAction);
+            return;
+        }
         var button = digitsSubmitButton(form);
+        var otp = visibleDigitsOtpInput(form);
+
+        if (otp && digitsOtpEditors.has(otp) && !otp.value) {
+            showDigitsInlineMessage(form, getLabel('otpIncomplete', 'Enter the full verification code.'), 'warning');
+            digitsOtpEditors.get(otp).focus();
+            return;
+        }
+
+        var continuation = digitsOtpContinuations.get(form);
+        if (otp && continuation?.restored) { restoreDigitsOtpFields(form, continuation); }
 
         prepareDigitsCaptchaProtection();
 
+        var shell = form.closest('.dg-digits-login-shell');
+        var mode = shell?.dataset.dgIdentity;
+        if (form.dataset.dgSmsIdentity === 'true' && mode !== 'phone' && mode !== 'email') {
+            showDigitsInlineMessage(form, getLabel('smsIdentity', 'Enter the mobile number on your account to receive a code.'), 'warning');
+            return;
+        }
+        if (form.dataset.dgSmsIdentity === 'true' && mode === 'email' && form.classList.contains('digits_form_index_section')
+            && !emailDomain(digitsIdentityValue(form))) {
+            showDigitsInlineMessage(form, getLabel('invalidEmail', 'Enter a valid email address.'), 'warning');
+            return;
+        }
+        if (identityAction?.type === 'call') {
+            form.querySelector('.dg-digits-inline-message')?.remove();
+            if (!window.DigitalogicCallLogin?.start(identityAction.number.e164)) {
+                showDigitsInlineMessage(form, getLabel('callLoadFailed', 'The call verification controls did not load. Reload this page and try again.'), 'warning');
+            }
+            return;
+        }
+
+        var password = form.matches('form.digloginpage') ? visibleDigitsPassword(form) : null;
+        if ((form.dataset.dgUsernameStep === 'password' || password?.required) && !validateSignInPassword(password, form)) {
+            clearLoading();
+            return;
+        }
+
         if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+            form.reportValidity?.();
             clearLoading();
             return;
         }
 
-        if (maybeHandleDigitsUsernameSubmit(form)) {
-            clearLoading();
+        if (form.dataset.dgUsernameStep === 'password') {
+            submitDigitsUsernameLogin(form);
+            return;
+        }
+        if (identityAction?.type === 'password') {
+            showDigitsUsernamePasswordStep(form, digitsIdentityValue(form));
             return;
         }
 
+        if (otp) { setOtpProgress(form, 'verifying'); }
         if (hasPendingDigitsRecaptcha(form) && !waitForDigitsRecaptcha(form, button)) {
             return;
         }
 
-        markLoading(button, false, form);
-
+        if (identityAction?.type === 'sms') { digitsSmsSelections.add(form); }
         if (window.jQuery && typeof window.digitsSecureFormSubmit === 'function') {
             try {
-                window.digitsSecureFormSubmit(window.jQuery(form));
+                if (window.digitsSecureFormSubmit(window.jQuery(form)) === false) {
+                    clearLoading();
+                }
                 return;
             } catch (error) {
                 clearLoading();
@@ -1601,29 +3477,21 @@
             }
 
             var form = button.closest('form');
+            if (button.matches('.digits-form_passwordless_login')) {
+                if (!button.closest('details.dg-passkey-options[open]')) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                }
+                return;
+            }
             if (!isDigitsSecureForm(form)) {
                 return;
             }
-
-            var value = digitsIdentityValue(form);
-            var identityType = classifyIdentity(value);
-            var isUsernameFlow = form.dataset.dgUsernameStep === 'password' || identityType === 'username' || identityType === 'email';
 
             event.preventDefault();
             event.stopPropagation();
             if (typeof event.stopImmediatePropagation === 'function') {
                 event.stopImmediatePropagation();
-            }
-
-            if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
-                form.reportValidity();
-                clearLoading();
-                return;
-            }
-
-            if (isUsernameFlow) {
-                maybeHandleDigitsUsernameSubmit(form);
-                return;
             }
 
             submitDigitsSecureForm(form);
@@ -1658,6 +3526,12 @@
                 return;
             }
 
+            // Native Digits validation can reject before sending any request.
+            // Its AJAX beforeSend hook owns loading, so validation is not a timeout.
+            if (isDigitsSecureForm(button.closest('form'))) {
+                return;
+            }
+
             window.setTimeout(function () {
                 var form = button.closest('form');
                 if (form && typeof form.checkValidity === 'function' && !form.checkValidity()) {
@@ -1673,8 +3547,13 @@
         window.addEventListener('pageshow', clearLoading);
 
         if (window.jQuery) {
-            window.jQuery(document).ajaxComplete(clearLoading);
-            window.jQuery(document).ajaxError(clearLoading);
+            var finishDigitsRequest = function (event, request, settings) {
+                if (isDigitsAjaxRequest(settings)) {
+                    clearLoading();
+                }
+            };
+            window.jQuery(document).ajaxComplete(finishDigitsRequest);
+            window.jQuery(document).ajaxError(finishDigitsRequest);
         }
     }
 
@@ -1693,26 +3572,6 @@
         var countryCode = shell.querySelector('input[name="login_digt_countrycode"]');
         var phoneBody = phoneInput ? phoneInput.closest('.digits-form_tab_body') : null;
         var emailBody = emailInput ? emailInput.closest('.digits-form_tab_body') : null;
-
-        function stabilizePhoneLayout(isPhoneMode) {
-            if (!phoneInput) {
-                return;
-            }
-
-            phoneInput.style.removeProperty('padding-left');
-            phoneInput.style.removeProperty('padding-right');
-            phoneInput.style.removeProperty('width');
-            phoneInput.style.removeProperty('flex');
-
-            if (!isPhoneMode) {
-                return;
-            }
-
-            phoneInput.style.setProperty('padding-left', '12px', 'important');
-            phoneInput.style.setProperty('padding-right', '12px', 'important');
-            phoneInput.style.setProperty('width', '100%', 'important');
-            phoneInput.style.setProperty('flex', '1 1 auto', 'important');
-        }
 
         if (hidden) {
             hidden.value = nextMode === 'username' || nextMode === 'unknown' ? 'phone' : nextMode;
@@ -1739,7 +3598,10 @@
             phoneInput.required = visibleMode === 'phone';
             phoneInput.type = nextMode === 'phone' ? 'tel' : 'text';
             phoneInput.setAttribute('inputmode', nextMode === 'phone' ? 'tel' : 'text');
-            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national' : 'username');
+            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national'
+                : phoneInput.dataset.dgPasskeyAutofill ? 'username webauthn' : 'username');
+            var firstLetter = phoneInput.value.match(/\p{Letter}/u)?.[0] || '';
+            phoneInput.dir = nextMode === 'username' && /[\p{Script=Arabic}\p{Script=Hebrew}]/u.test(firstLetter) ? 'rtl' : 'ltr';
         }
 
         if (emailInput) {
@@ -1755,13 +3617,18 @@
         }
 
         shell.dataset.dgIdentity = nextMode;
-        stabilizePhoneLayout(nextMode === 'phone');
-        window.setTimeout(function () {
-            stabilizePhoneLayout(nextMode === 'phone');
-        }, 0);
-        window.setTimeout(function () {
-            stabilizePhoneLayout(nextMode === 'phone');
-        }, 80);
+        var form = phoneInput?.form || emailInput?.form;
+        if (form) {
+            setDigitsIdentityPrompt(form, nextMode);
+            syncDigitsIdentityButton(form);
+        }
+        [phoneInput, emailInput].filter(Boolean).forEach(function (input) {
+            var holder = input.closest('.digits-form_input');
+            if (!holder) { return; }
+            holder.classList.add('dg-auth-input-icon');
+            putAuthIcon(holder, nextMode === 'email' ? 'email' : nextMode === 'phone' ? 'phone' : 'user');
+        });
+        loginAccountPickers.get(form)?.(visibleMode === 'email' ? emailInput : phoneInput, nextMode);
 
         if (focusInput) {
             var nextInput = visibleMode === 'email' ? emailInput : phoneInput;
@@ -1771,8 +3638,132 @@
         }
     }
 
+    function bindEmailDomainFeedback(input) {
+        var form = input.form;
+        var row = input.closest('.digits-form_input_row') || input;
+        var status = document.createElement('p');
+        status.id = 'dg-email-domain-status';
+        status.className = 'dg-auth-message';
+        status.setAttribute('role', 'status');
+        row.after(status);
+        input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
+        var persian = document.documentElement.lang.toLowerCase().startsWith('fa');
+        var labels = {
+            checking: persian ? 'در حال بررسی دامنهٔ ایمیل…' : 'Checking the email domain…',
+            valid: persian ? 'دامنهٔ ایمیل معتبر است.' : 'The email domain accepts mail.',
+            invalid: persian ? 'برای این دامنه سرویس ایمیل پیدا نشد. نشانی را بررسی کنید.' : 'No mail service was found for this domain. Check the address.',
+            format: persian ? 'نشانی ایمیل معتبر وارد کنید.' : 'Enter a valid email address.',
+            unavailable: persian ? 'بررسی دامنه فعلاً ممکن نیست.' : 'The domain check is temporarily unavailable.'
+        };
+        var cache = new Map();
+        var timer;
+        var pending;
+        var failedDomain;
+
+        function render(state, attempted) {
+            input.setAttribute('aria-invalid', String(state === 'invalid' || state === 'format'));
+            syncDigitsIdentityButton(form);
+            var tone = ({ checking: attempted ? 'warning' : 'progress', valid: 'success', invalid: 'error', format: 'error', unavailable: 'warning' })[state];
+            if (status.dataset.state === state && status.dataset.tone === tone) { return; }
+            status.dataset.state = state;
+            var retry;
+            if (state === 'unavailable') {
+                retry = document.createElement('button');
+                retry.type = 'button';
+                retry.textContent = persian ? 'تلاش دوباره' : 'Try again';
+                retry.addEventListener('click', function () {
+                    failedDomain = null;
+                    input.focus();
+                    update(true);
+                });
+            }
+            var message = state === 'checking' && attempted
+                ? authRequestLabel('Wait for the email check to finish.', 'صبر کنید تا بررسی ایمیل تمام شود.')
+                : labels[state];
+            renderAuthMessage(status, message, tone || '', retry);
+        }
+
+        async function check(domain) {
+            var request = { domain: domain, controller: new AbortController() };
+            pending = request;
+            var timeout = window.setTimeout(function () { request.controller.abort(); }, 6500);
+            try {
+                var body = new URLSearchParams({
+                    action: 'digitalogic_email_domain',
+                    nonce: config.emailDomainNonce,
+                    domain: domain
+                });
+                var socketResult = authFlow ? await authSocketRequest('digitalogic_auth_email_domain', { domain: domain }) : null;
+                if (request.controller.signal.aborted) { return; }
+                var result = { success: true, data: socketResult };
+                if (typeof socketResult?.valid !== 'boolean') {
+                    var response = await window.fetch(config.ajaxUrl, {
+                        method: 'POST', credentials: 'same-origin', body: body, signal: request.controller.signal
+                    });
+                    result = response.ok ? await response.json() : null;
+                }
+                if (!result?.success || typeof result.data?.valid !== 'boolean') { throw new Error('Email domain check failed'); }
+                if (pending === request && !input.disabled && emailDomain(input.value) === domain) {
+                    if (cache.size >= 24) { cache.clear(); }
+                    cache.set(domain, result.data.valid);
+                    render(result.data.valid ? 'valid' : 'invalid');
+                }
+            } catch (error) {
+                if (pending === request && !input.disabled && emailDomain(input.value) === domain) {
+                    failedDomain = domain;
+                    render('unavailable');
+                }
+            } finally {
+                window.clearTimeout(timeout);
+                if (pending === request) { pending = null; }
+            }
+        }
+
+        function update(onBlur) {
+            var value = input.disabled ? '' : input.value;
+            var domain = emailDomain(value);
+            window.clearTimeout(timer);
+            if (failedDomain !== domain) { failedDomain = null; }
+            if (pending && pending.domain !== domain) {
+                pending.controller.abort();
+                pending = null;
+            }
+            if (!domain) {
+                render(value && onBlur ? 'format' : '');
+                return;
+            }
+            if (cache.has(domain)) {
+                render(cache.get(domain) ? 'valid' : 'invalid');
+                return;
+            }
+            if (failedDomain === domain || !config.emailDomainNonce) {
+                render('unavailable');
+                return;
+            }
+            if (pending) { return; }
+            render('checking');
+            if (onBlur) {
+                void check(domain);
+            } else {
+                timer = window.setTimeout(function () { void check(domain); }, 300);
+            }
+        }
+
+        digitsEmailChecks.set(form, {
+            report: function () {
+                form.querySelector('.dg-digits-inline-message')?.remove();
+                input.focus({ preventScroll: true });
+                update(true);
+                if (!emailDomain(input.value)) { render('format', true); }
+                else if (status.dataset.state === 'checking') { render('checking', true); }
+            },
+            isVerified: function (value) { return cache.get(emailDomain(value)) === true; }
+        });
+        return update;
+    }
+
     var dgCountryOptions = [
-        { code: '+98', flag: 'ir', label: 'Iran', labelFa: 'ایران' },
+        { code: '+98', flag: 'ir-tricolor', label: 'Iran', labelFa: 'ایران' },
         { code: '+1', flag: 'us', label: 'United States / Canada', labelFa: 'آمریکا / کانادا' },
         { code: '+971', flag: 'ae', label: 'United Arab Emirates', labelFa: 'امارات متحده عربی' },
         { code: '+90', flag: 'tr', label: 'Turkey', labelFa: 'ترکیه' },
@@ -1784,10 +3775,6 @@
         { code: '+93', flag: 'af', label: 'Afghanistan', labelFa: 'افغانستان' }
     ];
 
-    function countryLabel(option) {
-        return isPersianLocale() ? (option.labelFa || option.label) : option.label;
-    }
-
     function countryFlagUrl(option) {
         var base = config.flagBaseUrl || '/wp-content/plugins/digitalogic-wp/assets/images/flags/';
         return base.replace(/\/?$/, '/') + encodeURIComponent(option.flag || 'intl') + '.svg';
@@ -1798,115 +3785,230 @@
     }
 
     function normalizeCountryCode(value) {
-        var digits = normalizeDigits(value).replace(/\D/g, '');
-        if (!digits) {
-            return '';
-        }
+        var text = normalizeDigits(value).normalize('NFKC').trim();
+        var digits = text.replace(/\D/g, '');
+        if (!digits && !text) { return ''; }
+        return '+' + digits.replace(/^0+/, '');
+    }
 
-        if (digits.indexOf('00') === 0) {
-            digits = digits.slice(2);
+    var countryCallingCodes;
+    function isCountryCallingCode(value) {
+        if (!countryCallingCodes) {
+            var library = window.libphonenumber;
+            countryCallingCodes = new Set(dgCountryOptions.map(function (option) { return option.code; }));
+            library?.getCountries().forEach(function (region) {
+                countryCallingCodes.add('+' + library.getCountryCallingCode(region));
+            });
         }
-
-        return '+' + digits.slice(0, 4);
+        return countryCallingCodes.has(value);
     }
 
     function countryOptionForCode(code) {
-        var normalized = normalizeCountryCode(code);
-        return dgCountryOptions.find(function (option) {
-            return option.code === normalized;
-        }) || { code: normalized || (config.defaultCountryCode || '+98'), flag: 'intl', label: 'International', labelFa: 'بین المللی' };
+        return dgCountryOptions.find(function (option) { return option.code === code; }) ||
+            { flag: 'intl', label: 'International', labelFa: 'بین‌المللی' };
     }
 
     function bindCountryCodePicker(shell) {
-        var wrap = shell && shell.querySelector('.digits-form_countrycode');
-        var input = wrap && wrap.querySelector('input[name="login_digt_countrycode"]');
-
-        if (!wrap || !input || wrap.dataset.dgCountryReady === 'true') {
-            return;
-        }
+        var input = shell?.querySelector('input[name="login_digt_countrycode"]');
+        var wrap = input?.closest('.digits-form_countrycode');
+        if (!wrap || wrap.dataset.dgCountryReady === 'true') { return; }
 
         wrap.dataset.dgCountryReady = 'true';
         wrap.classList.add('dg-country-code-control');
-        input.setAttribute('inputmode', 'tel');
-        input.setAttribute('autocomplete', 'tel-country-code');
+        input.classList.add('dg-auth-input', 'dg-country-input');
+        input.dir = 'ltr';
+        input.inputMode = 'tel';
+        input.autocomplete = 'tel-country-code';
+        input.maxLength = 8;
+        var lang = document.documentElement.lang;
+        var persian = lang ? /^fa(?:[-_]|$)/i.test(lang) : isPersianLocale();
+        function countryLabel(option) {
+            return persian ? (option.labelFa || option.label) : option.label;
+        }
+        var label = getLabel('chooseCountryCode', 'Choose country code');
+        input.setAttribute('aria-label', persian ? 'پیش‌شماره کشور' : 'Country calling code');
 
-        var flag = document.createElement('span');
+        var flag = document.createElement('button');
+        flag.type = 'button';
         flag.className = 'dg-country-flag';
-        flag.setAttribute('aria-hidden', 'true');
+        flag.setAttribute('aria-label', persian ? 'وارد کردن شماره تلفن' : 'Enter phone number');
+        function focusPhone() {
+            shell.querySelector('input[name="digits_phone"]')?.focus({ preventScroll: true });
+        }
 
         var chevron = document.createElement('button');
         chevron.type = 'button';
         chevron.className = 'dg-country-trigger';
+        chevron.setAttribute('aria-label', label);
         chevron.setAttribute('aria-haspopup', 'listbox');
         chevron.setAttribute('aria-expanded', 'false');
-        chevron.innerHTML = '<span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>';
+        chevron.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
         var menu = document.createElement('div');
+        menu.id = 'dg-country-code-options';
         menu.className = 'dg-country-menu';
         menu.setAttribute('role', 'listbox');
+        menu.setAttribute('aria-label', label);
         menu.setAttribute('aria-hidden', 'true');
+        menu.inert = true;
+        chevron.setAttribute('aria-controls', menu.id);
+
+        var status = document.createElement('p');
+        status.id = 'dg-country-code-status';
+        status.className = 'dg-auth-message';
+        status.setAttribute('role', 'status');
+        wrap.closest('.digits-mobile_wrapper')?.after(status);
+        input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), status.id].filter(Boolean).join(' '));
+
+        var options = dgCountryOptions.map(function (option) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.tabIndex = -1;
+            button.className = 'dg-country-option';
+            button.dataset.code = option.code;
+            button.setAttribute('role', 'option');
+            button.innerHTML = countryFlagMarkup(option, 'dg-country-option-flag') +
+                '<span class="dg-country-option-code" dir="ltr">' + escapeHtml(option.code) + '</span>' +
+                '<span class="dg-country-option-name" dir="auto">' + escapeHtml(countryLabel(option)) + '</span>';
+            button.addEventListener('click', function () {
+                input.value = option.code;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                focusPhone();
+                closeMenu();
+            });
+            menu.appendChild(button);
+            return button;
+        });
 
         function closeMenu() {
             wrap.classList.remove('is-open');
             chevron.setAttribute('aria-expanded', 'false');
             menu.setAttribute('aria-hidden', 'true');
+            menu.inert = true;
         }
 
-        function toggleMenu() {
-            var open = !wrap.classList.contains('is-open');
-            wrap.classList.toggle('is-open', open);
-            chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-            menu.setAttribute('aria-hidden', open ? 'false' : 'true');
+        function openMenu(fromEnd) {
+            wrap.classList.add('is-open');
+            chevron.setAttribute('aria-expanded', 'true');
+            menu.setAttribute('aria-hidden', 'false');
+            menu.inert = false;
+            var selected = options.find(function (button) { return button.dataset.code === input.value; });
+            focusOption(selected || options[fromEnd ? options.length - 1 : 0]);
+        }
+
+        function focusOption(button) {
+            button.focus({ preventScroll: true });
+            // Scroll the list, keeping the sign-in card and page stationary.
+            var list = menu.getBoundingClientRect();
+            var row = button.getBoundingClientRect();
+            if (row.bottom > list.bottom - 8) { menu.scrollTop += row.bottom - list.bottom + 8; }
+            if (row.top < list.top + 8) { menu.scrollTop -= list.top - row.top + 8; }
+        }
+
+        function showValidation(show) {
+            var invalid = show && !isCountryCallingCode(input.value);
+            input.setAttribute('aria-invalid', String(invalid));
+            var message = invalid
+                ? (persian ? 'پیش‌شمارهٔ معتبر وارد کنید یا کشوری از فهرست انتخاب کنید.' : 'Enter a valid calling code or choose a country from the list.')
+                : '';
+            if (status.textContent !== message) { renderAuthMessage(status, message, 'error'); }
+        }
+
+        function syncSelection() {
+            input.toggleAttribute('data-dg-code-selected', document.activeElement === input &&
+                input.selectionStart === 0 && input.selectionEnd === input.value.length);
         }
 
         function syncFlag() {
-            var value = normalizeCountryCode(input.value) || (config.defaultCountryCode || '+98');
-            input.value = value;
+            var start = input.selectionStart;
+            var end = input.selectionEnd;
+            var original = input.value;
+            var value = normalizeCountryCode(original) || '+';
+            if (value.length > 4) { value = '+'; }
+            if (original !== value) {
+                input.value = value;
+                if (start !== null && end !== null) {
+                    input.setSelectionRange(
+                        (normalizeCountryCode(original.slice(0, start)) || '+').length,
+                        (normalizeCountryCode(original.slice(0, end)) || '+').length
+                    );
+                }
+            }
+            input.style.setProperty('--dg-code-chars', String(value.length));
             var option = countryOptionForCode(value);
-            flag.textContent = '';
             flag.style.setProperty('--dg-flag', 'url(' + countryFlagUrl(option) + ')');
-            flag.setAttribute('title', countryLabel(option));
-
-            menu.querySelectorAll('.dg-country-option').forEach(function (button) {
-                var active = button.dataset.code === value;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-selected', active ? 'true' : 'false');
+            flag.title = countryLabel(option);
+            options.forEach(function (button) {
+                button.setAttribute('aria-selected', String(button.dataset.code === value));
             });
+            showValidation(document.activeElement !== input);
+            syncSelection();
         }
 
-        dgCountryOptions.forEach(function (option) {
-            var button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'dg-country-option';
-            button.dataset.code = option.code;
-            button.setAttribute('role', 'option');
-            button.innerHTML = countryFlagMarkup(option, 'dg-country-option-flag') +
-                '<span class="dg-country-option-code">' + escapeHtml(option.code) + '</span>' +
-                '<span class="dg-country-option-name">' + escapeHtml(countryLabel(option)) + '</span>';
-            button.addEventListener('click', function () {
-                input.value = option.code;
-                syncFlag();
-                closeMenu();
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-            });
-            menu.appendChild(button);
-        });
-
         wrap.insertBefore(flag, input);
-        wrap.appendChild(chevron);
-        wrap.appendChild(menu);
+        wrap.append(chevron, menu);
 
-        chevron.addEventListener('click', function (event) {
-            event.preventDefault();
-            event.stopPropagation();
-            toggleMenu();
+        flag.addEventListener('click', function () {
+            focusPhone();
+            closeMenu();
         });
-
-        input.addEventListener('input', syncFlag);
-        document.addEventListener('click', function (event) {
-            if (!wrap.contains(event.target)) {
-                closeMenu();
+        chevron.addEventListener('click', function () {
+            if (menu.inert) { openMenu(false); }
+            else { closeMenu(); }
+        });
+        [input, chevron].forEach(function (control) {
+            control.addEventListener('keydown', function (event) {
+                if (!['ArrowDown', 'ArrowUp'].includes(event.key)) { return; }
+                event.preventDefault();
+                openMenu(event.key === 'ArrowUp');
+            });
+        });
+        input.addEventListener('beforeinput', function (event) {
+            if (event.inputType !== 'insertText' || !event.data || event.isComposing) { return; }
+            var next = input.value.slice(0, input.selectionStart) + event.data + input.value.slice(input.selectionEnd);
+            if (!/^[+\d]+$/.test(normalizeDigits(event.data).normalize('NFKC')) || normalizeCountryCode(next).length > 4) {
+                event.preventDefault();
             }
+        });
+        input.addEventListener('input', syncFlag);
+        input.addEventListener('focus', function () { input.select(); });
+        input.addEventListener('select', syncSelection);
+        input.addEventListener('selectionchange', syncSelection);
+        input.addEventListener('blur', function () {
+            syncSelection();
+            showValidation(true);
+        });
+        input.addEventListener('keydown', function (event) {
+            if (event.key !== 'Enter' || event.isComposing) { return; }
+            event.preventDefault();
+            if (isCountryCallingCode(input.value)) { focusPhone(); }
+            else { showValidation(true); }
+        });
+        menu.addEventListener('keydown', function (event) {
+            var index = options.indexOf(document.activeElement);
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                chevron.focus({ preventScroll: true });
+                closeMenu();
+                return;
+            }
+            if (event.key === 'Tab') {
+                // Return to the trigger before the browser advances along the form.
+                chevron.focus({ preventScroll: true });
+                closeMenu();
+                return;
+            }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { return; }
+            event.preventDefault();
+            var next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 :
+                Math.max(0, Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+            focusOption(options[next]);
+        });
+        wrap.addEventListener('focusout', function (event) {
+            if (!wrap.contains(event.relatedTarget)) { closeMenu(); }
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (!wrap.contains(event.target)) { closeMenu(); }
         });
 
         syncFlag();
@@ -1949,31 +4051,93 @@
 
         bindCountryCodePicker(shell);
 
-        phoneInput.setAttribute('autocomplete', 'username');
-        emailInput.setAttribute('autocomplete', 'username');
-        phoneInput.setAttribute('dir', 'auto');
-        emailInput.setAttribute('dir', 'auto');
-        phoneInput.placeholder = getLabel('identityPlaceholder', 'Username, email, or mobile number');
-        emailInput.placeholder = getLabel('identityPlaceholder', 'Username, email, or mobile number');
+        [phoneInput, emailInput].forEach(function (input) {
+            input.setAttribute('autocomplete', 'username');
+            input.setAttribute('autocapitalize', 'none');
+            input.setAttribute('autocorrect', 'off');
+            input.spellcheck = false;
+            input.addEventListener('beforeinput', function (event) {
+                preventInvalidEmailInsertion(input, event);
+            });
+            input.addEventListener('paste', function (event) {
+                preventInvalidEmailInsertion(input, event, event.clipboardData?.getData('text/plain'));
+            });
+        });
+        phoneInput.dir = 'ltr';
+        emailInput.dir = 'ltr';
+        emailInput.type = 'text';
+        emailInput.inputMode = 'email';
+        var updateEmailFeedback = bindEmailDomainFeedback(emailInput);
+        var login = phoneInput.form;
+        if (login) {
+            shell.addEventListener('digitalogic:call-error', function (event) {
+                showDigitsInlineMessage(login, event.detail, 'error');
+            });
+        }
+        var channels = document.createElement('fieldset');
+        channels.className = 'dg-phone-channels';
+        channels.hidden = true;
+        var legend = document.createElement('legend');
+        legend.textContent = getLabel('phoneChannel', 'How would you like to verify?');
+        channels.appendChild(legend);
+        ['sms', 'call'].forEach(function (channel) {
+            var label = document.createElement('label');
+            var choice = document.createElement('input');
+            choice.type = 'radio';
+            choice.name = 'dg_phone_channel';
+            choice.value = channel;
+            choice.checked = channel === 'sms';
+            choice.disabled = true;
+            choice.addEventListener('change', function () {
+                login.dataset.dgPhoneChannel = choice.value;
+                syncDigitsIdentityButton(login);
+            });
+            label.append(choice, document.createTextNode(channel === 'sms'
+                ? getLabel('phoneSms', 'Text message') : getLabel('phoneCall', 'Phone call')));
+            channels.appendChild(label);
+        });
+        phoneInput.closest('.digits-form_tab_wrapper')?.append(channels);
+        function updatePhoneChannels() {
+            var number = phonePartsFromValue(phoneInput.value, countryCode?.value);
+            channels.hidden = shell.dataset.dgIdentity !== 'phone' || !canChoosePhoneChannel(number, shell);
+            channels.querySelectorAll('input').forEach(function (choice) {
+                choice.disabled = channels.hidden;
+                if (channels.hidden) { choice.checked = choice.value === 'sms'; }
+            });
+            if (channels.hidden) { delete login.dataset.dgPhoneChannel; }
+            syncDigitsIdentityButton(login);
+        }
 
         function syncFrom(input, currentMode) {
             var original = input.value;
             var value = sanitizeIdentityValue(original);
-            var phone = phonePartsFromValue(value);
+            var selectedCountry = countryCode ? normalizeCountryCode(countryCode.value) : '';
+            var phone = phonePartsFromValue(value, selectedCountry);
+            var keepSelectedCountryPhone = !window.libphonenumber && currentMode === 'phone' && selectedCountry && selectedCountry !== '+98' && /^\d{1,18}$/.test(value);
 
-            if (phone.type === 'phone') {
+            if (phone.type === 'phone' && !keepSelectedCountryPhone) {
                 value = phone.national;
             }
 
+            var start = input.selectionStart;
+            var end = input.selectionEnd;
+            function restoreCaret(field) {
+                if (start === null || end === null) { return; }
+                var removedPrefix = Math.max(0, sanitizeIdentityValue(original).length - value.length);
+                var from = Math.max(0, sanitizeIdentityValue(original.slice(0, start)).length - removedPrefix);
+                var to = Math.max(0, sanitizeIdentityValue(original.slice(0, end)).length - removedPrefix);
+                field.setSelectionRange(from, to);
+            }
             if (original !== value) {
-                setInputValuePreservingSelection(input, value, original);
+                input.value = value;
+                restoreCaret(input);
             }
 
-            var selectedCountry = countryCode ? normalizeCountryCode(countryCode.value) : '';
-            var keepSelectedCountryPhone = currentMode === 'phone' && selectedCountry && selectedCountry !== '+98' && /^\d{1,18}$/.test(value);
-            var identity = phone.type === 'phone' || keepSelectedCountryPhone ? 'phone' : classifyIdentity(value);
+            var smsIdentity = phoneInput.form?.dataset.dgSmsIdentity === 'true';
+            var identity = phone.type === 'phone' || keepSelectedCountryPhone || (smsIdentity && !value)
+                ? 'phone' : classifyIdentity(value);
 
-            if (keepSelectedCountryPhone && !phone.countryCode) {
+            if (keepSelectedCountryPhone) {
                 phone.countryCode = selectedCountry;
             }
             shell.dataset.dgIdentity = identity;
@@ -1982,6 +4146,7 @@
                 emailInput.value = value;
                 phoneInput.value = '';
                 selectDigitsMode('email', true);
+                restoreCaret(emailInput);
                 return;
             }
 
@@ -1997,6 +4162,7 @@
                     countryCode.dispatchEvent(new Event('input', { bubbles: true }));
                 }
                 selectDigitsMode('phone', true);
+                restoreCaret(phoneInput);
                 return;
             }
 
@@ -2012,6 +4178,7 @@
                 phoneInput.value = value;
                 emailInput.value = '';
                 selectDigitsMode(identity, true);
+                restoreCaret(phoneInput);
                 return;
             }
 
@@ -2024,18 +4191,188 @@
 
         phoneInput.addEventListener('input', function () {
             syncFrom(phoneInput, 'phone');
+            updatePhoneChannels();
+            updateEmailFeedback?.(false);
         });
 
         emailInput.addEventListener('input', function () {
             syncFrom(emailInput, 'email');
+            updatePhoneChannels();
+            updateEmailFeedback?.(false);
         });
+        emailInput.addEventListener('blur', function () { updateEmailFeedback?.(true); });
 
-        phoneInput.addEventListener('blur', function () {
-            normalizePhoneOnBlur(phoneInput);
-        });
+        countryCode?.addEventListener('input', updatePhoneChannels);
+        countryCode?.addEventListener('change', updatePhoneChannels);
 
+        mountLoginIdentityPicker(phoneInput, emailInput);
         selectDigitsMode(classifyIdentity(phoneInput.value || emailInput.value), false);
+        updatePhoneChannels();
+        updateEmailFeedback?.(false);
         prepareDigitsCaptchaProtection();
+    }
+
+    function bindBrandedAuthNavigation() {
+        var shell = document.querySelector('.dg-digits-login-shell');
+        var login = shell && shell.querySelector('form.digloginpage');
+        var register = shell && shell.querySelector('form.digits_register');
+        if (!login || shell.dataset.dgAuthMode) { return; }
+
+        var page = new window.URL(window.location.href);
+        authRecovery = page.searchParams.get('recover') === '1';
+        var lang = document.documentElement.lang;
+        var persian = lang ? /^fa(?:[-_]|$)/i.test(lang) : isPersianLocale();
+        var pageHeading = document.querySelector('body.login > h1.screen-reader-text');
+        var signInTitle = pageHeading && pageHeading.textContent;
+        function addAction(form, label, callback) {
+            var actions = form.querySelector('.dg-auth-card-actions');
+            if (!actions) {
+                actions = document.createElement('div');
+                actions.className = 'dg-auth-card-actions';
+                var step = form.querySelector('.digits-form_login, .digits-form_register');
+                if (!step) { return; }
+                step.appendChild(actions);
+            }
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'dg-auth-back';
+            var text = document.createElement('span');
+            text.textContent = label;
+            button.appendChild(text);
+            putAuthIcon(button, 'back');
+            button.addEventListener('click', callback);
+            actions.appendChild(button);
+        }
+        function beginRecovery() {
+            authRecovery = true;
+            setBrandedAuthForm(shell, false);
+            var title = getLabel('lostPassword', persian ? 'بازیابی رمز عبور' : 'Reset password');
+            var recoveryHeading = document.createElement('span');
+            recoveryHeading.className = 'dg-recovery-heading';
+            recoveryHeading.textContent = title;
+            login.querySelector('.digits-form_heading')?.appendChild(recoveryHeading);
+            if (pageHeading) { pageHeading.textContent = title; }
+            showDigitsSmsIdentity(login, false);
+            shell.dataset.dgRecovery = 'true';
+            var url = new window.URL(window.location.href);
+            url.searchParams.delete('action');
+            url.searchParams.set('recover', '1');
+            window.history.replaceState(window.history.state, '', url);
+        }
+        function returnToSignIn() {
+            setBrandedAuthForm(shell, false);
+            authRecovery = false;
+            delete shell.dataset.dgRecovery;
+            delete login.dataset.dgSmsIdentity;
+            login.querySelector('.dg-recovery-heading')?.remove();
+            if (pageHeading) { pageHeading.textContent = signInTitle; }
+            var help = login.querySelector('.dg-sms-identity-help');
+            if (help) { help.hidden = true; }
+            selectDigitsMode(classifyIdentity(digitsIdentityValue(login)), true);
+            var url = new window.URL(window.location.href);
+            url.searchParams.delete('recover');
+            url.searchParams.delete('action');
+            window.history.replaceState(window.history.state, '', url);
+        }
+        var help = document.createElement('p');
+        help.className = 'dg-sms-identity-help';
+        help.hidden = true;
+        help.textContent = persian ? 'ایمیل یا شماره تلفن خود را برای دریافت کد تأیید وارد کنید.'
+            : 'Enter your email address or phone number to receive a verification code.';
+        login.querySelector('.digits-form_heading')?.after(help);
+        var backLabel = persian ? 'بازگشت به ورود' : 'Back to sign in';
+        addAction(login, backLabel, function () {
+            var back = login.querySelector('.digits_form_back:not(.digits_hide_back)');
+            if (back) { back.click(); }
+            returnToSignIn();
+        });
+        if (register) {
+            addAction(register, backLabel, returnToSignIn);
+            setBrandedAuthForm(shell, false);
+        }
+        if (authRecovery) { beginRecovery(); }
+        return function () { bindBrandedStepLocation(shell, login, beginRecovery, returnToSignIn); };
+    }
+
+    function bindBrandedStepLocation(shell, login, beginRecovery, returnToSignIn) {
+        var routes = ['login', 'password', 'contact', 'recover', 'signup', 'code', 'call', 'call-code', 'success'];
+        var previous;
+
+        function currentStep() {
+            if (shell.classList.contains('dg-auth-is-success')) { return 'success'; }
+            var call = shell.querySelector('[data-call-unified]')?.dataset.callStep;
+            if (call === 'preview' || call === 'code') { return call === 'code' ? 'call-code' : 'call'; }
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (form && visibleDigitsOtpInput(form)) { return 'code'; }
+            if (form?.matches('.digits_register')) { return 'signup'; }
+            if (visibleDigitsPassword(login)) { return 'password'; }
+            if (shell.dataset.dgRecovery === 'true') { return 'recover'; }
+            if (login.dataset.dgSmsIdentity === 'true') { return 'contact'; }
+            return 'login';
+        }
+
+        function writeStep() {
+            var step = currentStep();
+            if (step === previous) { return; }
+            previous = step;
+            if (step !== 'success') {
+                authStep = step;
+                void synchronizeAuth();
+            }
+            var url = new URL(window.location.href);
+            if (url.hash === '#' + step) { return; }
+            url.hash = step;
+            window.history.replaceState(window.history.state, '', url);
+        }
+
+        function leaveSecureStep() {
+            if (shell.classList.contains('dg-call-code-active')) { window.DigitalogicCallLogin?.back(); }
+            shell.querySelector('.dg-username-password-step:not([hidden]) .dg-username-login-back')?.click();
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (form && !form.classList.contains('digits_form_index_section')) {
+                form.querySelector('.digits_form_back:not(.digits_hide_back)')?.click();
+            }
+        }
+
+        function openStep() {
+            var requested = window.location.hash.slice(1);
+            var current = currentStep();
+            // Dynamic steps can only be resumed once their prerequisites exist.
+            if (requested !== current && routes.includes(requested) && current !== 'success') {
+                if (requested === 'login') {
+                    leaveSecureStep();
+                    returnToSignIn();
+                } else if (requested === 'recover' || requested === 'contact' || requested === 'signup') {
+                    leaveSecureStep();
+                    if (requested === 'recover') {
+                        if (shell.dataset.dgRecovery !== 'true') { beginRecovery(); }
+                        else { showDigitsSmsIdentity(login, false); }
+                    } else {
+                        returnToSignIn();
+                        showDigitsSmsIdentity(login, false);
+                    }
+                } else if (requested === 'password' && current === 'login') {
+                    var action = digitsIdentityAction(login);
+                    if (action.type === 'password' && action.enabled) {
+                        showDigitsUsernamePasswordStep(login, digitsIdentityValue(login));
+                    }
+                } else if ((requested === 'call' || requested === 'call-code') && current !== 'call-code') {
+                    if (current !== 'call') {
+                        var number = digitsIdentityAction(login).number;
+                        if (number?.valid && callVerificationEnabled(shell)) { window.DigitalogicCallLogin?.start(number.e164); }
+                    }
+                }
+            }
+            previous = undefined;
+            writeStep();
+        }
+
+        openStep();
+        window.addEventListener('hashchange', openStep);
+        var observer = new MutationObserver(writeStep);
+        observer.observe(shell, {subtree: true, childList: true, attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'data-call-step', 'data-dg-sms-identity', 'data-dg-recovery']});
+        observer.observe(document.body, {childList: true});
     }
 
     function enforceDigitsRegisterMobile() {
@@ -2043,6 +4380,31 @@
             input.required = true;
             input.setAttribute('required', 'required');
             input.setAttribute('autocomplete', 'tel-national');
+        });
+    }
+
+    function prepareDigitsRegistrationAutofill() {
+        var tokens = {
+            digits_reg_name: 'given-name',
+            digits_reg_lastname: 'family-name',
+            digits_reg_username: 'username',
+            phone: 'tel-national',
+            digits_reg_mobile: 'tel-national',
+            digits_reg_password: 'new-password'
+        };
+        document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) form.digits_register').forEach(function (form) {
+            form.setAttribute('autocomplete', 'on');
+            Object.keys(tokens).forEach(function (name) {
+                var input = form.querySelector('input[name="' + name + '"]');
+                if (!input) {
+                    return;
+                }
+                input.setAttribute('autocomplete', 'section-digitalogic-register ' + tokens[name]);
+                var id = 'dg-register-' + name;
+                if (!input.id && !document.getElementById(id)) {
+                    input.id = id;
+                }
+            });
         });
     }
 
@@ -2056,8 +4418,10 @@
         var password = document.querySelector('#user_pass');
 
         enhanceLoginLabels();
-        enhanceIdentityField(username);
-        bindPasswordToggle();
+        if (form && username) {
+            enhanceIdentityField(username);
+        }
+        observePasswordFields();
         bindDigitsAutoIdentity();
 
         if (!form || !username || !password) {
@@ -2075,10 +4439,8 @@
                 return;
             }
 
-            if (!String(password.value || '').trim()) {
+            if (!validateSignInPassword(password)) {
                 event.preventDefault();
-                showToast(getLabel('requiredPassword', 'رمز عبور را وارد کنید.'), 'warning');
-                password.focus();
                 return;
             }
 
@@ -2088,53 +4450,16 @@
         });
     }
 
-    function bindErrorHandling() {
-        function runtimeFailureMessage(event) {
-            var raw = '';
-            var source = '';
-
-            if (event) {
-                raw = cleanText(event.message || (event.error && event.error.message) || (event.reason && event.reason.message) || event.reason, '');
-                source = cleanText(event.filename || (event.reason && event.reason.fileName), '');
-            }
-
-            if (/Cannot read properties of undefined .*reload/.test(raw) || /reading 'reload'/.test(raw)) {
-                return getLabel(
-                    'digitsReloadBug',
-                    'خطای افزونه Digits: پاسخ AJAX مرحله ورود ناقص بود و اسکریپت Digits هنگام خواندن مقدار reload خراب شد. لطفاً دوباره تلاش کنید.'
-                );
-            }
-
-            if (raw) {
-                return getLabel('runtimeErrorPrefix', 'خطای صفحه: ') + raw + (source ? ' (' + source.split('/').slice(-3).join('/') + ')' : '');
-            }
-
-            return getLabel('runtimeError', 'یک خطای صفحه رخ داد اما مرورگر جزئیات آن را گزارش نکرد. دوباره تلاش کنید.');
+    function validateSignInPassword(input, form) {
+        if (input?.value.trim()) { return true; }
+        var message = getLabel('requiredPassword', 'Enter your password.');
+        if (form) {
+            showDigitsInlineMessage(form, message, 'warning');
+        } else {
+            showToast(message, 'warning');
         }
-
-        window.addEventListener('error', function (event) {
-            clearLoading();
-            showLoginFailureMessage(null, runtimeFailureMessage(event), 'warning');
-        });
-
-        window.addEventListener('unhandledrejection', function (event) {
-            clearLoading();
-            showLoginFailureMessage(null, runtimeFailureMessage(event), 'warning');
-        });
-
-        if (window.jQuery) {
-            window.jQuery(document).ajaxError(function (event, jqXHR, settings, errorThrown) {
-                clearLoading();
-                showLoginFailureMessage(
-                    null,
-                    responseMessage(
-                        jqXHR && jqXHR.responseJSON ? jqXHR.responseJSON : null,
-                        getLabel('requestError', 'درخواست AJAX ورود شکست خورد: ') + cleanText(errorThrown || (jqXHR && jqXHR.statusText), 'خطای نامشخص')
-                    ),
-                    'error'
-                );
-            });
-        }
+        input?.focus({ preventScroll: true });
+        return false;
     }
 
     function bindThemeToggles() {
@@ -2143,345 +4468,702 @@
         });
     }
 
-    function buildLoginHeroCarousel() {
-        var shell = document.querySelector('.dg-digits-login-shell');
-        if (!shell) {
-            return;
+    function fitAdminToolbar() {
+        var toolbar = document.querySelector('body.wp-admin #wpadminbar');
+        if (!toolbar) { return; }
+        var root = document.documentElement;
+        function updateHeight() {
+            var height = Math.ceil(toolbar.getBoundingClientRect().height);
+            var property = '--wp-admin--admin-bar--height';
+            if (height && root.style.getPropertyValue(property) !== height + 'px') {
+                root.style.setProperty(property, height + 'px');
+            }
         }
-
-        if (shell.querySelector('.dg-login-hero-carousel')) {
-            bindHeroCarousel(shell.querySelector('.dg-login-hero-carousel'));
-            return;
-        }
-
-        shell.classList.add('dg-has-hero-carousel');
-
-        var hero = document.createElement('div');
-        hero.className = 'dg-login-hero-carousel';
-        hero.dataset.dgSlide = '0';
-        hero.setAttribute('role', 'group');
-        hero.setAttribute('aria-label', 'تصاویر برند دیجیتالاجیک');
-        hero.innerHTML = [
-            '<span class="dg-hero-track">',
-            '<span class="dg-hero-slide dg-hero-slide--one"></span>',
-            '<span class="dg-hero-slide dg-hero-slide--two"></span>',
-            '<span class="dg-hero-slide dg-hero-slide--three"></span>',
-            '</span>',
-            '<span class="dg-hero-glow"></span>',
-            '<span class="dg-hero-dots">',
-            '<button type="button" data-dg-slide="0" aria-label="نمایش تصویر اول"></button>',
-            '<button type="button" data-dg-slide="1" aria-label="نمایش تصویر دوم"></button>',
-            '<button type="button" data-dg-slide="2" aria-label="نمایش تصویر سوم"></button>',
-            '</span>'
-        ].join('');
-
-        shell.insertBefore(hero, shell.firstElementChild);
-        bindHeroCarousel(hero);
+        updateHeight();
+        if (window.ResizeObserver) { new ResizeObserver(updateHeight).observe(toolbar); }
+        else { window.addEventListener('resize', updateHeight); }
     }
 
-    function bindHeroCarousel(hero) {
-        if (!hero || hero.dataset.dgCarouselReady === 'true') {
-            return;
+    function buildLoginStories() {
+        var shell = document.querySelector('.dg-digits-login-shell, .dg-digits-register-shell');
+        if (!shell || !config.loginSlidesUrl || !document.body.classList.contains('login')) { return; }
+
+        var wide = window.matchMedia('(min-width: 720px)');
+        var loading = false;
+        function storyUrl(value) {
+            if (typeof value !== 'string' || !value) { return ''; }
+            try {
+                var url = new URL(value, window.location.href);
+                return url.origin === window.location.origin && /^https?:$/.test(url.protocol) ? url.href : '';
+            } catch (_error) { return ''; }
         }
 
-        hero.dataset.dgCarouselReady = 'true';
-
-        var track = hero.querySelector('.dg-hero-track');
-        if (!track) {
-            track = document.createElement('span');
-            track.className = 'dg-hero-track';
-            Array.prototype.slice.call(hero.querySelectorAll(':scope > .dg-hero-slide')).forEach(function (slide) {
-                track.appendChild(slide);
+        function readCards(rows) {
+            if (!Array.isArray(rows)) { return []; }
+            return rows.slice(0, 8).flatMap(function (row) {
+                if (!row || typeof row !== 'object') { return []; }
+                var image = storyUrl(row.image);
+                var lightImage = storyUrl(row.image_light) || image;
+                var darkImage = storyUrl(row.image_dark) || image;
+                var thumbnail = storyUrl(row.thumbnail);
+                var link = storyUrl(row.link);
+                var title = typeof row.title === 'string' ? row.title.trim() : '';
+                if (!lightImage && !darkImage) { return []; }
+                return [{
+                    lightImage: lightImage || darkImage,
+                    darkImage: darkImage || lightImage,
+                    lightThumb: storyUrl(row.thumbnail_light) || thumbnail || lightImage || darkImage,
+                    darkThumb: storyUrl(row.thumbnail_dark) || thumbnail || darkImage || lightImage,
+                    alt: typeof row.alt === 'string' ? row.alt : '',
+                    link: link,
+                    title: title,
+                    tab: typeof row.tab === 'string' && row.tab.trim() ? row.tab : title,
+                    description: typeof row.description === 'string' ? row.description : '',
+                    action: typeof row.action === 'string' ? row.action : '',
+                    notes: Array.isArray(row.notes) ? row.notes.filter(function (note) {
+                        return typeof note === 'string' && note.trim();
+                    }).slice(0, 2) : []
+                }];
             });
-            hero.insertBefore(track, hero.firstElementChild);
         }
 
-        var dots = Array.prototype.slice.call(hero.querySelectorAll('[data-dg-slide]'));
-        var originalSlides = Array.prototype.slice.call(track.querySelectorAll('.dg-hero-slide:not([data-dg-clone])'));
-        var slideCount = Math.max(1, originalSlides.length);
-        var activeTrackIndex = normalizeSlide(currentSlide()) + (slideCount > 1 ? 1 : 0);
-        var pendingSnapIndex = null;
-        var startX = 0;
-        var currentX = 0;
-        var dragDelta = 0;
-        var lastMoveX = 0;
-        var lastMoveTime = 0;
-        var dragVelocity = 0;
-        var activePointerId = null;
-        var activeDragType = null;
-        var autoplayTimer = null;
-
-        if (slideCount > 1 && !track.querySelector('[data-dg-clone="true"]')) {
-            var firstClone = originalSlides[0].cloneNode(true);
-            var lastClone = originalSlides[slideCount - 1].cloneNode(true);
-
-            firstClone.dataset.dgClone = 'true';
-            lastClone.dataset.dgClone = 'true';
-            firstClone.setAttribute('aria-hidden', 'true');
-            lastClone.setAttribute('aria-hidden', 'true');
-            track.insertBefore(lastClone, originalSlides[0]);
-            track.appendChild(firstClone);
-        }
-
-        function currentSlide() {
-            return Number(hero.dataset.dgSlide || '0') || 0;
-        }
-
-        function normalizeSlide(index) {
-            return ((index % slideCount) + slideCount) % slideCount;
-        }
-
-        function syncTrack(dragPx) {
-            hero.style.setProperty('--dg-slide', String(currentSlide()));
-            hero.style.setProperty('--dg-track-index', String(activeTrackIndex));
-            hero.style.setProperty('--dg-drag', (dragPx || 0) + 'px');
-            hero.style.setProperty('--dg-drag-progress', String(Math.min(1, Math.abs(dragPx || 0) / Math.max(1, hero.getBoundingClientRect().width || 1))));
-        }
-
-        function stopAutoplay() {
-            window.clearInterval(autoplayTimer);
-            autoplayTimer = null;
-        }
-
-        function startAutoplay() {
-            stopAutoplay();
-
-            if (slideCount < 2) {
-                return;
-            }
-
-            autoplayTimer = window.setInterval(function () {
-                if (activeDragType || document.hidden) {
-                    return;
+        async function loadCards() {
+            if (!wide.matches || loading || shell.querySelector('.dg-login-stories')) { return; }
+            loading = true;
+            var fa = /^fa(?:[-_]|$)/i.test(document.documentElement.lang);
+            var locale = fa ? 'fa_IR' : 'en_US';
+            var drawer = shell.matches('.dg-digits-login-shell') ? createStoryDrawer(shell, fa) : null;
+            var mounted = false;
+            try {
+                var response = await authSocketRequest('digitalogic_auth_presentation', { locale: locale });
+                var cards = readCards(response?.slides);
+                if (!cards.length) {
+                    var url = new URL(config.loginSlidesUrl, window.location.href);
+                    url.searchParams.set('locale', locale);
+                    var fallback = await window.fetch(url, { credentials: 'same-origin', signal: window.AbortSignal?.timeout?.(10000) });
+                    cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
-
-                setSlide(currentSlide() + 1, false);
-            }, 9200);
-        }
-
-        function updateDots(next) {
-            dots.forEach(function (dot) {
-                var active = dot.dataset.dgSlide === String(next);
-                dot.classList.toggle('is-active', active);
-                dot.setAttribute('aria-pressed', active ? 'true' : 'false');
-            });
-        }
-
-        function snapTrack(index) {
-            activeTrackIndex = index;
-            hero.classList.add('is-jump-reset');
-            syncTrack(0);
-            track.offsetHeight;
-            window.requestAnimationFrame(function () {
-                hero.classList.remove('is-jump-reset');
-            });
-        }
-
-        function setSlide(index, manual) {
-            var next = normalizeSlide(index);
-            var targetTrackIndex = next + (slideCount > 1 ? 1 : 0);
-
-            if (slideCount > 1 && index >= slideCount && currentSlide() === slideCount - 1) {
-                targetTrackIndex = slideCount + 1;
-                pendingSnapIndex = 1;
-            } else if (slideCount > 1 && index < 0 && currentSlide() === 0) {
-                targetTrackIndex = 0;
-                pendingSnapIndex = slideCount;
-            } else {
-                pendingSnapIndex = null;
-            }
-
-            hero.dataset.dgSlide = String(next);
-            activeTrackIndex = targetTrackIndex;
-
-            if (manual) {
-                hero.classList.add('is-manual');
-                startAutoplay();
-            }
-
-            updateDots(next);
-            syncTrack(0);
-        }
-
-        track.addEventListener('transitionend', function (event) {
-            if (event.target !== track || event.propertyName !== 'transform' || pendingSnapIndex === null) {
-                return;
-            }
-
-            snapTrack(pendingSnapIndex);
-            pendingSnapIndex = null;
-        });
-
-        dots.forEach(function (dot) {
-            dot.addEventListener('click', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
-                setSlide(Number(dot.dataset.dgSlide || '0'), true);
-            });
-        });
-
-        function beginDrag(clientX, type, event) {
-            if (event && event.target && event.target.closest && event.target.closest('.dg-hero-dots [data-dg-slide]')) {
-                return false;
-            }
-
-            if (activeDragType) {
-                return false;
-            }
-
-            stopAutoplay();
-            activeDragType = type;
-            startX = clientX;
-            currentX = clientX;
-            dragDelta = 0;
-            lastMoveX = clientX;
-            lastMoveTime = Date.now();
-            dragVelocity = 0;
-            pendingSnapIndex = null;
-            hero.classList.add('is-dragging');
-            syncTrack(0);
-
-            if (event && typeof event.preventDefault === 'function') {
-                event.preventDefault();
-            }
-
-            return true;
-        }
-
-        function updateDrag(clientX, type, event) {
-            if (activeDragType !== type) {
-                return;
-            }
-
-            currentX = clientX;
-            dragDelta = currentX - startX;
-            var now = Date.now();
-            var elapsed = Math.max(1, now - lastMoveTime);
-            dragVelocity = (clientX - lastMoveX) / elapsed;
-            lastMoveX = clientX;
-            lastMoveTime = now;
-            syncTrack(dragDelta);
-
-            if (event && typeof event.preventDefault === 'function') {
-                event.preventDefault();
+                if (cards.length && shell.isConnected) {
+                    mountLoginStories(shell, cards, wide, fa, drawer);
+                    mounted = true;
+                }
+            } catch (_error) {
+                // The sign-in form and compact brand artwork remain available.
+            } finally {
+                if (!mounted) { drawer?.remove(); }
+                loading = false;
             }
         }
 
-        function finishDrag(clientX, type) {
-            if (activeDragType !== type) {
-                return;
-            }
-
-            var delta = clientX - startX;
-            var width = hero.getBoundingClientRect().width || 1;
-            var threshold = Math.min(118, Math.max(48, width * 0.2));
-            var velocityHint = Math.abs(dragVelocity) > 0.58 && Math.abs(delta) > 18;
-            var shouldMove = Math.abs(delta) >= threshold || velocityHint;
-            var direction = delta < 0 ? 1 : -1;
-
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            dragDelta = 0;
-            dragVelocity = 0;
-
-            if (!shouldMove) {
-                syncTrack(0);
-                startAutoplay();
-                return;
-            }
-
-            setSlide(currentSlide() + direction, true);
-        }
-
-        hero.addEventListener('pointerdown', function (event) {
-            if (!beginDrag(event.clientX, 'pointer', event)) {
-                return;
-            }
-
-            activePointerId = event.pointerId;
-
-            if (hero.setPointerCapture) {
-                hero.setPointerCapture(activePointerId);
-            }
-        });
-
-        hero.addEventListener('pointerup', function (event) {
-            if (activePointerId !== event.pointerId) {
-                return;
-            }
-
-            finishDrag(event.clientX, 'pointer');
-        });
-
-        hero.addEventListener('pointermove', function (event) {
-            if (activePointerId !== event.pointerId) {
-                return;
-            }
-
-            updateDrag(event.clientX, 'pointer', event);
-        });
-
-        hero.addEventListener('pointercancel', function () {
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            syncTrack(0);
-            startAutoplay();
-        });
-
-        hero.addEventListener('mousedown', function (event) {
-            if (event.button !== 0) {
-                return;
-            }
-
-            beginDrag(event.clientX, 'mouse', event);
-        });
-
-        window.addEventListener('mouseup', function (event) {
-            finishDrag(event.clientX, 'mouse');
-        });
-
-        window.addEventListener('mousemove', function (event) {
-            updateDrag(event.clientX, 'mouse', event);
-        });
-
-        hero.addEventListener('touchstart', function (event) {
-            if (!event.touches || event.touches.length !== 1) {
-                return;
-            }
-
-            beginDrag(event.touches[0].clientX, 'touch', event);
-        }, { passive: false });
-
-        hero.addEventListener('touchmove', function (event) {
-            if (!event.touches || event.touches.length !== 1) {
-                return;
-            }
-
-            updateDrag(event.touches[0].clientX, 'touch', event);
-        }, { passive: false });
-
-        hero.addEventListener('touchend', function (event) {
-            if (!event.changedTouches || !event.changedTouches.length) {
-                return;
-            }
-
-            finishDrag(event.changedTouches[0].clientX, 'touch');
-        });
-
-        hero.addEventListener('touchcancel', function () {
-            hero.classList.remove('is-dragging');
-            activeDragType = null;
-            activePointerId = null;
-            syncTrack(0);
-            startAutoplay();
-        });
-
-        setSlide(currentSlide(), false);
-        snapTrack(activeTrackIndex);
-        startAutoplay();
+        wide.addEventListener('change', loadCards);
+        void loadCards();
     }
+
+    function createStoryDrawer(shell, fa) {
+        var layout = shell.parentElement;
+        var drawer = document.createElement('div');
+        drawer.className = 'dg-story-drawer';
+        drawer.setAttribute('aria-busy', 'true');
+        var panel = document.createElement('aside');
+        panel.id = 'dg-story-drawer-panel';
+        panel.className = 'dg-login-stories';
+        panel.dir = fa ? 'rtl' : 'ltr';
+        panel.inert = true;
+        var loader = document.createElement('div');
+        loader.className = 'dg-story-loading';
+        loader.setAttribute('role', 'status');
+        loader.setAttribute('aria-label', fa ? 'در حال دریافت اطلاعات اسلایدها' : 'Loading carousel information');
+        var mark = document.createElement('span');
+        mark.setAttribute('aria-hidden', 'true');
+        loader.append(mark);
+        panel.append(loader);
+        var toggle = document.createElement('button');
+        toggle.className = 'dg-story-drawer-toggle';
+        toggle.type = 'button';
+        toggle.setAttribute('aria-controls', panel.id);
+        var grip = document.createElement('span');
+        grip.className = 'dg-story-toggle-grip';
+        putAuthIcon(grip, 'dragGrip');
+        var chevron = document.createElement('span');
+        chevron.className = 'dg-story-toggle-chevron';
+        putAuthIcon(chevron, 'chevronDown');
+        toggle.append(grip, chevron);
+        drawer.append(panel);
+        shell.prepend(toggle, drawer);
+        shell.classList.add('dg-has-login-stories', 'dg-has-story-drawer');
+
+        var storageKey = 'digitalogic-login-stories-collapsed';
+        var manual = false;
+        try { manual = window.localStorage.getItem(storageKey) === '1'; } catch (error) { /* Storage is optional. */ }
+        var open = false;
+        var drag;
+        var ignoreClick = false;
+        var panelWidth = 0;
+        var formWidth = 0;
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+        function measure() {
+            var width = Math.max(0, layout.clientWidth - 2);
+            panelWidth = Math.round(width / 2.08);
+            formWidth = width - panelWidth;
+            layout.style.setProperty('--dg-story-panel-width', panelWidth + 'px');
+            layout.style.setProperty('--dg-story-form-width', formWidth + 'px');
+        }
+
+        function changed() { shell.dispatchEvent(new Event('digitalogic:story-drawer-change')); }
+
+        function setOpen(value, userAction) {
+            open = value && !shell.classList.contains('dg-auth-is-success');
+            panel.inert = !open;
+            shell.toggleAttribute('data-drawer-open', open);
+            toggle.setAttribute('aria-expanded', String(open));
+            var label = open ? (fa ? 'جمع کردن پنل محصولات' : 'Collapse product panel') :
+                (fa ? 'باز کردن پنل محصولات' : 'Expand product panel');
+            toggle.setAttribute('aria-label', label);
+            toggle.title = label;
+            if (userAction) {
+                manual = true;
+                try { window.localStorage.setItem(storageKey, open ? '0' : '1'); } catch (error) { /* Storage is optional. */ }
+            }
+            changed();
+        }
+
+        function haptic(event, pattern) {
+            if (event.pointerType && event.pointerType !== 'mouse' && !reduced.matches) {
+                navigator.vibrate?.(pattern);
+            }
+        }
+
+        toggle.addEventListener('click', function (event) {
+            if (ignoreClick && event.detail) { return; }
+            if (toggle.disabled) { return; }
+            haptic(event, 14);
+            setOpen(!open, true);
+        });
+        toggle.addEventListener('pointerdown', function (event) {
+            if (toggle.disabled || event.button !== 0 || !event.isPrimary) { return; }
+            ignoreClick = false;
+            var left = shell.getBoundingClientRect().left;
+            var offset = left - layout.getBoundingClientRect().left;
+            drag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, offset: offset,
+                left: left, width: drawer.getBoundingClientRect().width, active: false, detent: false };
+            toggle.setPointerCapture(event.pointerId);
+        });
+        toggle.addEventListener('pointermove', function (event) {
+            if (!drag || drag.id !== event.pointerId) { return; }
+            var delta = event.clientX - drag.x;
+            if (!drag.active && (Math.abs(delta) < 5 || Math.abs(delta) <= Math.abs(event.clientY - drag.y))) { return; }
+            if (!drag.active) {
+                drag.active = true;
+                shell.setAttribute('data-drawer-dragging', '');
+                layout.style.setProperty('--dg-story-anchor', drag.offset + 'px');
+                haptic(event, 7);
+                changed();
+            }
+            var edgeInset = toggle.offsetWidth / 2 + 2;
+            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - edgeInset);
+            var width = Math.max(0, Math.min(limit, drag.width + delta));
+            layout.style.setProperty('--dg-story-reveal', width + 'px');
+            shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');
+            var atDetent = (open ? -delta : delta) >= 72;
+            if (atDetent && !drag.detent) { haptic(event, 11); }
+            drag.detent = atDetent;
+        });
+
+        function finishDrag(event) {
+            if (!drag || drag.id !== event.pointerId) { return; }
+            var gesture = drag;
+            drag = null;
+            if (!gesture.active) { return; }
+            ignoreClick = true;
+            shell.removeAttribute('data-drawer-dragging');
+            void shell.offsetWidth;
+            layout.style.removeProperty('--dg-story-anchor');
+            layout.style.removeProperty('--dg-story-reveal');
+            shell.style.removeProperty('--dg-story-fold');
+            var delta = (event.clientX - gesture.x) * (open ? -1 : 1);
+            var commit = event.type === 'pointerup' && (delta >= 72 || (delta > 24 && delta / Math.max(1, event.timeStamp - gesture.time) > 0.5));
+            if (commit) { haptic(event, [14, 24, 7]); }
+            setOpen(commit ? !open : open, commit);
+        }
+        ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (name) { toggle.addEventListener(name, finishDrag); });
+
+        var resize = window.ResizeObserver ? new ResizeObserver(measure) : null;
+        if (resize) { resize.observe(layout); }
+        else { window.addEventListener('resize', measure); }
+        measure();
+        setOpen(false, false);
+        var success = new MutationObserver(function () {
+            if (!shell.classList.contains('dg-auth-is-success')) { return; }
+            if (drag) { finishDrag({ type: 'pointercancel', pointerId: drag.id }); }
+            toggle.disabled = true;
+            setOpen(false, false);
+        });
+        success.observe(shell, { attributes: true, attributeFilter: ['class'] });
+        window.requestAnimationFrame(function () {
+            window.requestAnimationFrame(function () {
+                if (drawer.isConnected && !manual && !drag) { setOpen(true, false); }
+            });
+        });
+
+        return {
+            panel: panel,
+            isOpen: function () { return open && !drag?.active && !drawer.hasAttribute('aria-busy'); },
+            ready: function () {
+                loader.hidden = true;
+                drawer.removeAttribute('aria-busy');
+                changed();
+            },
+            remove: function () {
+                resize?.disconnect();
+                window.removeEventListener('resize', measure);
+                success.disconnect();
+                toggle.remove();
+                drawer.remove();
+                shell.classList.remove('dg-has-login-stories', 'dg-has-story-drawer');
+                shell.removeAttribute('data-drawer-open');
+                shell.removeAttribute('data-drawer-dragging');
+                shell.style.removeProperty('--dg-story-fold');
+                ['--dg-story-panel-width', '--dg-story-form-width', '--dg-story-anchor',
+                    '--dg-story-reveal'].forEach(function (name) { layout.style.removeProperty(name); });
+            }
+        };
+    }
+
+    function createStoryAssetLoader(onChange) {
+        var assets = new Map();
+
+        async function load(url, asset) {
+            var source;
+            try {
+                var response = await window.fetch(url, {
+                    mode: 'same-origin', credentials: 'omit', headers: { Accept: 'image/*' },
+                    signal: window.AbortSignal?.timeout?.(30000)
+                });
+                var type = response.headers.get('Content-Type') || '';
+                if (!response.ok || !/^image\//i.test(type)) { throw new Error('Image response'); }
+                var encoding = response.headers.get('Content-Encoding');
+                var length = Number(response.headers.get('Content-Length'));
+                if ((!encoding || encoding === 'identity') && Number.isSafeInteger(length) && length > 0) {
+                    asset.total = length;
+                }
+                onChange();
+
+                var blob;
+                if (response.body) {
+                    var chunks = [];
+                    var reader = response.body.getReader();
+                    while (true) {
+                        var chunk = await reader.read();
+                        if (chunk.done) { break; }
+                        chunks.push(chunk.value);
+                        asset.bytes += chunk.value.byteLength;
+                        if (asset.total !== null && asset.bytes > asset.total) { asset.total = null; }
+                        onChange();
+                    }
+                    blob = new Blob(chunks, { type: type });
+                } else {
+                    blob = await response.blob();
+                    asset.bytes = blob.size;
+                }
+                asset.total = asset.bytes;
+                source = URL.createObjectURL(blob);
+                var image = new Image();
+                image.src = source;
+                await image.decode();
+                asset.src = source;
+            } catch (_error) {
+                if (source) { URL.revokeObjectURL(source); }
+                asset.failed = true;
+            } finally {
+                onChange();
+            }
+        }
+
+        return function (url) {
+            if (!assets.has(url)) {
+                var asset = { bytes: 0, total: null, src: '', failed: false };
+                assets.set(url, asset);
+                void load(url, asset);
+            }
+            return assets.get(url);
+        };
+    }
+
+    function mountLoginStories(shell, cards, wide, fa, drawer) {
+        function element(tag, className, content) {
+            var node = document.createElement(tag);
+            node.className = className;
+            if (content) { node.textContent = content; }
+            return node;
+        }
+
+        var region = drawer?.panel || element('aside', 'dg-login-stories');
+        var rtl = getComputedStyle(shell).direction === 'rtl';
+        var multiple = cards.length > 1;
+        var showThumbnails = config.loginStoryNavThumbs !== false;
+        region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
+        if (multiple) { region.setAttribute('aria-roledescription', fa ? 'نمایش اسلاید' : 'carousel'); }
+        var header = element('div', 'dg-story-header');
+        var brand = element('span', 'dg-story-brand', fa ? 'دیجیتالاجیک' : 'Digitalogic');
+        header.append(brand, element('span', 'dg-story-kicker', fa ? 'محصولات و خدمات' : 'Products & services'));
+        var stage = element('div', 'dg-story-stage');
+        var track = element('div', 'dg-story-track');
+        stage.append(track);
+        var controls = element('div', 'dg-story-controls');
+        var navigation = element('div', 'dg-story-navigation');
+        var dots = element('div', 'dg-story-dots' + (cards.length <= 3 ? ' dg-story-dots--named' : ''));
+        var announcement = element('span', 'dg-visually-hidden');
+        announcement.setAttribute('aria-live', 'polite');
+        var articles = [];
+        var indicators = [];
+        var previews = [];
+        var percentFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en', { style: 'percent', maximumFractionDigits: 0 });
+        var bytesFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en');
+
+        cards.forEach(function (card, index) {
+            var article = element('article', 'dg-story-card');
+            article.dir = rtl ? 'rtl' : 'ltr';
+            article.dataset.storyIndex = index;
+            var figure = element('div', 'dg-story-figure');
+            var previewImage = element('img', 'dg-story-preview');
+            previewImage.alt = '';
+            previewImage.draggable = false;
+            previewImage.hidden = true;
+            var photo = element('img', 'dg-story-image');
+            photo.alt = card.alt;
+            photo.decoding = 'async';
+            photo.draggable = false;
+            photo.setAttribute('aria-hidden', 'true');
+            var transfer = element('div', 'dg-story-transfer');
+            var caption = element('span', 'dg-story-transfer-label', fa ? 'دریافت تصویر' : 'Downloading artwork');
+            var readout = element('span', 'dg-story-transfer-readout');
+            var meter = element('progress', 'dg-story-download');
+            meter.setAttribute('aria-label', caption.textContent);
+            transfer.append(caption, readout, meter);
+            figure.append(previewImage, photo, transfer);
+            card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
+            var copy = element('div', 'dg-story-copy');
+            if (card.title) { copy.append(element('h2', 'dg-story-title', card.title)); }
+            if (card.description) { copy.append(element('p', 'dg-story-description', card.description)); }
+            if (card.link && card.action) {
+                var action = element('a', 'dg-story-link');
+                action.href = card.link;
+                action.append(element('span', '', card.action));
+                putAuthIcon(action, 'arrow');
+                copy.append(action);
+            }
+            article.append(figure);
+            if (copy.childElementCount) { article.append(copy); }
+            else { article.classList.add('dg-story-image-only'); }
+            articles.push(article);
+
+            if (multiple) {
+                var position = getLabel('heroSlide', fa ? 'نمایش تصویر %d' : 'Show image %d').replace('%d', String(index + 1));
+                var dot = element('button', 'dg-story-dot');
+                dot.type = 'button';
+                dot.setAttribute('aria-label', card.tab ? position + ', ' + card.tab : position);
+                if (showThumbnails) {
+                    var tile = element('span', 'dg-story-thumb');
+                    tile.setAttribute('aria-hidden', 'true');
+                    var thumb = element('img', 'dg-story-thumb-image');
+                    thumb.alt = '';
+                    thumb.draggable = false;
+                    thumb.hidden = true;
+                    var thumbMeter = element('progress', 'dg-story-download');
+                    tile.append(thumb, thumbMeter);
+                    dot.append(tile);
+                    previews.push({ photo: thumb, meter: thumbMeter });
+                }
+                if (card.tab) { dot.append(element('span', 'dg-story-label', card.tab)); }
+                dot.addEventListener('click', function () { select(index, true); });
+                indicators.push(dot);
+                dots.append(dot);
+            }
+        });
+
+        // Keep the track's measurements LTR and order the cards physically for the page direction.
+        var ordered = rtl ? articles.slice().reverse() : articles;
+        track.append.apply(track, ordered);
+        function wrapCopy(article) {
+            var clone = article.cloneNode(true);
+            clone.dataset.dgClone = '';
+            clone.inert = true;
+            clone.setAttribute('aria-hidden', 'true');
+            return clone;
+        }
+        if (multiple) {
+            track.prepend(wrapCopy(ordered[ordered.length - 1]));
+            track.append(wrapCopy(ordered[0]));
+        }
+
+        var figures = Array.from(track.querySelectorAll('.dg-story-figure'), function (figure) {
+            return {
+                index: Number(figure.closest('article').dataset.storyIndex),
+                root: figure,
+                preview: figure.querySelector('.dg-story-preview'),
+                photo: figure.querySelector('.dg-story-image'),
+                transfer: figure.querySelector('.dg-story-transfer'),
+                label: figure.querySelector('.dg-story-transfer-label'),
+                readout: figure.querySelector('.dg-story-transfer-readout'),
+                meter: figure.querySelector('progress')
+            };
+        });
+        var pictures = [];
+        var repaint = 0;
+        var getAsset = createStoryAssetLoader(function () {
+            if (!repaint) { repaint = window.requestAnimationFrame(renderImages); }
+        });
+
+        function syncImages() {
+            var dark = document.body.dataset.dgTheme === 'dark';
+            pictures = cards.map(function (card) {
+                var preview = getAsset(dark ? card.darkThumb : card.lightThumb);
+                var main = getAsset(dark ? card.darkImage : card.lightImage);
+                return { preview: preview, main: main };
+            });
+            if (timer !== undefined) { schedule(); }
+            renderImages();
+        }
+
+        function setImage(photo, source) {
+            photo.hidden = !source;
+            if (source && photo.getAttribute('src') !== source) { photo.src = source; }
+        }
+
+        function setDownload(meter, state) {
+            meter.hidden = !state.loading;
+            if (state.loading && state.total > 0) {
+                meter.max = state.total;
+                meter.value = state.bytes;
+            } else {
+                meter.removeAttribute('value');
+            }
+        }
+
+        function renderImages() {
+            repaint = 0;
+            var states = pictures.map(function (picture) {
+                var assets = picture.preview === picture.main ? [picture.main] : [picture.preview, picture.main];
+                return {
+                    loading: assets.some(function (asset) { return !asset.src && !asset.failed; }),
+                    bytes: assets.reduce(function (sum, asset) { return sum + asset.bytes; }, 0),
+                    total: assets.every(function (asset) { return asset.total !== null && !asset.failed; })
+                        ? assets.reduce(function (sum, asset) { return sum + asset.total; }, 0) : null
+                };
+            });
+            figures.forEach(function (figure) {
+                var picture = pictures[figure.index];
+                var state = states[figure.index];
+                setImage(figure.preview, picture.preview === picture.main ? '' : picture.preview.src);
+                var source = picture.main.src;
+                if (source && figure.photo.getAttribute('src') !== source) { figure.photo.src = source; }
+                figure.root.toggleAttribute('data-artwork-ready', Boolean(source));
+                figure.photo.setAttribute('aria-hidden', String(!source));
+                figure.transfer.hidden = !state.loading && !picture.main.failed;
+                figure.label.textContent = picture.main.failed ? (fa ? 'تصویر باز نشد' : 'Artwork unavailable') :
+                    (fa ? 'دریافت تصویر' : 'Downloading artwork');
+                figure.readout.textContent = state.loading ? (state.total > 0 ? percentFormat.format(Math.floor(state.bytes * 100 / state.total) / 100) :
+                    (state.bytes ? bytesFormat.format(state.bytes) + (fa ? ' بایت' : ' bytes') : '')) : '';
+                setDownload(figure.meter, state);
+            });
+            previews.forEach(function (preview, index) {
+                var picture = pictures[index];
+                setImage(preview.photo, picture.preview.src || picture.main.src);
+                setDownload(preview.meter, states[index]);
+            });
+            if (multiple && timer === undefined) { schedule(); }
+        }
+
+        var active = 0;
+        var timer;
+        var interval = 9000;
+        var remaining = interval;
+        var startedAt;
+        var progressAnimation;
+        var snapTimer;
+        var drag;
+        var hovering = false;
+        var playing = true;
+        var onScreen = true;
+        var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+        var rotation = element('button', 'dg-story-rotation');
+        rotation.type = 'button';
+        var progressOnEdge = config.loginStoryProgress === 'edge';
+        var progress = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        progress.setAttribute('class', 'dg-story-progress' + (progressOnEdge ? ' dg-story-progress--edge' : ''));
+        progress.setAttribute('aria-hidden', 'true');
+        progress.setAttribute('preserveAspectRatio', 'none');
+        progress.setAttribute('viewBox', progressOnEdge ? '0 0 400 4' : '0 0 40 40');
+        var progressLine = document.createElementNS(progress.namespaceURI, 'path');
+        progressLine.setAttribute('pathLength', '1');
+        progressLine.setAttribute('d', progressOnEdge ? 'M1 2H399' :
+            'M20 1h8a11 11 0 0 1 11 11v16a11 11 0 0 1-11 11H12A11 11 0 0 1 1 28V12A11 11 0 0 1 12 1Z');
+        progress.append(progressLine);
+
+        function schedule(reset) {
+            if (!multiple) { return; }
+            if (timer !== undefined) {
+                window.clearTimeout(timer);
+                timer = undefined;
+                remaining = Math.max(1, remaining - (performance.now() - startedAt));
+            }
+            if (reset === true) { remaining = interval; }
+            progressAnimation?.cancel();
+            var offset = String(remaining / interval);
+            progressLine.style.strokeDashoffset = offset;
+            var focused = document.activeElement;
+            var artwork = pictures[active]?.main;
+            if ((artwork?.src || artwork?.failed) && (!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
+                !document.hidden && !hovering && (focused === rotation || !region.contains(focused))) {
+                startedAt = performance.now();
+                progressAnimation = progressLine.animate?.([{ strokeDashoffset: offset }, { strokeDashoffset: '0' }],
+                    { duration: remaining, easing: 'linear', fill: 'forwards' });
+                timer = window.setTimeout(function () {
+                    timer = undefined;
+                    select(active + 1, false);
+                }, remaining);
+            }
+        }
+
+        function slot(index) {
+            return multiple ? 1 + (rtl ? cards.length - 1 - index : index) : 0;
+        }
+
+        function snap() {
+            window.clearTimeout(snapTimer);
+            snapTimer = undefined;
+            track.classList.add('is-instant');
+            track.style.setProperty('--dg-story-slot', slot(active));
+            void track.offsetWidth;
+            track.classList.remove('is-instant');
+        }
+
+        function select(index, manual) {
+            if (snapTimer !== undefined) { snap(); }
+            var previous = active;
+            active = ((index % cards.length) + cards.length) % cards.length;
+            var nextSlot = slot(active);
+            var wrapping = (previous === cards.length - 1 && index === cards.length) || (previous === 0 && index === -1);
+            if (wrapping && !reduced.matches) {
+                nextSlot = slot(previous) + Math.sign(index - previous) * (rtl ? -1 : 1);
+                snapTimer = window.setTimeout(snap, 550);
+            }
+            track.style.setProperty('--dg-story-slot', nextSlot);
+            track.style.removeProperty('--dg-story-drag');
+            articles.forEach(function (article, position) {
+                var visible = position === active;
+                article.inert = !visible;
+                article.setAttribute('aria-hidden', String(!visible));
+                article.classList.toggle('is-active', visible);
+                indicators[position]?.setAttribute('aria-pressed', String(visible));
+            });
+            if (manual) { announcement.textContent = indicators[active]?.getAttribute('aria-label') || cards[active].title; }
+            schedule(manual || previous !== active);
+        }
+
+        function syncRotation() {
+            var label = playing ? (fa ? 'توقف پخش خودکار' : 'Pause automatic rotation') :
+                (fa ? 'شروع پخش خودکار' : 'Start automatic rotation');
+            rotation.setAttribute('aria-label', label);
+            rotation.title = label;
+            rotation.dataset.playing = String(playing);
+            rotation.hidden = reduced.matches;
+            schedule();
+        }
+
+        region.append(header, stage);
+        if (multiple) {
+            stage.dataset.draggable = '';
+            (progressOnEdge ? region : rotation).append(progress);
+            var previous = storyArrow('back', fa ? 'اسلاید قبلی' : 'Previous slide', -1);
+            var next = storyArrow('arrow', fa ? 'اسلاید بعدی' : 'Next slide', 1);
+            navigation.append(previous, dots, next, rotation);
+            controls.append(navigation);
+            region.append(controls, announcement);
+            rotation.addEventListener('click', function () { playing = !playing; syncRotation(); });
+            dots.addEventListener('keydown', function (event) {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { return; }
+                var focused = indicators.indexOf(document.activeElement);
+                if (focused < 0) { return; }
+                event.preventDefault();
+                var offset = (event.key === 'ArrowRight' ? 1 : -1) * (rtl ? -1 : 1);
+                var index = event.key === 'Home' ? 0 : event.key === 'End' ? indicators.length - 1 :
+                    (focused + offset + indicators.length) % indicators.length;
+                select(index, true);
+                indicators[index].focus();
+            });
+            track.addEventListener('transitionend', function (event) {
+                if (event.target === track && event.propertyName === 'transform' && snapTimer !== undefined) { snap(); }
+            });
+            stage.addEventListener('pointerdown', function (event) {
+                if (event.button !== 0 || !event.isPrimary || drag || event.target.closest('a, button')) { return; }
+                if (snapTimer !== undefined) { snap(); }
+                drag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, horizontal: false };
+                stage.setPointerCapture(event.pointerId);
+                schedule();
+            });
+            stage.addEventListener('pointermove', function (event) {
+                if (!drag || drag.id !== event.pointerId) { return; }
+                var delta = event.clientX - drag.x;
+                if (!drag.horizontal && (Math.abs(delta) < 7 || Math.abs(delta) <= Math.abs(event.clientY - drag.y))) { return; }
+                drag.horizontal = true;
+                track.classList.add('is-dragging');
+                var width = stage.clientWidth;
+                track.style.setProperty('--dg-story-drag', Math.max(-width, Math.min(width, delta)) + 'px');
+            });
+            stage.addEventListener('pointerup', finishDrag);
+            stage.addEventListener('pointercancel', finishDrag);
+            stage.addEventListener('lostpointercapture', finishDrag);
+            function finishDrag(event) {
+                if (!drag || drag.id !== event.pointerId) { return; }
+                var delta = event.clientX - drag.x;
+                var threshold = Math.min(105, Math.max(42, stage.clientWidth * .17));
+                var flick = Math.abs(delta) > 20 && Math.abs(delta) / Math.max(1, event.timeStamp - drag.time) > .55;
+                var move = event.type === 'pointerup' && drag.horizontal && (Math.abs(delta) >= threshold || flick);
+                drag = null;
+                track.classList.remove('is-dragging');
+                select(move ? active + Math.sign(delta) * (rtl ? 1 : -1) : active, move);
+            }
+
+            function storyArrow(icon, label, step) {
+                var button = element('button', 'dg-story-arrow');
+                button.type = 'button';
+                button.setAttribute('aria-label', label);
+                putAuthIcon(button, icon);
+                button.addEventListener('click', function () { select(active + step, true); });
+                return button;
+            }
+
+            region.addEventListener('pointerenter', function (event) {
+                if (event.pointerType === 'mouse') { hovering = true; schedule(); }
+            });
+            region.addEventListener('pointerleave', function () { hovering = false; schedule(); });
+            region.addEventListener('focusin', schedule);
+            region.addEventListener('focusout', function () { window.setTimeout(schedule, 0); });
+            if (drawer) { shell.addEventListener('digitalogic:story-drawer-change', schedule); }
+            document.addEventListener('visibilitychange', schedule);
+            wide.addEventListener('change', schedule);
+            reduced.addEventListener('change', syncRotation);
+            if ('IntersectionObserver' in window) {
+                new IntersectionObserver(function (entries) {
+                    onScreen = entries[0].isIntersecting;
+                    schedule();
+                }, { threshold: 0.2 }).observe(region);
+            }
+            syncRotation();
+        }
+
+        if (drawer) { drawer.ready(); }
+        else {
+            shell.prepend(region);
+            shell.classList.add('dg-has-login-stories');
+        }
+        syncImages();
+        select(0, false);
+        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
+    }
+
 
     function authPageAction() {
         if (!document.body || !document.body.classList) {
@@ -2617,10 +5299,45 @@
         if (fieldLabel && cleanText(fieldLabel.textContent, '') !== label) {
             fieldLabel.textContent = label;
         }
-
         if (field) {
-            field.setAttribute('placeholder', label);
-            field.setAttribute('aria-label', label);
+            field.setAttribute('dir', 'auto');
+        }
+
+        var form = document.querySelector('#lostpasswordform');
+        if (!form || form.querySelector('.dg-recovery-title')) {
+            return;
+        }
+
+        var persian = isPersianLocale();
+        var heading = document.createElement('h2');
+        heading.className = 'dg-recovery-title';
+        heading.textContent = getLabel('lostPassword', 'Reset password');
+        putAuthIcon(heading, 'lock');
+        form.prepend(heading);
+
+        var notice = document.querySelector('#login > .notice-info.message');
+        if (notice) {
+            notice.classList.add('dg-recovery-instructions');
+            notice.id = notice.id || 'dg-recovery-instructions';
+            heading.after(notice);
+            if (field) {
+                var descriptions = (field.getAttribute('aria-describedby') || '').trim();
+                field.setAttribute('aria-describedby', [descriptions, notice.id].filter(Boolean).join(' '));
+            }
+        }
+
+        var submit = form.querySelector('#wp-submit');
+        if (submit) {
+            submit.value = persian ? 'ارسال پیوند بازیابی' : 'Send reset link';
+        }
+
+        var navigation = document.querySelector('body.login #nav');
+        if (navigation) {
+            Array.from(navigation.childNodes).forEach(function (node) {
+                if (node.nodeType === 3 && /^\s*\|\s*$/.test(node.textContent)) {
+                    node.remove();
+                }
+            });
         }
     }
 
@@ -2648,8 +5365,713 @@
         });
 
         normalizeAuthNavigation();
+        var authShell = document.querySelector('.dg-digits-login-shell');
+        if (authShell) {
+            var footer = document.querySelector('body.login #nav');
+            if (footer) { footer.hidden = true; }
+        }
+        document.querySelectorAll('.dg-digits-login-shell form').forEach(prepareDigitsSkipPassword);
+        document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) form.digits_register').forEach(prepareRegistrationOtp);
+        mountLoginAlternatives();
+        decorateAuthControls();
+        prepareDigitsTextFields();
         normalizeDigitsLoginFallback();
         normalizeRecoveryIdentity();
+        prepareDigitsRegistrationAutofill();
+    }
+
+    var authIcons = {
+        device: 'M4 5h16v11H4z M8 20h8m-4-4v4',
+        theme: 'M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 1.5-3.3A1 1 0 0 1 16.3 16H18a3 3 0 0 0 3-3c0-5.5-4-10-9-10Z M7.5 12h.01 M10 7.5h.01 M15 7.8h.01 M17 12h.01',
+        moon: 'M20.8 14.1A9 9 0 0 1 9.9 3.2a9 9 0 1 0 10.9 10.9Z',
+        sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+        ellipsis: 'M5 12h.01m6.99 0h.01m6.99 0h.01',
+        user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+        userPlus: 'M15 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM19 8v6m-3-3h6',
+        chevronDown: 'M6 9l6 6 6-6',
+        dragGrip: 'M9 7h.01 M15 7h.01 M9 12h.01 M15 12h.01 M9 17h.01 M15 17h.01',
+        trash: 'M4 6h16M9 6V3h6v3m3 0-1 15H7L6 6m4 4v7m4-7v7',
+        home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
+        email: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z M3 7l9 6 9-6',
+        eye: 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
+        eyeOff: 'M3 3l18 18 M10.6 6.1 12 6c6.4 0 10 6 10 6a16 16 0 0 1-3.1 3.4 M6.1 7.9A16.4 16.4 0 0 0 2 12s3.6 6 10 6a11 11 0 0 0 4.1-.8',
+        phone: 'M8 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M10 17h4',
+        lock: 'M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5z M12 14v3',
+        key: 'M15 3a6 6 0 1 1-3 11L5 21H2v-3l7-7a6 6 0 0 1 6-8Z M16 8h.01',
+        sms: 'M4 4h16v12H9l-5 4z M8 9h8 M8 12h5',
+        arrow: 'M5 12h14m-6-6 6 6-6 6',
+        back: 'M19 12H5m6-6-6 6 6 6',
+        check: 'M5 12l4 4L19 6',
+        close: 'M6 6l12 12M18 6 6 18',
+        info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 11v5m0-8h.01',
+        edit: 'M14 5l5 5M4 20l1-5L16 4a2 2 0 0 1 3 0l1 1a2 2 0 0 1 0 3L9 19z',
+        copy: 'M8 8h12v13H8z M16 5V3H4v14h2',
+        clock: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM12 6v6l4 2',
+        more: 'M4 7h16 M4 12h16 M4 17h16 M8 5v4 M15 10v4 M10 15v4'
+    };
+
+    function putAuthIcon(node, name) {
+        if (!node || !node.querySelector) { return; }
+        var previous = node.querySelector(':scope > .dg-auth-icon');
+        if (previous) {
+            if (previous.classList.contains('dg-auth-icon--' + name)) { return; }
+            previous.remove();
+        }
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.classList.add('dg-auth-icon', 'dg-auth-icon--' + name);
+        var path = document.createElementNS(svg.namespaceURI, 'path');
+        path.setAttribute('d', authIcons[name]);
+        svg.appendChild(path);
+        node.prepend(svg);
+    }
+
+    function createAuthIdentity(value, icon, photo, label) {
+        var card = document.createElement('span');
+        card.className = 'dg-auth-identity';
+        var mark = document.createElement('span');
+        mark.className = 'dg-auth-identity-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        putAuthIcon(mark, icon);
+        if (photo) {
+            var image = document.createElement('img');
+            image.alt = '';
+            image.referrerPolicy = 'no-referrer';
+            image.hidden = true;
+            image.addEventListener('load', function () { image.hidden = false; }, { once: true });
+            image.addEventListener('error', function () { image.remove(); }, { once: true });
+            mark.appendChild(image);
+            image.src = photo;
+        }
+        var name = document.createElement('bdi');
+        name.className = 'dg-auth-identity-value';
+        name.textContent = value;
+        card.appendChild(mark);
+        if (label) {
+            var caption = document.createElement('span');
+            caption.className = 'dg-auth-identity-label';
+            caption.textContent = label;
+            card.appendChild(caption);
+        }
+        card.appendChild(name);
+        return card;
+    }
+
+    function decorateNativeLoginCards() {
+        var login = document.querySelector('body.login #login');
+        if (!login) { return; }
+        var form = login.querySelector(':scope > .admin-email-confirm-form');
+        if (form) {
+            putAuthIcon(form.querySelector('.admin-email__heading'), 'email');
+            putAuthIcon(form.querySelector('.admin-email__details a'), 'info');
+            putAuthIcon(form.querySelector('.admin-email__actions-secondary a'), 'clock');
+
+            var actions = form.querySelector('.admin-email__actions-primary');
+            var confirm = actions?.querySelector(':scope > #correct-admin-email');
+            if (confirm) { actions.prepend(confirm); }
+            putAuthIcon(actions?.querySelector(':scope > a.button'), 'edit');
+
+            var email = form.querySelectorAll('p.admin-email__details')[1]?.querySelector('strong');
+            if (email) { email.dir = 'ltr'; }
+            return;
+        }
+
+        // Reuse the translated WordPress heading and its notice, including any links.
+        var body = document.body;
+        var isCheckEmail = body.classList.contains('login-action-checkemail');
+        var isConfirmed = body.classList.contains('login-action-confirmaction');
+        var isReset = body.matches('.login-action-rp, .login-action-resetpass') && !login.querySelector('#resetpassform');
+        if (!isCheckEmail && !isConfirmed && !isReset) { return; }
+        var heading = body.querySelector(':scope > h1.screen-reader-text');
+        var notice = isConfirmed && login.querySelector(':scope > p.success');
+        notice = notice || login.querySelector(isReset ? ':scope > .message.reset-pass' : ':scope > .message:not(.notice-error)');
+        if (!heading || !notice) { return; }
+        var followup = isConfirmed && notice.matches('p.success') && notice.nextElementSibling;
+
+        var card = document.createElement('section');
+        card.className = 'dg-native-auth-card' + (isCheckEmail ? '' : ' dg-native-auth-card--success');
+        heading.classList.remove('screen-reader-text');
+        heading.classList.add('dg-native-card-heading');
+        putAuthIcon(heading, isCheckEmail ? 'email' : 'check');
+        notice.before(card);
+        card.append(heading, notice);
+        if (followup && followup.matches('p:not([id], [class])')) { card.append(followup); }
+    }
+
+    function decorateAuthControls() {
+        var selectors = {
+            '.digits-form_heading:not([data-call-preview-title], [data-call-code-title])': 'user',
+            '.dg-passkey-options summary': 'more',
+            '.dg-passkey-options .digitalogic-call-toggle, [data-call-start]': 'phone',
+            '.dg-otp-resend': 'sms',
+            '[data-call-preview-back]': 'back',
+            '.digits-form_button_ic, .dg-auth-primary': 'arrow'
+        };
+        Object.keys(selectors).forEach(function (selector) {
+            document.querySelectorAll(selector).forEach(function (node) { putAuthIcon(node, selectors[selector]); });
+        });
+        document.querySelectorAll('.dg-digits-login-shell, .dg-digits-register-shell').forEach(function (shell) {
+            shell.querySelectorAll('input[name="phone"]').forEach(function (input) {
+                var holder = input.closest('.digits-form_input') || input.parentElement;
+                holder.classList.add('dg-auth-input-icon');
+                putAuthIcon(holder, 'phone');
+            });
+        });
+        document.querySelectorAll('#digits_google_login').forEach(function (button) {
+            if (button.dataset.dgGoogleReady) { return; }
+            button.dataset.dgGoogleReady = 'true';
+            button.setAttribute('role', 'button');
+            button.tabIndex = 0;
+            var label = button.querySelector('.digits-social-text');
+            if (label) { label.textContent = isPersianLocale() ? 'حساب کاربری گوگل' : 'Continue with Google'; }
+            var divider = button.closest('.digits-social-logins-box').querySelector('.digits-use_social-logins');
+            var list = button.closest('.digits-social-logins');
+            if (divider && list) { list.before(divider); }
+            if (divider && divider.firstElementChild) {
+                divider.firstElementChild.textContent = isPersianLocale() ? 'یا ادامه با' : 'Or continue with';
+            }
+            button.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    button.click();
+                }
+            });
+        });
+    }
+
+    function mountLoginIdentityPicker(phone, email) {
+        var form = phone.form;
+        function fieldRow(input) {
+            return input.closest('.digits-form_input_row') || input.parentElement;
+        }
+        [phone, email].forEach(function (input) {
+            var row = fieldRow(input);
+            row.classList.add('dg-login-identity-field');
+            row.addEventListener('click', function (event) {
+                if (!event.target.closest('button, input, a, .dg-account-menu, .dg-country-code-control')) {
+                    input.focus({ preventScroll: true });
+                }
+            });
+        });
+        var assigned = config.rememberedAccount;
+        var saved = Array.isArray(config.rememberedAccounts) ? config.rememberedAccounts.filter(account => account?.login) : [];
+        if (!form || (!assigned?.login && !saved.length)) { return; }
+
+        var chooseLabel = authRequestLabel('Choose an account', 'انتخاب حساب');
+        var trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'dg-account-field-toggle';
+        trigger.setAttribute('aria-label', chooseLabel);
+        putAuthIcon(trigger, 'chevronDown');
+        var menu = document.createElement('div');
+        menu.id = 'dg-login-account-menu';
+        menu.className = 'dg-account-menu';
+        menu.dir = document.documentElement.dir || 'ltr';
+        menu.hidden = true;
+        menu.setAttribute('role', 'dialog');
+        menu.setAttribute('aria-label', chooseLabel);
+        var title = document.createElement('div');
+        title.id = 'dg-login-account-title';
+        title.className = 'dg-account-field-title';
+        var titleText = document.createElement('bdi');
+        title.appendChild(titleText);
+        var avatar = document.createElement('img');
+        avatar.alt = '';
+        avatar.referrerPolicy = 'no-referrer';
+        avatar.className = 'dg-account-field-avatar';
+        avatar.hidden = true;
+        avatar.addEventListener('load', function () { avatar.hidden = false; });
+        avatar.addEventListener('error', function () { avatar.hidden = true; });
+        var error = document.createElement('p');
+        error.className = 'dg-account-menu-error';
+        error.setAttribute('role', 'alert');
+        var activeInput;
+        var currentMode;
+        var forgetting = false;
+
+        function matchingAccount(value) {
+            return [assigned].concat(saved).find(account => account?.login.toLowerCase() === value.toLowerCase());
+        }
+
+        function closeMenu(restoreFocus) {
+            menu.hidden = true;
+            trigger.setAttribute('aria-expanded', 'false');
+            activeInput?.setAttribute('aria-expanded', 'false');
+            if (restoreFocus) { activeInput?.focus({ preventScroll: true }); }
+        }
+
+        function positionMenu() {
+            if (menu.hidden) { return; }
+            var field = fieldRow(activeInput).getBoundingClientRect();
+            var viewport = window.visualViewport;
+            var top = viewport?.offsetTop || 0;
+            var below = top + (viewport?.height || window.innerHeight) - field.bottom - 16;
+            var above = field.top - top - 16;
+            var openAbove = below < menu.scrollHeight && above > below;
+            menu.classList.toggle('dg-account-menu--above', openAbove);
+            menu.style.maxHeight = Math.max(0, openAbove ? above : below) + 'px';
+        }
+
+        function setValue(value) {
+            closeMenu(false);
+            var input = activeInput || phone;
+            if (!activeInput && !value) { return; }
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            (email.disabled ? phone : email).focus({ preventScroll: true });
+        }
+
+        function addGroup(label, accounts) {
+            if (!accounts.length) { return; }
+            var group = document.createElement('div');
+            group.className = 'dg-account-menu-group';
+            group.setAttribute('role', 'group');
+            group.setAttribute('aria-label', label);
+            var heading = document.createElement('p');
+            heading.className = 'dg-account-menu-label';
+            heading.textContent = label;
+            group.appendChild(heading);
+            accounts.forEach(function (account) {
+                var row = document.createElement('div');
+                row.className = 'dg-account-menu-row';
+                var choice = document.createElement('button');
+                choice.type = 'button';
+                choice.className = 'dg-account-menu-choice';
+                var kind = classifyIdentity(account.login);
+                var icon = account.assigned ? 'device' : kind === 'email' ? 'email' : kind === 'phone' ? 'phone' : 'user';
+                var badge = createAuthIdentity(account.name || account.login, icon, account.assigned ? account.avatar : '');
+                var text = document.createElement('span');
+                text.className = 'dg-account-menu-text';
+                text.appendChild(badge.querySelector('.dg-auth-identity-value'));
+                if (account.name && account.name !== account.login) {
+                    var login = document.createElement('bdi');
+                    login.textContent = account.login;
+                    text.appendChild(login);
+                }
+                choice.append(badge.querySelector('.dg-auth-identity-mark'), text);
+                if (matchingAccount(activeInput.value)?.login === account.login) {
+                    choice.setAttribute('aria-current', 'true');
+                }
+                choice.addEventListener('click', function () { setValue(account.login); });
+                row.appendChild(choice);
+                if (config.forgetAccountNonce) {
+                    var remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'dg-account-menu-remove';
+                    remove.title = authRequestLabel('Remove ' + (account.name || account.login), 'حذف ' + (account.name || account.login));
+                    remove.setAttribute('aria-label', remove.title);
+                    putAuthIcon(remove, 'trash');
+                    remove.addEventListener('click', function () { forgetAccount(account, remove); });
+                    row.appendChild(remove);
+                }
+                group.appendChild(row);
+            });
+            menu.appendChild(group);
+        }
+
+        function renderMenu() {
+            menu.replaceChildren();
+            addGroup(authRequestLabel('This workstation', 'این دستگاه'), assigned?.login ? [assigned] : []);
+            addGroup(authRequestLabel('Signed out', 'حساب‌های خارج‌شده'), saved.filter(account => account.login !== assigned?.login));
+            var another = document.createElement('button');
+            another.type = 'button';
+            another.className = 'dg-account-menu-another';
+            another.textContent = authRequestLabel('Use another account', 'ورود با حساب دیگر');
+            putAuthIcon(another, 'userPlus');
+            another.addEventListener('click', function () { setValue(''); });
+            menu.append(another, error);
+        }
+
+        function openMenu(last) {
+            error.textContent = '';
+            renderMenu();
+            menu.hidden = false;
+            trigger.setAttribute('aria-expanded', 'true');
+            activeInput.setAttribute('aria-expanded', 'true');
+            positionMenu();
+            var choices = menu.querySelectorAll('.dg-account-menu-choice, .dg-account-menu-another');
+            var current = menu.querySelector('[aria-current="true"]');
+            (last ? choices[choices.length - 1] : (current || choices[0]))?.focus({ preventScroll: true });
+        }
+
+        async function forgetAccount(account, remove) {
+            if (forgetting) { return; }
+            forgetting = true;
+            remove.disabled = true;
+            error.textContent = '';
+            try {
+                var response = await fetch(config.ajaxUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: new URLSearchParams({ action: 'digitalogic_forget_account_hint', nonce: config.forgetAccountNonce, login: account.login })
+                });
+                if (!response.ok || !(await response.json()).success) { throw new Error('Could not remove account hint'); }
+                var clear = matchingAccount(activeInput?.value || '')?.login === account.login;
+                var wasOpen = !menu.hidden;
+                if (assigned?.login === account.login) { config.rememberedAccount = assigned = null; }
+                config.rememberedAccounts = saved = saved.filter(item => item.login !== account.login);
+                if (clear) {
+                    setValue('');
+                } else {
+                    updateField(activeInput || (email.disabled ? phone : email), currentMode);
+                }
+                if (wasOpen && !clear && activeInput) { openMenu(false); }
+            } catch (_error) {
+                remove.disabled = false;
+                error.textContent = authRequestLabel('Could not remove this account from this browser. Try again.', 'حذف حساب از این مرورگر انجام نشد. دوباره امتحان کنید.');
+                positionMenu();
+            } finally {
+                forgetting = false;
+            }
+        }
+
+        function updateField(input, mode) {
+            var available = (assigned?.login || saved.length) && !form.dataset.dgSmsIdentity && !form.closest('[data-dg-recovery]');
+            var previous = activeInput;
+            if (previous && (!available || previous !== input)) {
+                closeMenu(false);
+                ['role', 'aria-haspopup', 'aria-controls', 'aria-expanded'].forEach(function (attribute) { previous.removeAttribute(attribute); });
+                var descriptions = (previous.getAttribute('aria-describedby') || '').split(' ').filter(id => id && id !== title.id);
+                if (descriptions.length) { previous.setAttribute('aria-describedby', descriptions.join(' ')); }
+                else { previous.removeAttribute('aria-describedby'); }
+                fieldRow(previous).classList.remove('dg-login-identity-field--picker');
+                trigger.remove();
+                title.remove();
+                avatar.remove();
+                menu.remove();
+                activeInput = null;
+            }
+            currentMode = mode;
+            if (!available) { return; }
+            if (activeInput !== input) {
+                activeInput = input;
+                var field = fieldRow(input);
+                field.classList.add('dg-login-identity-field--picker');
+                input.before(title, avatar);
+                field.append(trigger, menu);
+                [input, trigger].forEach(function (control) {
+                    control.setAttribute('aria-haspopup', 'dialog');
+                    control.setAttribute('aria-controls', menu.id);
+                    control.setAttribute('aria-expanded', 'false');
+                });
+                input.setAttribute('role', 'combobox');
+                input.setAttribute('aria-describedby', [input.getAttribute('aria-describedby'), title.id].filter(Boolean).join(' '));
+            }
+            var account = matchingAccount(input.value);
+            var caption = mode === 'email' ? authRequestLabel('Email', 'ایمیل')
+                : mode === 'phone' ? authRequestLabel('Phone number', 'شماره تلفن')
+                    : authRequestLabel('Username', 'نام کاربری');
+            titleText.textContent = account?.name || (input.value ? caption : chooseLabel);
+            var holder = input.closest('.dg-auth-input-icon');
+            if (holder && account?.assigned && mode === 'username') { putAuthIcon(holder, 'device'); }
+            var photo = (mode !== 'phone' && account?.assigned && account.avatar) || null;
+            if (photo !== avatar.getAttribute('src')) {
+                avatar.hidden = true;
+                if (photo) { avatar.src = photo; }
+                else { avatar.removeAttribute('src'); }
+            }
+        }
+
+        trigger.addEventListener('click', function () { menu.hidden ? openMenu(false) : closeMenu(true); });
+        [phone, email, trigger].forEach(function (control) {
+            control.addEventListener('keydown', function (event) {
+                if (activeInput && ['ArrowDown', 'ArrowUp'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                    event.preventDefault();
+                    openMenu(event.key === 'ArrowUp');
+                }
+            });
+        });
+        menu.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                closeMenu(true);
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                var choices = Array.from(menu.querySelectorAll('.dg-account-menu-choice, .dg-account-menu-another'));
+                var current = choices.findIndex(button => button === event.target || button.parentElement.contains(event.target));
+                var next = choices[(current + (event.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length];
+                next?.focus({ preventScroll: true });
+                next?.scrollIntoView({ block: 'nearest' });
+            }
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (activeInput && !fieldRow(activeInput).contains(event.target)) { closeMenu(false); }
+        });
+        menu.addEventListener('focusout', function (event) {
+            if (event.relatedTarget && !menu.contains(event.relatedTarget) && event.relatedTarget !== trigger) { closeMenu(false); }
+        });
+        window.addEventListener('resize', positionMenu);
+        window.visualViewport?.addEventListener('resize', positionMenu);
+        loginAccountPickers.set(form, updateField);
+        if (assigned?.login && !phone.value && !email.value && !authRecovery) {
+            phone.value = assigned.login;
+            phone.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
+    function prepareAuthAssets() {
+        var loader = document.querySelector('.dg-auth-preloader');
+        if (!loader) { return; }
+
+        var serviceWorker = navigator.serviceWorker;
+        var scope = new URL(config.loginUrl);
+        var controller = serviceWorker?.controller;
+        var workerUrl = new URL('?dg_auth_assets=worker', scope);
+        if (controller?.scriptURL === workerUrl.href) {
+            loader.remove();
+        } else {
+            // Fonts and the shell can settle while the first frame of the loader is visible.
+            Promise.race([document.fonts?.ready, new Promise(function (resolve) { window.setTimeout(resolve, 480); })])
+                .then(function () { window.setTimeout(function () { loader.classList.add('is-ready'); }, 160); });
+        }
+        if (!serviceWorker || window.location.pathname !== scope.pathname) { return; }
+
+        async function warm() {
+            try {
+                var registration = await serviceWorker.register(workerUrl, { scope: scope.pathname });
+                var known = new Set();
+                var timer;
+
+                function collect() {
+                    var urls = new Set(config.loginAssetFontsAndLogos || []);
+                    document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(function (node) {
+                        urls.add(node.src || node.href);
+                    });
+                    performance.getEntriesByType('resource').forEach(function (entry) {
+                        if (['css', 'script', 'link'].includes(entry.initiatorType) ||
+                            (entry.initiatorType === 'img' &&
+                                entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/'))) {
+                            urls.add(entry.name);
+                        }
+                    });
+                    var fresh = Array.from(urls).filter(function (value) {
+                        if (!value || known.has(value)) { return false; }
+                        var url = new URL(value, window.location.href);
+                        return url.origin === window.location.origin && /\.(?:css|js|woff2?|svg|webp|png|jpe?g|avif)$/i.test(url.pathname);
+                    });
+                    var worker = registration.active;
+                    if (!worker || worker.state !== 'activated' || !fresh.length) { return; }
+                    fresh.forEach(function (url) { known.add(url); });
+                    for (var i = 0; i < fresh.length; i += 100) {
+                        worker.postMessage({ type: 'DIGITALOGIC_PREFETCH_LOGIN_ASSETS', urls: fresh.slice(i, i + 100) });
+                    }
+                }
+
+                function schedule() {
+                    window.clearTimeout(timer);
+                    timer = window.setTimeout(collect, 140);
+                }
+                var pending = registration.installing || registration.waiting || registration.active;
+                pending?.addEventListener('statechange', schedule);
+                serviceWorker.addEventListener('controllerchange', schedule);
+                if (window.PerformanceObserver?.supportedEntryTypes?.includes('resource')) {
+                    new PerformanceObserver(schedule).observe({ type: 'resource' });
+                }
+                schedule();
+            } catch (_error) { /* The network can deliver the same assets when storage is unavailable. */ }
+        }
+        (window.requestIdleCallback || window.setTimeout)(warm);
+    }
+
+    function bindAuthContextMenus() {
+        var card = document.querySelector('body.login #login');
+        if (!card) { return; }
+
+        var editing = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+        var useful = '[data-call-code], [data-call-dial][href^="tel:"]';
+        var fa = isPersianLocale();
+        var trigger;
+        var menu = document.createElement('div');
+        menu.className = 'dg-auth-context-menu';
+        menu.role = 'menu';
+        menu.setAttribute('aria-label', fa ? 'گزینه‌ها' : 'Actions');
+        menu.hidden = true;
+        var live = document.createElement('div');
+        live.className = 'screen-reader-text';
+        live.setAttribute('role', 'status');
+        card.append(menu, live);
+
+        function close(restoreFocus) {
+            if (menu.hidden) { return; }
+            menu.hidden = true;
+            if (restoreFocus && trigger?.isConnected) { trigger.focus({ preventScroll: true }); }
+        }
+
+        function addItem(text, icon, action) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.role = 'menuitem';
+            item.textContent = text;
+            putAuthIcon(item, icon);
+            item.addEventListener('click', function () {
+                close(true);
+                action();
+            });
+            menu.appendChild(item);
+        }
+
+        function open(target, event) {
+            var dial = target.getAttribute('href');
+            var value = dial ? dial.slice(4) : normalizeDigits(target.textContent).replace(/\s/g, '');
+            if (!value || !navigator.clipboard?.writeText) { return; }
+            event.preventDefault();
+            trigger = target;
+            menu.replaceChildren();
+            if (dial) { addItem(fa ? 'تماس' : 'Call', 'phone', function () { target.click(); }); }
+            var copyLabel = dial ? (fa ? 'کپی شماره تلفن' : 'Copy phone number') : (fa ? 'کپی کد تأیید' : 'Copy verification code');
+            addItem(copyLabel, 'copy', async function () {
+                live.textContent = '';
+                try {
+                    await navigator.clipboard.writeText(value);
+                    live.textContent = fa ? 'کپی شد.' : 'Copied.';
+                } catch (_error) {
+                    live.textContent = fa ? 'کپی انجام نشد. متن را انتخاب و کپی کنید.' : 'Could not copy. Select the text to copy it.';
+                }
+            });
+            menu.hidden = false;
+            var rect = target.getBoundingClientRect();
+            var viewport = window.visualViewport;
+            var left = viewport?.offsetLeft || 0;
+            var top = viewport?.offsetTop || 0;
+            var width = viewport?.width || window.innerWidth;
+            var height = viewport?.height || window.innerHeight;
+            var x = event.clientX || (fa ? rect.right - menu.offsetWidth : rect.left);
+            var y = event.clientY || rect.bottom + 6;
+            menu.style.left = Math.max(left + 8, Math.min(x, left + width - menu.offsetWidth - 8)) + 'px';
+            menu.style.top = Math.max(top + 8, Math.min(y, top + height - menu.offsetHeight - 8)) + 'px';
+            menu.firstElementChild.focus({ preventScroll: true });
+        }
+
+        document.addEventListener('contextmenu', function (event) {
+            var target = event.target.closest(useful);
+            if (target) { open(target, event); }
+            else if (!event.target.closest(editing + ', a[href], [role="alert"], .admin-email__details strong, .dg-auth-selectable')) { event.preventDefault(); }
+        });
+        card.addEventListener('keydown', function (event) {
+            if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) { return; }
+            var target = event.target.closest(useful);
+            if (target) { open(target, event); }
+        });
+        menu.addEventListener('keydown', function (event) {
+            var items = Array.from(menu.children);
+            var index = items.indexOf(document.activeElement);
+            if (event.key === 'Tab') { close(true); return; }
+            if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
+            var next = { ArrowUp: index - 1, ArrowDown: index + 1, Home: 0, End: items.length - 1 }[event.key];
+            if (next === undefined) { return; }
+            event.preventDefault();
+            items[(next + items.length) % items.length].focus();
+        });
+        document.addEventListener('pointerdown', function (event) {
+            if (!menu.contains(event.target)) { close(false); }
+        });
+        window.addEventListener('resize', function () { close(true); });
+        document.addEventListener('dragstart', function (event) {
+            var selection = window.getSelection();
+            if (!event.target.closest(editing) && !(event.target.closest(useful) && selection && !selection.isCollapsed)) {
+                event.preventDefault();
+            }
+        });
+        ['dragover', 'drop'].forEach(function (type) {
+            document.addEventListener(type, function (event) {
+                if (!event.target.closest(editing) || Array.from(event.dataTransfer?.types || []).includes('Files')) {
+                    event.preventDefault();
+                }
+            });
+        });
+    }
+
+    function bindAuthPressFeedback() {
+        var controls = '#login :is(button, a[href], summary, [role="button"], label:has(input[type="checkbox"]))';
+        var pressed;
+        function release() {
+            if (pressed) { pressed.classList.remove('dg-touch-down'); pressed = null; }
+        }
+        document.addEventListener('pointerdown', function (event) {
+            release();
+            if (event.button !== 0 || !event.target.closest) { return; }
+            pressed = event.target.closest(controls);
+            if (!pressed || pressed.matches(':disabled,[aria-disabled="true"]')) { return; }
+            pressed.classList.add('dg-touch-down');
+        }, { passive: true });
+        window.addEventListener('pointerup', function (event) {
+            if (pressed && event.pointerType === 'touch' && navigator.vibrate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                navigator.vibrate(9);
+            }
+            release();
+        }, { passive: true });
+        ['pointercancel', 'scroll'].forEach(function (name) {
+            window.addEventListener(name, release, { passive: true });
+        });
+    }
+
+    async function browserSupportsPasskeys() {
+        var credentials = window.PublicKeyCredential;
+        if (!window.isSecureContext || !credentials || typeof navigator.credentials?.get !== 'function') { return false; }
+        try {
+            if (typeof credentials.getClientCapabilities === 'function') {
+                var capabilities = await credentials.getClientCapabilities();
+                if (capabilities.passkeyPlatformAuthenticator || capabilities.hybridTransport || capabilities.userVerifyingPlatformAuthenticator) {
+                    return true;
+                }
+            }
+        } catch (error) { /* Older browsers can still report a local authenticator. */ }
+        try {
+            return typeof credentials.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+                && await credentials.isUserVerifyingPlatformAuthenticatorAvailable();
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function mountLoginAlternatives() {
+        var form = document.querySelector('.dg-digits-login-shell .digits-form_login');
+        if (!form) {
+            return;
+        }
+
+        var shell = form.closest('.dg-digits-login-shell');
+        var widget = document.querySelector('[data-call-unified]');
+        if (widget && !shell.contains(widget)) {
+            shell.appendChild(widget);
+        }
+        var login = form.closest('form') || form;
+        var passkey = login.querySelector('.digits-form_passwordless_login');
+        if (!passkey || passkey.dataset.dgPasskeyReady) { return; }
+        passkey.dataset.dgPasskeyReady = 'true';
+        passkeySupport ||= browserSupportsPasskeys();
+        void passkeySupport.then(function (supported) {
+            if (!supported || !passkey.isConnected) { return; }
+            var social = login.querySelector('.digits-social-logins-box');
+            var disclosure = login.querySelector('.dg-passkey-options');
+            if (!disclosure) {
+                disclosure = document.createElement('details');
+                disclosure.className = 'dg-passkey-options';
+                var summary = document.createElement('summary');
+                summary.textContent = getLabel('passkeyOptions', 'Other sign-in options');
+                putAuthIcon(summary, 'more');
+                disclosure.appendChild(summary);
+                (social || form).appendChild(disclosure);
+            }
+            passkey.type = 'button';
+            passkey.classList.add('dg-icon-label-action');
+            var label = document.createElement('span');
+            label.textContent = getLabel('passkeyLogin', 'Sign in with a passkey');
+            passkey.replaceChildren(label);
+            putAuthIcon(passkey, 'key');
+            disclosure.appendChild(passkey);
+        });
+    }
+
+    function prepareDigitsTextFields() {
+        document.querySelectorAll(':is(.dg-digits-login-shell, .dg-digits-register-shell) .digits-form_input_row input:is(:not([type]), [type="text"], [type="tel"], [type="email"], [type="number"], [type="url"], [type="search"]):not(.dg-auth-input, .otp_input, [name="sms_otp"], [name="email_otp"])').forEach(function (input) {
+            var row = input.closest('.digits-form_input_row');
+            if (!row || row.matches('.digits_captcha_row, .digits-form_rememberme')) { return; }
+            row.classList.add('dg-auth-field');
+            input.classList.add('dg-auth-input');
+        });
     }
 
     function observeAuthChrome() {
@@ -2664,8 +6086,8 @@
             var shouldNormalize = mutations.some(function (mutation) {
                 return Array.prototype.some.call(mutation.addedNodes, function (node) {
                     return node.nodeType === 1 && (
-                        node.matches && node.matches('#nav, .altEmail_container, .dg-digits-login-shell, .digits-form_container, .digits-form_toggle_login_register') ||
-                        node.querySelector && node.querySelector('#nav, .altEmail_container, .dg-digits-login-shell, .digits-form_container, .digits-form_toggle_login_register')
+                        node.matches && node.matches('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register, .digits-form_input_row') ||
+                        node.querySelector && node.querySelector('#nav, .altEmail_container, .dg-digits-login-shell, .digits_register, .digits-form_container, .digits-form_toggle_login_register, .digits-form_input_row')
                     );
                 });
             });
@@ -2676,12 +6098,147 @@
         }).observe(document.body, { childList: true, subtree: true });
     }
 
+    function animateBrandedAuthSteps() {
+        var shell = document.querySelector('.dg-digits-login-shell');
+        if (!shell || !window.MutationObserver) { return; }
+        var motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        var previous;
+        var transition;
+
+        function activeStep() {
+            if (shell.classList.contains('dg-auth-is-success')) { return shell.querySelector('.dg-auth-success'); }
+            if (shell.classList.contains('dg-call-code-active')) {
+                return shell.querySelector('.dg-call-unified :is([data-call-instructions], [data-call-preview]):not([hidden])');
+            }
+            var form = Array.from(shell.querySelectorAll('form:is(.digloginpage, .digits_register)')).find(isVisibleElement);
+            if (!form) { return null; }
+            var steps = Array.from(form.querySelectorAll('.digits-form_tab_container')).filter(isVisibleElement);
+            var step = steps[steps.length - 1] || form;
+            var code = step.querySelector('.dg-otp-stack');
+            return code && isVisibleElement(code) ? code : step;
+        }
+
+        previous = activeStep();
+        new MutationObserver(function () {
+            var step = activeStep();
+            if (step === previous) { return; }
+            previous = step;
+            transition?.cancel();
+            if (!step?.animate || motion.matches) { return; }
+            transition = step.animate([
+                { opacity: 0.45, transform: 'translateY(6px)' },
+                { opacity: 1, transform: 'translateY(0)' }
+            ], {
+                duration: step.matches('.dg-auth-success') ? 290 : 220,
+                easing: 'cubic-bezier(0.2, 0.7, 0.25, 1)'
+            });
+        }).observe(shell, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden']
+        });
+        motion.addEventListener?.('change', function () {
+            if (motion.matches) { transition?.cancel(); }
+        });
+    }
+
+    function fitLoginOptionsToViewport() {
+        var shell = document.querySelector('body.login #login > .dg-digits-login-shell');
+        if (!shell || shell.dataset.dgViewportFit) { return; }
+        shell.dataset.dgViewportFit = 'true';
+        var viewport = window.visualViewport;
+        var frame = 0;
+        var reserve = ['data-dg-reserve-phone', 'data-dg-reserve-passkey'];
+
+        function measure() {
+            frame = 0;
+            var visualHeight = viewport?.scale === 1 && viewport.height < document.documentElement.clientHeight - 1
+                ? Math.floor(viewport.height) + 'px' : '';
+            document.body.style.setProperty('--dg-login-viewport-height', visualHeight);
+
+            var form = shell.querySelector('form.digloginpage.digits_form_index_section');
+            var panel = form?.closest('.digits-form_container') || form;
+            var scrollTop = panel?.scrollTop || 0;
+            reserve.forEach(function (attribute) { shell.removeAttribute(attribute); });
+            if (!panel || !isVisibleElement(form)) { return; }
+
+            var shouldReserve = [
+                callVerificationEnabled(shell) && Boolean(form.querySelector('.dg-phone-channels')),
+                isVisibleElement(form.querySelector('.dg-passkey-options'))
+            ];
+            reserve.forEach(function (attribute, index) {
+                if (!shouldReserve[index]) { return; }
+                shell.setAttribute(attribute, '');
+                if (panel.scrollHeight > panel.clientHeight) { shell.removeAttribute(attribute); }
+            });
+            if (scrollTop && panel.scrollTop !== scrollTop) { panel.scrollTop = scrollTop; }
+        }
+
+        function schedule() {
+            if (!frame) { frame = window.requestAnimationFrame(measure); }
+        }
+
+        var formContainer = shell.querySelector(':scope > :is(.digits-form_container, form)') || shell;
+        new MutationObserver(schedule).observe(formContainer, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'open', 'class']
+        });
+        if (window.ResizeObserver) { new ResizeObserver(schedule).observe(shell); }
+        viewport?.addEventListener('resize', schedule);
+        window.addEventListener('resize', schedule);
+        document.fonts?.ready.then(schedule);
+        schedule();
+    }
+
+    function observeAuthChallenges() {
+        var shell = document.querySelector('.dg-digits-login-shell');
+        if (!shell) { return; }
+        var selector = '.digits_captcha_row, .cf-turnstile, .g-recaptcha, .h-captcha, iframe[src*="challenges.cloudflare.com"], iframe[src*="hcaptcha.com"], iframe[src*="/recaptcha/"]';
+        var watched = new Set();
+        var sizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+
+        function update() {
+            var widgets = Array.from(shell.querySelectorAll(selector));
+            watched.forEach(function (widget) {
+                if (!widgets.includes(widget)) { sizeObserver?.unobserve(widget); watched.delete(widget); }
+            });
+            widgets.forEach(function (widget) {
+                if (!watched.has(widget)) { sizeObserver?.observe(widget); watched.add(widget); }
+            });
+            var active = widgets.find(function (widget) {
+                if (widget.closest('[hidden], .grecaptcha-badge, [data-size="invisible"]')) { return false; }
+                var bounds = widget.getBoundingClientRect();
+                return bounds.width >= 40 && bounds.height >= 24 && getComputedStyle(widget).visibility === 'visible';
+            });
+            shell.toggleAttribute('data-dg-auth-challenge', Boolean(active));
+            var step = active?.closest('.digits-form_login, .digits-form_register');
+            var container = active;
+            while (step && container.parentElement !== step) { container = container.parentElement; }
+            shell.querySelectorAll('[data-dg-position-challenge]').forEach(function (node) {
+                if (node !== container || !step) { node.removeAttribute('data-dg-position-challenge'); }
+            });
+            if (step && !container.matches('.digits-form_tab_wrapper, .digits-form_rememberme')) {
+                container.toggleAttribute('data-dg-position-challenge', true);
+            }
+        }
+
+        update();
+        new MutationObserver(update).observe(shell, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'style', 'class', 'src']
+        });
+    }
+
     if (config.testHooks && typeof config.testHooks === 'object') {
         config.testHooks.authLinkAction = authLinkAction;
         config.testHooks.authPageAction = authPageAction;
         config.testHooks.capturePasswordSelection = capturePasswordSelection;
         config.testHooks.classifyIdentity = classifyIdentity;
         config.testHooks.enhanceLoginLabels = enhanceLoginLabels;
+        config.testHooks.isDigitsAjaxRequest = isDigitsAjaxRequest;
+        config.testHooks.hasUsableDigitsPayload = hasUsableDigitsPayload;
+        config.testHooks.patchDigitsAjaxFailureGuard = patchDigitsAjaxFailureGuard;
+        config.testHooks.bindLoadingStates = bindLoadingStates;
+        config.testHooks.prepareDigitsRegistrationAutofill = prepareDigitsRegistrationAutofill;
         config.testHooks.normalizeDigits = normalizeDigits;
         config.testHooks.normalizeAuthChrome = normalizeAuthChrome;
         config.testHooks.phonePartsFromValue = phonePartsFromValue;
@@ -2691,7 +6248,7 @@
     function enableRipples() {
         document.addEventListener('pointerdown', function (event) {
             var target = event.target.closest('button, .button, .page-title-action, #wpadminbar a, .digits-social-btn');
-            if (!target || target.disabled || target.classList.contains('ab-empty-item')) {
+            if (!target || target.disabled || target.matches('.ab-empty-item, .dg-skip-password, .dg-story-drawer-toggle')) {
                 return;
             }
 
@@ -2714,22 +6271,38 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        setTheme(currentTheme(), false);
-        migrateLegacyStoredTheme();
-        bindThemeStorageSync();
+        if (document.body?.classList.contains('login')) {
+            bindLoginTheme();
+        } else {
+            setTheme(currentTheme(), false);
+            migrateLegacyStoredTheme();
+            bindThemeStorageSync();
+        }
         bindThemeToggles();
-        injectLoginToggle();
+        fitAdminToolbar();
+        mountLoginFooter();
         buildLanguageSwitcher();
         injectLateLoginOverrides();
-        buildLoginHeroCarousel();
-        observeAuthChrome();
+        decorateNativeLoginCards();
+        buildLoginStories();
+        bindAuthPressFeedback();
+        window.addEventListener('pagehide', function () { if (authSocket) { authSocket.close(); } });
+        prepareAuthAssets();
+        bindAuthContextMenus();
         bindLoginValidation();
         bindDigitsAutoIdentity();
+        var routeBrandedAuth = bindBrandedAuthNavigation();
+        restoreDigitsOtpContinuation();
+        observeAuthChrome();
+        routeBrandedAuth?.();
+        animateBrandedAuthSteps();
+        observeAuthChallenges();
+        fitLoginOptionsToViewport();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();
+        document.querySelectorAll('[data-dg-toast-on-load]').forEach(enhanceToast);
         observeInlineMessages();
-        bindErrorHandling();
-        enableRipples();
+        if (!document.body.classList.contains('login')) { enableRipples(); }
     });
 })();

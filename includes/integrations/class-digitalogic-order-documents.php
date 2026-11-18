@@ -222,7 +222,7 @@ final class Digitalogic_Order_Documents {
 		return array(
 			'document_title'  => 'صورتحساب سفارش',
 			'order_number'    => (string) $order->get_order_number(),
-			'order_status'    => function_exists( 'wc_get_order_status_name' ) ? (string) wc_get_order_status_name( $status ) : $status,
+			'order_status'    => Digitalogic_Order_Fulfillment::label( $order, $status ),
 			'order_date'      => $created && method_exists( $created, 'getTimestamp' ) ? date_i18n( get_option( 'date_format' ), $created->getTimestamp() ) : '',
 			'payment_method'  => method_exists( $order, 'get_payment_method_title' ) ? (string) $order->get_payment_method_title() : '',
 			'shipping_method' => method_exists( $order, 'get_shipping_method' ) ? (string) $order->get_shipping_method() : '',
