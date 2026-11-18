@@ -1840,6 +1840,10 @@ class Digitalogic_Patris_Feed {
 					$meta['_regular_price'] = $regular;
 					$meta['_sale_price']    = $sale;
 					$meta['_price']         = $visible;
+					foreach ( array( '_digitalogic_patris_missing_fields', '_digitalogic_patris_null_fields' ) as $marker_key ) {
+						$meta[ $marker_key ]                    = (string) $product->get_meta( $marker_key, true );
+						$additional_managed_keys[ $marker_key ] = true;
+					}
 					$materialization_source = is_array( $item['materialization_source'] ?? null )
 						? $item['materialization_source']
 						: array();
@@ -2599,7 +2603,20 @@ class Digitalogic_Patris_Feed {
 	 * @return void
 	 */
 	public function stage_product_pricing( WC_Product $product, $data ) {
-		$data = is_array( $data ) ? $data : array();
+		$data           = is_array( $data ) ? $data : array();
+		$pricing_fields = array_keys( $this->pricing_meta_fields() );
+		foreach ( array( 'missing', 'null' ) as $kind ) {
+			$key      = '_digitalogic_patris_' . $kind . '_fields';
+			$previous = json_decode( (string) $product->get_meta( $key, true ), true );
+			$fields   = array_values( array_diff( is_array( $previous ) ? $previous : array(), $pricing_fields ) );
+			foreach ( $pricing_fields as $field ) {
+				if ( 'missing' === $kind ? ! array_key_exists( $field, $data ) : array_key_exists( $field, $data ) && null === $data[ $field ] ) {
+					$fields[] = $field;
+				}
+			}
+			sort( $fields, SORT_STRING );
+			$product->update_meta_data( $key, wp_json_encode( array_values( array_unique( $fields ) ) ) );
+		}
 		foreach ( $this->pricing_meta_fields() as $field => $meta_key ) {
 			if ( ! array_key_exists( $field, $data ) || null === $data[ $field ] ) {
 				$product->delete_meta_data( $meta_key );
@@ -2608,6 +2625,103 @@ class Digitalogic_Patris_Feed {
 			}
 		}
 		Digitalogic_Patris_Price_Policy::instance()->apply( $product, $data );
+	}
+
+	/**
+	 * Validate a reviewed stock-only hold against both exact identity bindings.
+	 *
+	 * @param int $product_id Exact destination ID.
+	 * @return array|null|WP_Error
+	 */
+	public function source_stock_conflict( $product_id ) {
+		$holds = get_option( 'digitalogic_patris_stock_conflicts', array() );
+		if ( is_array( $holds ) && ! array_key_exists( (string) $product_id, $holds ) ) {
+			return null;
+		}
+		$hold     = is_array( $holds ) ? $holds[ $product_id ] : null;
+		$code     = is_array( $hold ) ? ( $hold['product_code'] ?? null ) : null;
+		$order_id = $hold['order_id'] ?? null;
+		$verified = $hold['verified_at'] ?? null;
+		if ( ! is_string( $code ) || '' === $code
+			|| array( $code ) !== get_post_meta( $product_id, '_sku', false )
+			|| array( $code ) !== get_post_meta( $product_id, '_digitalogic_patris_product_code', false )
+			|| ! ( is_int( $order_id ) || is_string( $order_id ) )
+			|| false === filter_var( $order_id, FILTER_VALIDATE_INT, array( 'options' => array( 'min_range' => 1 ) ) )
+			|| ! is_string( $verified ) || ! preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/D', $verified )
+			|| false === strtotime( $verified ) || gmdate( 'Y-m-d\TH:i:s\Z', strtotime( $verified ) ) !== $verified
+		) {
+			return new WP_Error( 'digitalogic_patris_stock_conflict_invalid', 'The reviewed stock conflict binding is invalid.', array( 'status' => 409 ) );
+		}
+		return $hold;
+	}
+
+	/** Operator-visible conflicts are independent of source transport completion. */
+	public function source_stock_conflict_report() {
+		$holds = get_option( 'digitalogic_patris_stock_conflicts', array() );
+		if ( ! is_array( $holds ) ) {
+			return array(
+				'total'     => 1,
+				'truncated' => 0,
+				'items'     => array(
+					array(
+						'code'              => 'digitalogic_patris_stock_conflict_invalid',
+						'severity'          => 'critical',
+						'stock_application' => 'held',
+						'stock_reconciled'  => false,
+					),
+				),
+			);
+		}
+		$report = array();
+		ksort( $holds, SORT_STRING );
+		foreach ( array_slice( $holds, 0, 100, true ) as $id => $unused ) {
+			$valid_id = false !== filter_var( $id, FILTER_VALIDATE_INT, array( 'options' => array( 'min_range' => 1 ) ) );
+			$hold     = $valid_id ? $this->source_stock_conflict( (int) $id ) : null;
+			$report[] = array(
+				'woocommerce_id'    => $valid_id ? (int) $id : 0,
+				'product_code'      => is_array( $hold ) ? $hold['product_code'] : '',
+				'code'              => ! is_array( $hold ) ? 'digitalogic_patris_stock_conflict_invalid' : 'digitalogic_patris_stock_conflict',
+				'severity'          => 'critical',
+				'stock_application' => 'held',
+				'stock_reconciled'  => false,
+				'source_stock'      => $valid_id ? get_post_meta( $id, '_digitalogic_patris_total_stock', true ) : null,
+				'woo_stock'         => $valid_id ? get_post_meta( $id, '_stock', true ) : null,
+			);
+		}
+		return array(
+			'total'     => count( $holds ),
+			'truncated' => max( 0, count( $holds ) - count( $report ) ),
+			'items'     => $report,
+		);
+	}
+
+	/**
+	 * Verify sparse markers against the complete accepted source projection.
+	 *
+	 * @param int   $product_id Exact destination ID.
+	 * @param array $data Complete accepted canonical record.
+	 * @return bool
+	 */
+	public function source_sparse_markers_match( $product_id, $data ) {
+		$expected = array(
+			'missing' => array(),
+			'null'    => array(),
+		);
+		foreach ( $this->feed_meta_fields() as $field => $unused ) {
+			if ( ! array_key_exists( $field, $data ) ) {
+				$expected['missing'][] = $field;
+			} elseif ( null === $data[ $field ] ) {
+				$expected['null'][] = $field;
+			}
+		}
+		foreach ( $expected as $kind => $fields ) {
+			sort( $fields, SORT_STRING );
+			$stored = json_decode( (string) get_post_meta( $product_id, '_digitalogic_patris_' . $kind . '_fields', true ), true );
+			if ( $fields !== $stored ) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/** Return the complete pricing-only canonical metadata mapping.
@@ -3631,6 +3745,10 @@ class Digitalogic_Patris_Feed {
 	 * @return void
 	 */
 	private function stage_product_feed( WC_Product $product, $data ) {
+		$stock_conflict = $this->source_stock_conflict( $product->get_id() );
+		if ( is_wp_error( $stock_conflict ) ) {
+			throw new RuntimeException( 'digitalogic_patris_stock_conflict_invalid' );
+		}
 		$data = is_array( $data ) ? $data : array();
 		$product->update_meta_data( '_digitalogic_patris_product_code', (string) ( $data['product_code'] ?? '' ) );
 
@@ -3660,18 +3778,21 @@ class Digitalogic_Patris_Feed {
 			$product->set_weight( '' );
 		}
 
-		if ( ! array_key_exists( 'total_stock', $data ) || null === $data['total_stock'] ) {
-				$product->set_manage_stock( false );
-				$product->set_stock_quantity( null );
-				$product->delete_meta_data( '_stock' );
-				$product->set_stock_status( 'outofstock' );
-		} else {
-			$stock_quantity = $data['total_stock'] > 0
-				? max( 1, (int) floor( (float) $data['total_stock'] ) )
-				: 0;
-			$product->set_manage_stock( true );
-			$product->set_stock_quantity( $stock_quantity );
-			$product->set_stock_status( $stock_quantity > 0 ? 'instock' : 'outofstock' );
+		// Preserve current Woo stock under a reviewed hold, including later sales/refunds.
+		if ( null === $stock_conflict ) {
+			if ( ! array_key_exists( 'total_stock', $data ) || null === $data['total_stock'] ) {
+					$product->set_manage_stock( false );
+					$product->set_stock_quantity( null );
+					$product->delete_meta_data( '_stock' );
+					$product->set_stock_status( 'outofstock' );
+			} else {
+				$stock_quantity = $data['total_stock'] > 0
+					? max( 1, (int) floor( (float) $data['total_stock'] ) )
+					: 0;
+				$product->set_manage_stock( true );
+				$product->set_stock_quantity( $stock_quantity );
+				$product->set_stock_status( $stock_quantity > 0 ? 'instock' : 'outofstock' );
+			}
 		}
 
 		Digitalogic_Patris_Price_Policy::instance()->apply( $product, $data );

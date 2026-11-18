@@ -1142,12 +1142,16 @@ class Digitalogic_Panel {
      * @return array{event:array,delivery_warnings:array}|WP_Error
      */
     public static function record_event_result($event, $data = array()) {
+		if ( class_exists( '\Digitalogic\Laravel\Services\MobileMergeEffects', false ) && \Digitalogic\Laravel\Services\MobileMergeEffects::defer( 'panel', array( $event, $data ) ) ) {
+			return array( 'event' => array( 'id' => 0, 'name' => $event, 'data' => $data ), 'delivery_warnings' => array( 'deferred_until_merge_commit' ) );
+		}
 		$result = self::record_events_result(
 			array( array( 'event' => $event, 'data' => $data ) )
 		);
 		return is_wp_error( $result ) ? $result : array(
 			'event'             => $result['events'][0],
 			'delivery_warnings' => $result['delivery_warnings'],
+			'wake_guaranteed'   => $result['wake_guaranteed'] ?? false,
 		);
 	}
 
@@ -1207,10 +1211,11 @@ class Digitalogic_Panel {
             }
 
             if ( empty( $new_envelopes ) ) {
-                return array(
-                    'events'            => $event_envelopes,
-                    'delivery_warnings' => array(),
-                );
+                // A crash can occur after queue persistence but before Redis wake.
+                // Replayed durable events must retry that wake as well.
+                $new_envelopes = $event_envelopes;
+                $event_envelope = end( $event_envelopes );
+                $event_id = $latest_id;
             }
 
             if (count($events) > self::EVENT_LIMIT) {
@@ -1238,9 +1243,11 @@ class Digitalogic_Panel {
             );
         }
 
-        if (!self::publish_events($new_envelopes)) {
+        $wake_guaranteed = self::publish_events($new_envelopes);
+        if (!$wake_guaranteed) {
             $delivery_warnings[] = 'panel_redis_delivery_failed';
-			if ( ! self::store_event_wake($event_envelope) ) {
+			$wake_guaranteed = self::store_event_wake($event_envelope);
+			if ( ! $wake_guaranteed ) {
 				$delivery_warnings[] = 'panel_wake_outbox_write_failed';
 			} elseif ( ! self::schedule_event_wake_retry() ) {
 				$delivery_warnings[] = 'panel_wake_retry_schedule_failed';
@@ -1252,6 +1259,7 @@ class Digitalogic_Panel {
         return array(
             'events'            => $event_envelopes,
             'delivery_warnings' => array_values(array_unique($delivery_warnings)),
+            'wake_guaranteed' => $wake_guaranteed,
         );
     }
 

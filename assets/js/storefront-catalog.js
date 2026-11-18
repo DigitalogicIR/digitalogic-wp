@@ -5,6 +5,78 @@
 	var catalogNavigationId = 0;
 	var activeCatalogRequest = null;
 	var catalogConfig = window.digitalogicCatalog || {};
+	var liveDirty = false;
+	var liveTimer = null;
+	var liveRequest = null;
+	var liveGeneration = 0;
+
+	// Reuse the canonical rendered page; events carry identity, never prices.
+	function refreshLiveCatalog() {
+		liveTimer = null;
+		var catalog = document.querySelector('.dgl-catalog');
+		if (!catalog || !liveDirty || document.visibilityState === 'hidden') return;
+		if (catalog.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) return;
+		if (activeCatalogRequest || liveRequest || catalog.querySelector('.dgl-quick-button.loading')) {
+			liveTimer = window.setTimeout(refreshLiveCatalog, 250);
+			return;
+		}
+		var parsed = catalogPayload(window.location.href);
+		if (!parsed) return;
+		var navigationId = catalogNavigationId;
+		var generation = liveGeneration;
+		var href = window.location.href;
+		liveDirty = false;
+		liveRequest = requestCatalogPage(parsed.data);
+		liveRequest.done(function(response) {
+			if (navigationId !== catalogNavigationId || href !== window.location.href || generation !== liveGeneration) {
+				liveDirty = true;
+				return;
+			}
+			var results = catalog.querySelector('.dgl-catalog-results');
+			if (!results) return;
+			var quantities = {};
+			results.querySelectorAll('.dgl-quick-qty').forEach(function(input) {
+				var row = input.closest('tr');
+				var button = row && row.querySelector('[data-product_id]');
+				if (button) quantities[button.getAttribute('data-product_id')] = input.value;
+			});
+			// Avoid interrupting a quantity edit; the blur handler retries promptly.
+			if (results.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) {
+				liveDirty = true;
+				return;
+			}
+			results.innerHTML = response.html;
+			results.setAttribute('data-page', response.page);
+			results.setAttribute('data-total-pages', response.max_pages);
+			results.querySelectorAll('.dgl-quick-qty').forEach(function(input) {
+				var row = input.closest('tr');
+				var button = row && row.querySelector('[data-product_id]');
+				var value = button && quantities[button.getAttribute('data-product_id')];
+				if (value) { input.value = value; $(input).trigger('change'); }
+			});
+			var count = catalog.querySelector('.dgl-catalog-count strong');
+			if (count && response.found_posts_label) count.textContent = response.found_posts_label;
+			window.dispatchEvent(new CustomEvent('digitalogic:catalog-refreshed'));
+		}).fail(function() {
+			liveDirty = true;
+		}).always(function() {
+			liveRequest = null;
+			if (liveDirty) liveTimer = window.setTimeout(refreshLiveCatalog, 1500);
+		});
+	}
+
+	function invalidateLiveCatalog() {
+		liveDirty = true;
+		liveGeneration++;
+		if (!liveTimer) liveTimer = window.setTimeout(refreshLiveCatalog, 120);
+	}
+	window.addEventListener('digitalogic:product-invalidated', invalidateLiveCatalog);
+	window.addEventListener('digitalogic:search-invalidated', invalidateLiveCatalog);
+	window.addEventListener('online', invalidateLiveCatalog);
+	document.addEventListener('focusout', function() { if (liveDirty) invalidateLiveCatalog(); });
+	document.addEventListener('visibilitychange', function() {
+		if (document.visibilityState !== 'hidden') invalidateLiveCatalog();
+	});
 
 	function showToast(message) {
 		var toast = document.querySelector('.dgl-catalog-toast');
@@ -78,6 +150,8 @@
 				url: catalogConfig.ajaxUrl || window.ajaxurl || '/wp-admin/admin-ajax.php',
 				type: 'GET',
 				dataType: 'json',
+				timeout: 8000,
+				cache: false,
 				digitalogicWebSocket: false,
 				data: $.extend({
 					action: catalogConfig.pageAction || 'digitalogic_catalog_page'

@@ -178,7 +178,11 @@ final class Digitalogic_Storefront_Product_Table {
 	 * @return array|WP_Error
 	 */
 	public function catalog_page_command( $payload, $transport = 'websocket' ) {
-		unset( $transport );
+		if ( 'websocket' === $transport && function_exists( 'wp_cache_flush_runtime' ) ) {
+			wp_cache_flush_runtime();
+		}
+		$generation = Digitalogic_Report_Engine::instance()->current_projection_generation();
+		if ( is_wp_error( $generation ) ) return $generation;
 
 		if ( ! function_exists( 'wc_get_product' ) ) {
 			return new WP_Error( 'digitalogic_catalog_unavailable', __( 'WooCommerce is unavailable.', 'digitalogic' ), array( 'status' => 503 ) );
@@ -190,13 +194,19 @@ final class Digitalogic_Storefront_Product_Table {
 		$products = $this->products_from_query( $query );
 		$base_url = $this->catalog_base_url( $payload['base_url'] ?? '' );
 
-		return array(
+		$response = array(
 			'html'              => $this->render_results( $query, $products, $filters, $base_url ),
 			'page'              => (int) $filters['page'],
 			'max_pages'         => max( 1, (int) $query->max_num_pages ),
 			'found_posts'       => (int) $query->found_posts,
 			'found_posts_label' => number_format_i18n( $query->found_posts ),
 		);
+		$after = Digitalogic_Report_Engine::instance()->current_projection_generation();
+		if ( is_wp_error( $after ) || $generation !== $after ) {
+			return new WP_Error( 'digitalogic_catalog_changed_during_read', 'Catalog changed during rendering. Retry the read.', array( 'status' => 409 ) );
+		}
+		$response['generation'] = $generation;
+		return $response;
 	}
 
 	/**

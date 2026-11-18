@@ -3584,6 +3584,9 @@ final class Digitalogic_Pricing_Service {
 			);
 		} finally {
 			--$this->source_delivery_lock_depth;
+			if ( 0 === $this->source_delivery_lock_depth && class_exists( 'Digitalogic_Storefront_Invalidation_Outbox' ) ) {
+				Digitalogic_Storefront_Invalidation_Outbox::dispatch();
+			}
 			$receiver->measure_transaction_phase(
 				'materializer_commit_dispatch',
 				static function () use ( $receiver ) {
@@ -3921,6 +3924,14 @@ final class Digitalogic_Pricing_Service {
 			&& is_array( $result['publication'] ?? null )
 		) {
 			$result['publication']['option_cache_names'] = array_keys( $this->transaction_option_names );
+		}
+		if ( class_exists( 'Digitalogic_Storefront_Invalidation_Outbox' )
+			&& Digitalogic_Product_Sync_Receiver::instance()->has_pending_public_product_changes() ) {
+			$staged = Digitalogic_Storefront_Invalidation_Outbox::stage();
+			if ( is_wp_error( $staged ) ) {
+				$rollback = $this->rollback_transaction();
+				return is_wp_error( $rollback ) ? $rollback : $staged;
+			}
 		}
 		if ( null !== $pre_commit_guard ) {
 			try {

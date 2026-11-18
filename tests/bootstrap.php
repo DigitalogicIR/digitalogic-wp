@@ -240,6 +240,7 @@ class WP_REST_Response {
 class WP_Query {
     public $posts = array();
     public $found_posts = 0;
+    public $is_search = false;
 
     public function __construct($args = array()) {
         $GLOBALS['digitalogic_test_wp_query_args'][] = $args;

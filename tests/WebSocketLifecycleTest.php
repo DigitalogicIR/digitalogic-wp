@@ -515,7 +515,8 @@ final class WebSocketLifecycleTest extends TestCase {
 		$this->assertSame( array(), $replay['delivery_warnings'] );
 		$this->assertCount( 1, $GLOBALS['digitalogic_test_options']['digitalogic_panel_events'] );
 		$this->assertSame( $first['event']['id'], $GLOBALS['digitalogic_test_options']['digitalogic_panel_event_sequence'] );
-		$this->assertCount( 1, $this->redis->published );
+		$this->assertCount( 2, $this->redis->published );
+		$this->assertTrue( $replay['wake_guaranteed'] );
 	}
 
 	/** A verified Patris commit emits one immutable value-free product event. */
@@ -561,7 +562,7 @@ final class WebSocketLifecycleTest extends TestCase {
 			$events[0]['data']
 		);
 		$this->assertStringNotContainsString( 'must-not-leak', wp_json_encode( $events[0] ) );
-		$this->assertCount( 1, $this->redis->published );
+		$this->assertCount( 2, $this->redis->published );
 	}
 
 	/** Verify that one key cannot identify conflicting event data. */

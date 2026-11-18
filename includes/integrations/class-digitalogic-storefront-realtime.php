@@ -23,6 +23,7 @@ final class Digitalogic_Storefront_Realtime {
 	private const PUBLIC_EVENT_NAMES    = array(
 		'currency.updated',
 		'search.invalidated',
+		'catalog.updated',
 		'product.updated',
 		'product.created',
 		'product.deleted',
@@ -52,6 +53,10 @@ final class Digitalogic_Storefront_Realtime {
 
 	/** Register the public read-only route and storefront client. */
 	private function __construct() {
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-storefront-invalidation-outbox.php';
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-product-fragments.php';
+		Digitalogic_Storefront_Invalidation_Outbox::register();
+		Digitalogic_Storefront_Product_Fragments::init();
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 		add_filter( 'rest_pre_serve_request', array( $this, 'maybe_serve_stream' ), 10, 4 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_assets' ), 110 );
@@ -157,7 +162,7 @@ final class Digitalogic_Storefront_Realtime {
 			'digitalogic-storefront-realtime',
 			DIGITALOGIC_PLUGIN_URL . 'assets/js/storefront-realtime.js',
 			array(),
-			DIGITALOGIC_VERSION,
+			filemtime( DIGITALOGIC_PLUGIN_DIR . 'assets/js/storefront-realtime.js' ) ?: DIGITALOGIC_VERSION,
 			true
 		);
 		wp_enqueue_style(
@@ -178,6 +183,7 @@ final class Digitalogic_Storefront_Realtime {
 			array(
 				'streamUrl'        => rest_url( 'digitalogic/v1' . self::REST_ROUTE ),
 				'freshnessUrl'     => rest_url( 'digitalogic/v1/events/search-freshness' ),
+				'fragmentsUrl'     => WC_AJAX::get_endpoint( 'digitalogic_product_fragments' ),
 				'currentProductId' => $product_id,
 				'initialEventId'   => Digitalogic_Panel::get_latest_event_id(),
 				'currency'         => self::currency_snapshot(),
@@ -185,6 +191,7 @@ final class Digitalogic_Storefront_Realtime {
 				'audienceKey'      => $audience_key,
 				'currencyTtlMs'    => 6 * HOUR_IN_SECONDS * 1000,
 				'leaderTtlMs'      => 12000,
+				'recoveryIntervalMs' => max( 30000, (int) apply_filters( 'digitalogic_storefront_recovery_interval_ms', 120000 ) ),
 			)
 		);
 	}
@@ -250,6 +257,8 @@ final class Digitalogic_Storefront_Realtime {
 					'expires_at'  => sanitize_text_field( (string) ( $source['expires_at'] ?? '' ) ),
 				),
 			);
+		} elseif ( 'catalog.updated' === $name ) {
+			$data = array( 'scope' => 'catalog' );
 		} elseif ( 'search.invalidated' === $name ) {
 			$data = array( 'scope' => 'search' );
 		} elseif ( 'currency.updated' === $name ) {
@@ -346,6 +355,7 @@ final class Digitalogic_Storefront_Realtime {
 		$cursor  = $this->request_cursor( $request );
 		$latest  = Digitalogic_Panel::get_latest_event_id();
 		$user_id = get_current_user_id();
+		$cursor_reset = $cursor > $latest;
 		if ( 0 === $cursor || $cursor > $latest ) {
 			$cursor = $latest;
 			$this->write_event(
@@ -354,6 +364,8 @@ final class Digitalogic_Storefront_Realtime {
 					'name' => 'realtime.ready',
 					'time' => current_time( 'mysql' ),
 					'data' => array(
+						'cursor_reset_required' => $cursor_reset,
+						'cursor' => $cursor,
 						'scope'         => 'general',
 						'currency'      => self::currency_snapshot(),
 						'notifications' => self::active_notifications( $user_id ),
@@ -370,6 +382,17 @@ final class Digitalogic_Storefront_Realtime {
 
 		while ( ! connection_aborted() && microtime( true ) < $deadline ) {
 			$wrote_frame = false;
+			$window = Digitalogic_Panel::get_events_since( 0 );
+			$latest = Digitalogic_Panel::get_latest_event_id();
+			$oldest = empty( $window ) ? 0 : min( array_map( static function( $event ) { return absint( $event['id'] ?? 0 ); }, $window ) );
+			if ( $cursor > $latest || ( $oldest > 0 && $cursor < $oldest ) || ( 0 === $oldest && $cursor < $latest ) ) {
+				$cursor = $latest;
+				$this->write_event( array(
+					'id' => $cursor, 'name' => 'realtime.ready',
+					'data' => array( 'cursor_reset_required' => true, 'cursor' => $cursor, 'reason' => 'cursor_gap' ),
+				) );
+				$wrote_frame = true;
+			}
 			$events      = Digitalogic_Panel::get_events_since( $cursor );
 			foreach ( $events as $event ) {
 				$cursor = max( $cursor, absint( $event['id'] ?? 0 ) );

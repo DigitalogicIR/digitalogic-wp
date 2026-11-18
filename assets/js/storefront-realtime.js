@@ -29,9 +29,106 @@
     var freshnessPending = false;
     var freshnessCursor = Number(config.initialEventId || 0);
     var freshnessGeneration = null;
+    var lastFreshnessCheck = 0;
+    var streamHealthyAt = 0;
+    var cardsTimer = null;
+    var cardsPending = false;
+    var cardsGeneration = 0;
+    var cardsApplied = 0;
+    var cardIds = new Set();
+    var cardsFull = false;
+
+    function invalidateCards(event) {
+        var envelope = event && event.detail;
+        var data = envelope && envelope.data || {};
+        var productId = Number(data.parent_id || data.product_id || data.id || 0);
+        if (productId > 0 && envelope.name !== 'product.created' && envelope.name !== 'product.deleted') cardIds.add(productId);
+        else cardsFull = true;
+        cardsGeneration++;
+        if (!cardsTimer) cardsTimer = window.setTimeout(refreshCards, 150);
+    }
+
+    function refreshCards() {
+        cardsTimer = null;
+        if (cardsPending || cardsApplied === cardsGeneration || document.visibilityState === 'hidden') return;
+        var grids = Array.from(document.querySelectorAll('.products')).filter(function(grid) {
+            return !grid.closest('.dgl-catalog') && !grid.closest('.wd-dropdown-search') && grid.querySelector('.product:not(.product-category)');
+        });
+        if (!grids.length) { cardsApplied = cardsGeneration; return; }
+        if (grids.some(function(grid) { return grid.contains(document.activeElement) || grid.querySelector('.loading'); })) return;
+        var generation = cardsGeneration;
+        var href = window.location.href;
+        var targets = Array.from(document.querySelectorAll('.products .product-grid-item[data-id], .products li.product')).filter(function(card) {
+            var match = card.className.match(/(?:^|\s)post-(\d+)(?:\s|$)/);
+            var id = Number(card.getAttribute('data-id') || (match && match[1]) || 0);
+            return !card.classList.contains('product-category') && cardIds.has(id);
+        });
+        var targeted = !cardsFull && cardIds.size > 0 && cardIds.size <= 20 && config.fragmentsUrl
+            && targets.every(function(card) { return card.closest('.products[data-source="main_loop"]'); });
+        if (targeted && !targets.length) { cardsApplied = generation; cardIds.clear(); return; }
+        var url = new URL(href);
+        if (targeted) {
+            url = new URL(config.fragmentsUrl, window.location.href);
+            cardIds.forEach(function(id) { url.searchParams.append('ids[]', String(id)); });
+            url.searchParams.set('context', document.body.classList.contains('search') ? 'search' : 'catalog');
+        } else url.searchParams.set('digitalogic_realtime', String(Date.now()));
+        var controller = new AbortController();
+        var timeout = window.setTimeout(function() { controller.abort(); }, 8000);
+        cardsPending = true;
+        fetch(url.toString(), {credentials: 'same-origin', cache: 'no-store', signal: controller.signal})
+            .then(function(response) { if (!response.ok) throw new Error('cards_refresh_failed'); return targeted ? response.json() : response.text(); })
+            .then(function(html) {
+                if (href !== window.location.href || generation !== cardsGeneration) return;
+                if (targeted) {
+                    if (!html.success || !html.data || !html.data.cards) throw new Error('cards_shape_changed');
+                    targets.forEach(function(card) {
+                        var match = card.className.match(/(?:^|\s)post-(\d+)(?:\s|$)/);
+                        var id = String(card.getAttribute('data-id') || (match && match[1]) || '');
+                        if (!card.isConnected || card.contains(document.activeElement)) throw new Error('cards_edit_active');
+                        if ((html.data.removed || []).map(String).indexOf(id) >= 0) { card.remove(); return; }
+                        if (typeof html.data.cards[id] !== 'string') throw new Error('card_missing');
+                        var parsedCard = new DOMParser().parseFromString(html.data.cards[id], 'text/html').body.firstElementChild;
+                        if (!parsedCard) throw new Error('card_invalid');
+                        card.replaceWith(document.importNode(parsedCard, true));
+                    });
+                    cardIds.clear();
+                    cardsApplied = generation;
+                    window.dispatchEvent(new CustomEvent('digitalogic:cards-refreshed'));
+                    return;
+                }
+                var parsed = new DOMParser().parseFromString(html, 'text/html');
+                var incoming = Array.from(parsed.querySelectorAll('.products')).filter(function(grid) {
+                    return !grid.closest('.dgl-catalog') && !grid.closest('.wd-dropdown-search');
+                });
+                if (incoming.length !== grids.length) throw new Error('cards_shape_changed');
+                if (grids.some(function(grid) { return !grid.isConnected || grid.contains(document.activeElement) || grid.querySelector('.loading'); })) return;
+                grids.forEach(function(grid, index) { grid.replaceWith(document.importNode(incoming[index], true)); });
+                cardsApplied = generation;
+                cardsFull = false;
+                cardIds.clear();
+                if (window.jQuery) window.jQuery(document.body).trigger('wood-images-loaded');
+                window.dispatchEvent(new CustomEvent('digitalogic:cards-refreshed'));
+            }).catch(function() { /* Snapshot recovery retries; never navigate away. */ })
+            .finally(function() {
+                window.clearTimeout(timeout);
+                cardsPending = false;
+                if (cardsApplied !== cardsGeneration && !cardsTimer) cardsTimer = window.setTimeout(refreshCards, 2000);
+            });
+    }
+    window.addEventListener('digitalogic:product-invalidated', invalidateCards);
+    window.addEventListener('digitalogic:search-invalidated', invalidateCards);
+    window.addEventListener('online', invalidateCards);
+    document.addEventListener('focusout', function() { if (cardsApplied !== cardsGeneration) invalidateCards(); });
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState !== 'hidden') invalidateCards();
+    });
 
     function checkFreshness() {
         if (!config.freshnessUrl || freshnessPending || document.visibilityState === 'hidden') { return; }
+        var healthy = Date.now() - streamHealthyAt < 30000;
+        var interval = healthy ? Math.max(30000, Number(config.recoveryIntervalMs || 120000)) : 15000;
+        if (Date.now() - lastFreshnessCheck < interval) return;
+        lastFreshnessCheck = Date.now();
         freshnessPending = true;
         var url = new URL(config.freshnessUrl, window.location.href);
         url.searchParams.set('since', String(freshnessCursor));
@@ -444,8 +541,15 @@
             return;
         }
         var eventId = Number(event.id || 0);
+        if (event.data && event.data.cursor_reset_required) {
+            writeLocal(cursorKey, String(Number(event.data.cursor || eventId)));
+            freshnessCursor = Number(event.data.cursor || eventId);
+            lastProductEventId = 0;
+            window.dispatchEvent(new CustomEvent('digitalogic:search-invalidated', {detail: event}));
+            if (currentProductId) refreshProduct({id: eventId, name: 'product.resync', data: {product_id: currentProductId}});
+        }
         if (eventId > 0) {
-            writeLocal(cursorKey, String(eventId));
+            writeLocal(cursorKey, String(Math.max(eventId, Number(readLocal(cursorKey) || 0))));
         }
         if (event.data && event.data.currency) {
             applyCurrency(event.data.currency, eventId);
@@ -456,8 +560,9 @@
         if (String(event.name || '') === 'workstation.notification') {
             showNotification(event);
         }
-        if (String(event.name || '') === 'search.invalidated') {
+        if (['search.invalidated', 'catalog.updated'].indexOf(String(event.name || '')) >= 0) {
             window.dispatchEvent(new CustomEvent('digitalogic:search-invalidated', {detail: event}));
+            if (currentProductId) refreshProduct({id: eventId, name: 'product.resync', data: {product_id: currentProductId}});
         }
         if (String(event.name || '').indexOf('product.') === 0) {
             window.dispatchEvent(new CustomEvent('digitalogic:product-invalidated', {detail: event}));
@@ -483,7 +588,9 @@
             url.searchParams.set('last_event_id', String(cursor));
         }
         source = new window.EventSource(url.toString(), {withCredentials: true});
+        source.onopen = function() { streamHealthyAt = Date.now(); };
         source.onmessage = function (message) {
+            streamHealthyAt = Date.now();
             var event = parseJson(message.data);
             if (!event) {
                 return;
@@ -492,6 +599,7 @@
             relay(event);
         };
         source.onerror = function () {
+            streamHealthyAt = 0;
             if (!ownsLease()) {
                 closeStream();
             }
