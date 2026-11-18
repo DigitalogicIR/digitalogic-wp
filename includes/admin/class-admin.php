@@ -32,7 +32,8 @@ class Digitalogic_Admin {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_admin_bar_styles'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_bar_styles'));
-        add_action('admin_footer', array($this, 'remove_unwanted_admin_notices'), 1000);
+        require_once __DIR__ . '/class-digitalogic-admin-workspace.php';
+        Digitalogic_Admin_Workspace::register();
         add_action('wp_ajax_digitalogic_get_products', array($this, 'ajax_get_products'));
         add_action('wp_ajax_digitalogic_update_product', array($this, 'ajax_update_product'));
 		add_action( 'wp_ajax_digitalogic_update_product_code', array( $this, 'ajax_update_product_code' ) );
@@ -46,30 +47,6 @@ class Digitalogic_Admin {
         add_action('wp_ajax_digitalogic_update_patris_settings', array($this, 'ajax_update_patris_settings'));
     }
 
-    /**
-     * Remove noisy third-party notices that are not actionable for site editors.
-     */
-    public function remove_unwanted_admin_notices() {
-        if (!current_user_can('manage_options')) {
-            return;
-        }
-        ?>
-        <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('.notice, .updated, .error, .woocommerce-message, .woocommerce-warning').forEach(function(notice) {
-                var text = notice.textContent || '';
-                if (
-                    text.indexOf('Zero Spam Enhanced Protection') !== -1 &&
-                    text.indexOf('missing a valid license key') !== -1
-                ) {
-                    notice.remove();
-                }
-            });
-        });
-        </script>
-        <?php
-    }
-    
     /**
      * Add admin menu
      */
@@ -97,6 +74,9 @@ class Digitalogic_Admin {
             array($this, 'render_dashboard')
         );
         
+		require_once __DIR__ . '/class-digitalogic-product-link-report.php';
+		Digitalogic_Product_Link_Report::menu();
+
         $product_page_hook = add_submenu_page(
             'digitalogic',
             __('Product List', 'digitalogic'),
@@ -470,9 +450,9 @@ class Digitalogic_Admin {
         if (!class_exists('WooCommerce')) {
             ?>
             <div class="wrap">
-                <h1><?php _e('Product Management', 'digitalogic'); ?></h1>
+                <h1><?php esc_html_e('Product Management', 'digitalogic'); ?></h1>
                 <div class="notice notice-error">
-                    <p><?php _e('WooCommerce must be installed and activated to use this feature.', 'digitalogic'); ?></p>
+                    <p><?php esc_html_e('WooCommerce must be installed and activated to use this feature.', 'digitalogic'); ?></p>
                 </div>
             </div>
             <?php
@@ -511,8 +491,8 @@ class Digitalogic_Admin {
 
         if (isset($_POST['submit']) && check_admin_referer('digitalogic_currency_update')) {
             $values = array(
-                'dollar_price' => wp_unslash($_POST['dollar_price'] ?? ''),
-                'yuan_price' => wp_unslash($_POST['yuan_price'] ?? ''),
+                'dollar_price' => sanitize_text_field(wp_unslash($_POST['dollar_price'] ?? '')),
+                'yuan_price' => sanitize_text_field(wp_unslash($_POST['yuan_price'] ?? '')),
             );
             $reconcile = false;
             if (!is_wp_error($canonical_state) && isset($_POST['recalculate_prices'])) {
@@ -761,11 +741,11 @@ class Digitalogic_Admin {
         $notice_type = 'info';
         $shipping_assignment = null;
         $posted_value = static function ($key) {
-            if (!isset($_POST[$key]) || !is_scalar($_POST[$key])) {
+            if (!isset($_POST[$key]) || !is_scalar($_POST[$key])) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The page nonce is verified by the caller before this helper runs.
                 return '';
             }
 
-            return wp_unslash((string) $_POST[$key]);
+            return wp_unslash((string) $_POST[$key]); // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- The page nonce is verified by the caller before this helper runs.
         };
 
         $shipping_action = sanitize_key($posted_value('digitalogic_shipping_action'));
@@ -851,12 +831,46 @@ class Digitalogic_Admin {
                     break;
 
 				case 'update_price_rounding':
-					$result      = $shipping_service->update_price_rounding_digits(
-						$posted_value( 'price_rounding_digits' )
-					);
+					$selection = $posted_value( 'price_rounding_selection' );
+					$policy    = null;
+					$result    = null;
+					if ( 'magnitude' === $selection ) {
+						// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Preserve exact numeric input for strict tier validation below and RoundingPolicy::normalize().
+						$thresholds = isset( $_POST['rounding_threshold_irt'] ) && is_array( $_POST['rounding_threshold_irt'] ) ? wp_unslash( $_POST['rounding_threshold_irt'] ) : array();
+						// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Reject malformed digits below rather than changing their value.
+						$digits = isset( $_POST['rounding_tier_digits'] ) && is_array( $_POST['rounding_tier_digits'] ) ? wp_unslash( $_POST['rounding_tier_digits'] ) : array();
+						$policy = array(
+							'tiers'          => array(),
+							'extend_decades' => isset( $_POST['rounding_extend_decades'] ),
+						);
+						foreach ( array_unique( array_merge( array_keys( $thresholds ), array_keys( $digits ) ) ) as $index ) {
+							$threshold = $thresholds[ $index ] ?? '';
+							$digit     = $digits[ $index ] ?? '';
+							if ( '' === $threshold && '' === $digit ) {
+								continue;
+							}
+							if ( ! is_string( $threshold ) || ! is_string( $digit ) || ! preg_match( '/\A[0-9]+\z/D', $digit ) || '' === $threshold ) {
+								$result = new WP_Error( 'invalid_rounding_policy', 'در هر ردیف، مبلغ شروع و تعداد رقم را کامل وارد کنید.' );
+								break;
+							}
+							$policy['tiers'][] = array(
+								'threshold_irt' => $threshold,
+								'digits'        => (int) $digit,
+							);
+						}
+					} elseif ( 'fixed' !== $selection ) {
+						$result = new WP_Error( 'invalid_rounding_selection', 'روش گردکردن را انتخاب کنید.' );
+					}
+					if ( ! is_wp_error( $result ) ) {
+						$result = Digitalogic_Pricing_Coordinator::instance()->update_price_rounding(
+							$posted_value( 'price_rounding_digits' ),
+							'wp',
+							$policy
+						);
+					}
 					$notice      = is_wp_error( $result )
 						? $result->get_error_message()
-						: __( 'The price-rounding policy was saved. WooCommerce prices were not changed.', 'digitalogic' );
+						: __( 'The price-rounding policy was saved and WooCommerce prices were recalculated atomically.', 'digitalogic' );
 					$notice_type = is_wp_error( $result ) ? 'error' : 'success';
 					break;
 
@@ -883,7 +897,7 @@ class Digitalogic_Admin {
 				return $default;
 			}
 
-			return wp_unslash( (string) $_GET[ $key ] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only bounded report filters.
+			return wp_unslash( (string) $_GET[ $key ] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.NonceVerification.Recommended -- The page nonce is verified by the caller before this helper runs.
 		};
 		$report = Digitalogic_Report_Engine::instance()->get_report(
 			array(
@@ -1088,7 +1102,7 @@ class Digitalogic_Admin {
      * AJAX: Update product
      */
     public function ajax_update_product() {
-        $this->send_command_response('digitalogic_update_product', $_POST);
+        $this->send_command_response('digitalogic_update_product', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
 
 	/** AJAX: Update the canonical Product Code through its dedicated contract. */
@@ -1101,21 +1115,21 @@ class Digitalogic_Admin {
      * AJAX: Bulk update
      */
     public function ajax_bulk_update() {
-        $this->send_command_response('digitalogic_bulk_update', $_POST);
+        $this->send_command_response('digitalogic_bulk_update', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
     
     /**
      * AJAX: Update currency
      */
     public function ajax_update_currency() {
-        $this->send_command_response('digitalogic_update_currency', $_POST);
+        $this->send_command_response('digitalogic_update_currency', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
     
     /**
      * AJAX: Export
      */
     public function ajax_export() {
-        $this->send_command_response('digitalogic_export', $_POST);
+        $this->send_command_response('digitalogic_export', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
     
     /**
@@ -1132,7 +1146,7 @@ class Digitalogic_Admin {
             wp_send_json_error('No file uploaded');
         }
         
-        $file = $_FILES['file'];
+        $file = $_FILES['file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- wp_handle_upload() validates the upload; the AJAX nonce is checked first.
         $upload = wp_handle_upload($file, array('test_form' => false));
         
         if (isset($upload['error'])) {
@@ -1163,19 +1177,19 @@ class Digitalogic_Admin {
      * AJAX: Get logs
      */
     public function ajax_get_logs() {
-        $this->send_command_response('digitalogic_get_logs', $_POST);
+        $this->send_command_response('digitalogic_get_logs', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
 
     public function ajax_get_reports() {
-        $this->send_command_response('digitalogic_get_reports', $_POST);
+        $this->send_command_response('digitalogic_get_reports', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
 
     public function ajax_sync_patris() {
-        $this->send_command_response('digitalogic_sync_patris', $_POST);
+        $this->send_command_response('digitalogic_sync_patris', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
 
     public function ajax_update_patris_settings() {
-        $this->send_command_response('digitalogic_update_patris_settings', $_POST);
+        $this->send_command_response('digitalogic_update_patris_settings', $_POST); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- The nonce is verified in send_command_response().
     }
 
     /**

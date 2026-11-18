@@ -88,6 +88,7 @@ $GLOBALS['digitalogic_test_registered_post_types'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_post_type_meta_caps'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_registered_post_meta'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_meta_boxes'] = array(); // phpcs:ignore
+$GLOBALS['digitalogic_test_meta_box_calls'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_current_screen'] = (object) array( 'post_type' => 'product' ); // phpcs:ignore
 $GLOBALS['digitalogic_test_autosaves'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_revisions'] = array(); // phpcs:ignore
@@ -98,6 +99,7 @@ $GLOBALS['digitalogic_test_enqueued_styles'] = array();
 $GLOBALS['digitalogic_test_enqueued_scripts'] = array();
 $GLOBALS['digitalogic_test_scheduled_events'] = array(); // phpcs:ignore -- Test-only cron registry.
 $GLOBALS['digitalogic_test_schedule_failure'] = false; // phpcs:ignore -- Test-only failure control.
+$GLOBALS['digitalogic_test_deleted_files'] = array(); // phpcs:ignore -- Test-only protected-file cleanup ledger.
 // phpcs:enable Generic.Formatting.MultipleStatementAlignment
 
 class WP_Error {
@@ -434,13 +436,15 @@ function get_current_screen() {
  * @return void
  */
 function add_meta_box( $id, $title, $callback, $screen = null, $context = 'advanced', $priority = 'default' ) {
-	$GLOBALS['digitalogic_test_meta_boxes'][ $id ] = array(
+	$meta_box = array(
 		'title'    => $title,
 		'callback' => $callback,
 		'screen'   => is_object( $screen ) && isset( $screen->id ) ? $screen->id : $screen,
 		'context'  => $context,
 		'priority' => $priority,
 	);
+	$GLOBALS['digitalogic_test_meta_boxes'][ $id ] = $meta_box;
+	$GLOBALS['digitalogic_test_meta_box_calls'][]  = array( 'id' => $id ) + $meta_box;
 }
 
 /**
@@ -744,6 +748,10 @@ function rest_get_url_prefix() {
 function rest_url($path = '') {
     $GLOBALS['digitalogic_test_rest_url_calls']++;
 
+	if ( in_array( $path, array( 'digitalogic/v1/login-slides', 'digitalogic/v1/auth-events' ), true ) ) {
+		return home_url( '/' . rest_get_url_prefix() . '/' . $path );
+	}
+
     throw new RuntimeException('The WooCommerce route matcher must not call rest_url().');
 }
 
@@ -1043,6 +1051,15 @@ function trailingslashit($value) {
 
 function untrailingslashit($value) {
     return rtrim((string) $value, '/\\');
+}
+
+function wp_delete_file( $path ) {
+	$GLOBALS['digitalogic_test_deleted_files'][] = $path;
+	return is_file( $path ) ? unlink( $path ) : false;
+}
+
+function wp_normalize_path( $path ) {
+	return str_replace( '\\', '/', (string) $path );
 }
 
 function add_query_arg($args, $url) {
@@ -1457,6 +1474,10 @@ function site_url($path = '') {
     return 'https://digitalogic.test/' . ltrim((string) $path, '/');
 }
 
+function is_ssl(): bool {
+	return true;
+}
+
 function content_url($path = '') {
     return 'https://digitalogic.test/wp-content' . $path;
 }
@@ -1594,8 +1615,10 @@ function wp_specialchars_decode($string, $quote_style = ENT_NOQUOTES) {
 }
 // phpcs:enable
 
-function __($message, $domain = null) {
-    return $message;
+if ( ! function_exists( '__' ) ) {
+    function __($message, $domain = null) {
+        return $message;
+    }
 }
 
 class Digitalogic_Test_WPDB {
@@ -3300,6 +3323,10 @@ class WC_Product {
             : (string) ($this->meta['_stock_status'] ?? 'instock');
     }
 
+    public function is_in_stock() {
+        return 'outofstock' !== $this->get_stock_status();
+    }
+
     public function get_manage_stock() {
         if ($this->manage_stock || 'yes' === ($this->meta['_manage_stock'] ?? 'no')) {
             return true;
@@ -3974,6 +4001,19 @@ function clean_term_cache($ids, $taxonomy = '') {
     return true;
 }
 
+/** Remove exact term IDs without triggering the set-object-terms default hook. */
+function wp_remove_object_terms( $object_id, $terms, $taxonomy ) { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- WordPress test double.
+	$existing = 'product_cat' === $taxonomy
+		? ( $GLOBALS['digitalogic_test_posts'][ $object_id ]['category_ids'] ?? array() )
+		: ( $GLOBALS['digitalogic_test_object_terms'][ $object_id ][ $taxonomy ] ?? array() );
+	$remaining = array_values( array_diff( $existing, (array) $terms ) );
+	$GLOBALS['digitalogic_test_object_terms'][ $object_id ][ $taxonomy ] = $remaining;
+	if ( 'product_cat' === $taxonomy ) {
+		$GLOBALS['digitalogic_test_posts'][ $object_id ]['category_ids'] = $remaining;
+	}
+	return true;
+}
+
 function wp_set_object_terms($object_id, $terms, $taxonomy, $append = false) {
     if ('product_type' === $taxonomy) {
 		$type = is_array($terms) ? (string) (reset($terms) ?: '') : (string) $terms;
@@ -4345,6 +4385,7 @@ require_once dirname(__DIR__) . '/includes/class-digitalogic-pricing-coordinator
 require_once dirname(__DIR__) . '/includes/class-digitalogic-currency-admin-async.php';
 require_once dirname(__DIR__) . '/includes/class-command-dispatcher.php';
 require_once dirname(__DIR__) . '/includes/api/class-rest-api.php';
+require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-persian-time-formatter.php';
 require_once dirname(__DIR__) . '/includes/api/class-webhooks.php';
 require_once dirname(__DIR__) . '/includes/class-report-engine.php';
 require_once dirname( __DIR__ ) . '/includes/class-digitalogic-pricing-snapshot.php';
@@ -4354,8 +4395,12 @@ require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-storef
 require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-event-mesh.php';
 require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-patris-incomplete-product-notifier.php';
 require_once dirname(__DIR__) . '/includes/integrations/class-label-overrides.php';
+require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-storefront-ux.php';
+require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-product-topology-guard.php';
+require_once dirname(__DIR__) . '/includes/digitalogic-organizer-products-loader.php';
 require_once dirname( __DIR__ ) . '/includes/integrations/class-digitalogic-checkout-date-compatibility.php';
 require_once dirname(__DIR__) . '/includes/integrations/class-product-identity.php';
+require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-product-specifications.php';
 require_once dirname(__DIR__) . '/includes/integrations/class-digitalogic-product-resources.php';
 require_once dirname(__DIR__) . '/includes/integrations/class-homepage-showcase.php';
 require_once dirname(__DIR__) . '/includes/websocket/class-websocket.php';

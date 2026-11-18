@@ -87,9 +87,10 @@ final class ProductIdentitySearchTest extends TestCase {
 		$identity->enqueue_assets();
 
 		$config = $GLOBALS['digitalogic_test_localized_scripts']['digitalogic-product-identity']['digitalogicProductIdentity'];
-		$this->assertSame( 'ATmega <Core>', $config['singleProductPatrisName'] );
-		$this->assertSame( 'PAT-12', $config['singleProductPatrisCode'] );
+		$this->assertSame( 'ATmega <Core>', $config['singleProductName'] );
+		$this->assertSame( 'PAT-12', $config['singleProductCode'] );
 		$this->assertSame( 'کد کالا', $config['codeLabel'] );
+		$this->assertSame( Digitalogic_Storefront_Icons::barcode_path(), $config['barcodeIconPath'] );
 		$this->assertFalse( $config['singleProductIsVariable'] );
 		$this->assertFalse( $config['singleProductLegacyChildReferences'] );
 		$this->assertSame( array(), $config['singleProductChildCodes'] );
@@ -112,7 +113,8 @@ final class ProductIdentitySearchTest extends TestCase {
 		$identity->render_single_patris_name();
 		$html = ob_get_clean();
 
-		$this->assertStringContainsString( 'digitalogic-patris-name', $html );
+		$this->assertStringContainsString( 'digitalogic-product-name', $html );
+		$this->assertStringNotContainsString( 'digitalogic-patris', $html );
 		$this->assertStringContainsString( 'English &lt;Module&gt;', $html );
 		$this->assertStringNotContainsString( 'English <Module>', $html );
 		$this->assertStringContainsString( 'کد کالا', $html );
@@ -138,7 +140,7 @@ final class ProductIdentitySearchTest extends TestCase {
 		$identity->render_single_patris_name();
 		$code_html = ob_get_clean();
 
-		$this->assertStringNotContainsString( 'digitalogic-patris-name', $code_html );
+		$this->assertStringNotContainsString( 'digitalogic-product-name', $code_html );
 		$this->assertStringContainsString( 'PAT-13', $code_html );
 
 		$GLOBALS['digitalogic_test_posts'][14] = array(
@@ -170,8 +172,20 @@ final class ProductIdentitySearchTest extends TestCase {
 			'product_type' => 'variation',
 			'post_parent'  => 20,
 			'post_title'   => 'Model <A>',
-			'meta'         => array( '_digitalogic_patris_product_code' => 'CHILD-21' ),
+			'meta'         => array(
+				'_digitalogic_patris_product_code' => 'CHILD-21',
+				'_price'                           => '125000',
+				'_stock_status'                    => 'instock',
+			),
 		);
+
+		$GLOBALS['digitalogic_test_wc_products'][21] = new class( 21 ) extends WC_Product_Variation {
+			/** Return WooCommerce-owned display HTML for an available child. */
+			public function get_price_html() {
+				return '<span class="woocommerce-Price-amount amount">125,000 تومان</span>';
+			}
+		};
+
 		$GLOBALS['digitalogic_test_posts'][22] = array(
 			'post_type'    => 'product_variation',
 			'post_status'  => 'draft',
@@ -180,25 +194,90 @@ final class ProductIdentitySearchTest extends TestCase {
 			'post_title'   => 'Draft model',
 			'meta'         => array( '_digitalogic_patris_product_code' => 'DRAFT-22' ),
 		);
-		$GLOBALS['product']                    = wc_get_product( 20 );
-		$identity                              = ( new ReflectionClass( Digitalogic_Product_Identity::class ) )->newInstanceWithoutConstructor();
+
+		$GLOBALS['product'] = wc_get_product( 20 );
+		$identity           = ( new ReflectionClass( Digitalogic_Product_Identity::class ) )->newInstanceWithoutConstructor();
 
 		ob_start();
 		$identity->render_single_patris_name();
 		$html = ob_get_clean();
 
-		$this->assertStringContainsString( 'کدهای ثبت‌شده برای مدل‌ها', $html );
+		$this->assertStringContainsString( 'مدل‌های قابل انتخاب', $html );
 		$this->assertStringContainsString( 'Model &lt;A&gt;', $html );
 		$this->assertStringContainsString( 'CHILD-21', $html );
+		$this->assertStringContainsString( 'digitalogic-product-code-item__price', $html );
+		$this->assertStringContainsString( '125,000 تومان', $html );
+		$this->assertStringContainsString( '<ul class="digitalogic-product-code-grid" role="list">', $html );
+		$this->assertStringContainsString( 'class="digitalogic-product-code-item__select"', $html );
+		$this->assertStringContainsString( 'data-copy-product-code="CHILD-21"', $html );
+		$this->assertStringContainsString( Digitalogic_Storefront_Icons::barcode_svg(), $html );
+		$this->assertStringNotContainsString( 'role="listitem"', $html );
+		$this->assertStringNotContainsString( '<i>', $html );
 		$this->assertStringNotContainsString( 'DRAFT-22', $html );
-		$this->assertStringContainsString( 'برای انتخاب کد دقیق با پشتیبانی هماهنگ کن', $html );
+		$this->assertStringContainsString( 'مرجع مدل‌های ثبت‌شده', $html );
 
 		$GLOBALS['digitalogic_test_is_product']        = true;
 		$GLOBALS['digitalogic_test_queried_object_id'] = 20;
 		$identity->enqueue_assets();
 		$config = $GLOBALS['digitalogic_test_localized_scripts']['digitalogic-product-identity']['digitalogicProductIdentity'];
 		$this->assertTrue( $config['singleProductLegacyChildReferences'] );
-		$this->assertStringContainsString( 'برای انتخاب کد دقیق', $config['legacyChildNote'] );
+		$this->assertSame( '125,000 تومان', $config['singleProductChildCodes'][0]['price_text'] );
+		$this->assertSame( Digitalogic_Storefront_Icons::barcode_path(), $config['barcodeIconPath'] );
+		$this->assertStringContainsString( 'مرجع مدل‌های ثبت‌شده', $config['legacyChildNote'] );
+	}
+
+	/** Unavailable variable children stay visible without presenting an active choice. */
+	public function test_disables_unavailable_variable_product_code_choice(): void {
+		$GLOBALS['digitalogic_test_posts'][30] = array(
+			'post_type'    => 'product',
+			'post_status'  => 'publish',
+			'product_type' => 'variable',
+			'post_title'   => 'Variable parent',
+			'meta'         => array(),
+		);
+		$GLOBALS['digitalogic_test_posts'][31] = array(
+			'post_type'    => 'product_variation',
+			'post_status'  => 'publish',
+			'product_type' => 'variation',
+			'post_parent'  => 30,
+			'post_title'   => 'Unavailable model',
+			'meta'         => array(
+				'_digitalogic_patris_product_code' => 'CHILD-31',
+				'_stock_status'                    => 'outofstock',
+				'_price'                           => '99000',
+			),
+		);
+
+		$GLOBALS['digitalogic_test_wc_products'][31] = new class( 31 ) extends WC_Product_Variation {
+			/** Return a price that must stay hidden while unavailable. */
+			public function get_price_html() {
+				return '<span class="woocommerce-Price-amount amount">99,000 تومان</span>';
+			}
+		};
+
+		$GLOBALS['product'] = wc_get_product( 30 );
+		$identity           = ( new ReflectionClass( Digitalogic_Product_Identity::class ) )->newInstanceWithoutConstructor();
+
+		ob_start();
+		$identity->render_single_patris_name();
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'digitalogic-product-code-item is-unavailable', $html );
+		$this->assertStringContainsString( 'disabled aria-disabled="true"', $html );
+		$this->assertStringContainsString( 'digitalogic-product-code-item__availability">ناموجود', $html );
+		$this->assertStringNotContainsString( 'digitalogic-product-code-item__price', $html );
+		$this->assertStringNotContainsString( '99,000 تومان', $html );
+	}
+
+	/** The server renderer retains a WooCommerce-native price fallback for delayed pricing integrations. */
+	public function test_keeps_tax_aware_server_price_fallback(): void {
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local source inspection is intentional in this regression test.
+		$source = file_get_contents( dirname( __DIR__ ) . '/includes/integrations/class-product-identity.php' );
+
+		$this->assertIsString( $source );
+		$this->assertStringContainsString( "function_exists( 'wc_get_price_to_display' )", $source );
+		$this->assertStringContainsString( 'wc_get_price_to_display(', $source );
+		$this->assertStringContainsString( 'wc_price( $display_price ) . $variation->get_price_suffix()', $source );
 	}
 
 	public function test_exposes_child_identity_and_adds_sku_mpn_without_replacing_offers(): void {
@@ -229,8 +308,8 @@ final class ProductIdentitySearchTest extends TestCase {
 			$variation
 		);
 
-		$this->assertSame( 'Patris child', $data['digitalogic_patris_name'] );
-		$this->assertSame( 'PAT-11', $data['digitalogic_patris_code'] );
+		$this->assertSame( 'Patris child', $data['digitalogic_product_name'] );
+		$this->assertSame( 'PAT-11', $data['digitalogic_product_code'] );
 		$this->assertSame( 'فرزند فارسی', $data['digitalogic_persian_name'] );
 		$this->assertSame( 'PAT-11', $entity['sku'] );
 		$this->assertSame( 'HC-06-DIP', $entity['mpn'] );
@@ -334,6 +413,17 @@ final class ProductIdentitySearchTest extends TestCase {
 		$this->assertSame( 'کد کالا', $item_data[0]['key'] );
 		$this->assertSame( 'PAT-<30>', $item_data[0]['value'] );
 		$this->assertStringContainsString( 'PAT-&lt;30&gt;', $item_data[0]['display'] );
+
+		$with_theme_sku = $identity->add_cart_item_patris_code(
+			array(
+				array(
+					'key'   => 'SKU',
+					'value' => 'PAT-<30>',
+				),
+			),
+			array( 'data' => $product )
+		);
+		$this->assertSame( $item_data, $with_theme_sku );
 
 		$order_item = new class() {
 			/**
@@ -690,6 +780,102 @@ final class ProductIdentitySearchTest extends TestCase {
 		$this->assertSame( 'IRR', $entity['offers']['priceCurrency'] );
 		$this->assertSame( '100.1', $entity['offers']['offers'][0]['priceSpecification']['price'] );
 		$this->assertSame( 'IRR', $entity['offers']['offers'][0]['priceSpecification']['priceCurrency'] );
+	}
+
+	public function test_product_group_variants_use_iso_rial_and_drop_invalid_optional_fields(): void {
+		$GLOBALS['digitalogic_test_posts'][19] = array(
+			'post_type'    => 'product',
+			'post_status'  => 'publish',
+			'product_type' => 'variable',
+			'post_title'   => 'AMS1117',
+			'meta'         => array( '_price' => '35300' ),
+		);
+		// phpcs:disable Generic.Formatting.MultipleStatementAlignment -- Fixture setup is clearer as a compact block.
+		$product  = wc_get_product( 19 );
+		$identity = ( new ReflectionClass( Digitalogic_Product_Identity::class ) )->newInstanceWithoutConstructor();
+		$entity   = $identity->add_product_schema_identity(
+			array(
+				'@type'      => 'ProductGroup',
+				'category'   => 'قطعات &amp;gt; رگولاتور',
+				'hasVariant' => array(
+					array(
+						'@type'  => 'Product',
+						'image'  => '',
+						'offers' => array(
+							'@type'           => 'Offer',
+							'price'           => '35300',
+							'priceCurrency'   => 'IRT',
+							'priceValidUntil' => '۱۴۰۶-۱۰-۱۰',
+						),
+					),
+				),
+			),
+			$product
+		);
+		// phpcs:enable Generic.Formatting.MultipleStatementAlignment
+
+		$this->assertSame( 'قطعات / رگولاتور', $entity['category'] );
+		$this->assertSame( '353000', $entity['hasVariant'][0]['offers']['price'] );
+		$this->assertSame( 'IRR', $entity['hasVariant'][0]['offers']['priceCurrency'] );
+		$this->assertArrayNotHasKey( 'priceValidUntil', $entity['hasVariant'][0]['offers'] );
+		$this->assertArrayNotHasKey( 'image', $entity['hasVariant'][0] );
+		$source = file_get_contents( // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local source contract.
+			dirname( __DIR__ ) . '/includes/integrations/class-product-identity.php'
+		);
+		$this->assertStringContainsString( "'add_product_schema_identity' ), 90, 2", $source );
+		$this->assertStringContainsString( "'rank_math/json_ld'", $source );
+		$this->assertStringContainsString( "\t\t\t1001", $source );
+	}
+
+	public function test_unpriced_product_entity_without_required_signal_is_suppressed(): void {
+		$GLOBALS['digitalogic_test_posts'][20] = array(
+			'post_type'    => 'product',
+			'post_status'  => 'publish',
+			'product_type' => 'simple',
+			'post_title'   => 'SIM7080',
+			'meta'         => array( '_price' => '' ),
+		);
+		// phpcs:disable Generic.Formatting.MultipleStatementAlignment -- Fixture setup is clearer as a compact block.
+		$product  = wc_get_product( 20 );
+		$identity = ( new ReflectionClass( Digitalogic_Product_Identity::class ) )->newInstanceWithoutConstructor();
+		// phpcs:enable Generic.Formatting.MultipleStatementAlignment
+
+		$this->assertSame(
+			array(),
+			$identity->remove_invalid_unpriced_product_schema(
+				array(
+					'@type' => 'Product',
+					'name'  => 'SIM7080',
+				),
+				$product
+			)
+		);
+	}
+
+	/** Priced products without a verified image do not emit invalid merchant schema. */
+	public function test_priced_product_entity_without_image_is_suppressed(): void {
+		$GLOBALS['digitalogic_test_posts'][21] = array(
+			'post_type'    => 'product',
+			'post_status'  => 'publish',
+			'product_type' => 'simple',
+			'post_title'   => 'Product awaiting a verified image',
+			'meta'         => array( '_price' => '125000' ),
+		);
+		$product                               = wc_get_product( 21 );
+		$identity                              = ( new ReflectionClass( Digitalogic_Product_Identity::class ) )->newInstanceWithoutConstructor();
+		$entity                                = array(
+			'@type'  => 'Product',
+			'name'   => 'Product awaiting a verified image',
+			'offers' => array(
+				'@type'         => 'Offer',
+				'price'         => '1250000',
+				'priceCurrency' => 'IRR',
+			),
+		);
+
+		$this->assertSame( array(), $identity->remove_invalid_unpriced_product_schema( $entity, $product ) );
+		$entity['image'] = 'https://digitalogic.ir/wp-content/uploads/verified-product.webp';
+		$this->assertSame( $entity, $identity->remove_invalid_unpriced_product_schema( $entity, $product ) );
 	}
 
 	public function test_product_search_includes_both_names_code_serial_part_model_and_variations(): void {

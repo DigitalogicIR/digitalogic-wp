@@ -589,19 +589,19 @@ class Digitalogic_Command_Dispatcher {
             define( 'DOING_AJAX', true );
         }
 
-        $old_post    = $_POST;
-        $old_get     = $_GET;
-        $old_request = $_REQUEST;
-        $old_files   = $_FILES;
+        $old_post    = $_POST; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Temporarily swaps request globals for an already authorised AJAX command.
+        $old_get     = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Temporarily swaps request globals for an already authorised AJAX command.
+        $old_request = $_REQUEST; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Temporarily swaps request globals for an already authorised AJAX command.
+        $old_files   = $_FILES; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Temporarily swaps request globals for an already authorised AJAX command.
         $_FILES      = array();
 
         $request           = $this->normalize_ajax_payload( $payload );
         $request['action'] = $command;
         $_POST             = $request;
-        $_REQUEST          = array_merge( $_GET, $_POST );
+        $_REQUEST          = array_merge( $_GET, $_POST ); // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Temporarily swaps request globals for an already authorised AJAX command.
 
         $die_handler = function($message, $title = '', $args = array()) {
-            throw new Digitalogic_Ajax_Die_Exception( $message, $title, $args );
+            throw new Digitalogic_Ajax_Die_Exception( $message, $title, $args ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
         };
 
         $ajax_die_filter = function() use ($die_handler) {

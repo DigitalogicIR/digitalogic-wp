@@ -12,7 +12,7 @@
 
 ### Method 1: WordPress Admin (Recommended for Non-Technical Users)
 
-1. Download the latest release from [GitHub Releases](https://github.com/atomicdeploy/digitalogic-wp/releases)
+1. Download the latest release from [GitHub Releases](https://github.com/DigitalogicIR/digitalogic-wp/releases)
 2. Log in to your WordPress admin panel
 3. Navigate to **Plugins** → **Add New** → **Upload Plugin**
 4. Click **Choose File** and select the downloaded ZIP file
@@ -26,7 +26,7 @@
 wp plugin install /path/to/digitalogic-wp.zip --activate
 
 # Or install from URL
-wp plugin install https://github.com/atomicdeploy/digitalogic-wp/releases/latest/download/digitalogic-wp.zip --activate
+wp plugin install https://github.com/DigitalogicIR/digitalogic-wp/releases/latest/download/digitalogic-wp.zip --activate
 ```
 
 Every release publishes the stable `digitalogic-wp.zip` asset, a versioned
@@ -50,7 +50,7 @@ the versioned archive and checksums provide immutable release evidence.
 
 ```bash
 cd /path/to/wp-content/plugins/
-git clone https://github.com/atomicdeploy/digitalogic-wp.git digitalogic-wp
+git clone https://github.com/DigitalogicIR/digitalogic-wp.git digitalogic-wp
 cd digitalogic-wp
 composer install
 wp plugin activate digitalogic-wp

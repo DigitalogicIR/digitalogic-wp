@@ -74,6 +74,16 @@
 - WordPress Admin Bar integration with quicklinks to all plugin pages
 - Persian (primary) and English (secondary) i18n support
 
+The branded login and registration pages leave both switchers off by default.
+To opt in, add either line to a site plugin or must-use plugin:
+
+```php
+add_filter( 'digitalogic_login_show_theme_switcher', '__return_true' );
+add_filter( 'digitalogic_login_show_language_switcher', '__return_true' );
+```
+
+The language picker lists installed WordPress languages without contacting WordPress.org during login.
+
 ### ⚡ WooCommerce HPOS Compatible
 - Full support for High-Performance Order Storage (HPOS)
 - Compatible with WooCommerce 8.2+ custom order tables
@@ -89,19 +99,19 @@
 
 ## Installation
 
-Current source-built release: [v1.8.40](https://github.com/atomicdeploy/digitalogic-wp/releases/tag/v1.8.40).
+Current source-built release: v2.3.10 (release artifacts are published after owner approval).
 It contains the durable pricing/event pipeline, storefront currency and product
 SSE updates, and privacy-filtered frontend notifications with immutable source
 and package provenance.
-Use the stable install ZIP below and verify it against the release
-[`SHA256SUMS`](https://github.com/atomicdeploy/digitalogic-wp/releases/download/v1.8.40/SHA256SUMS)
+Use the stable install ZIP published with the approved GitHub release and
+verify it against that release's `SHA256SUMS` manifest.
 manifest. The WordPress package contains production plugin files and
 dependencies; reviewed PBX, n8n, RouterOS, and workstation deployment assets
 remain available in the immutable source tag.
 
 ### Via WordPress Admin
 
-1. Download the stable [`digitalogic-wp.zip`](https://github.com/atomicdeploy/digitalogic-wp/releases/latest/download/digitalogic-wp.zip) asset from the latest GitHub release
+1. Download the stable [`digitalogic-wp.zip`](https://github.com/DigitalogicIR/digitalogic-wp/releases/latest/download/digitalogic-wp.zip) asset from the latest GitHub release
 2. Go to WordPress Admin → Plugins → Add New → Upload Plugin
 3. Upload the zip file and activate
 
@@ -260,6 +270,7 @@ checkout shipping. See [Supplier Shipping Method API](docs/SHIPPING-METHOD-API.m
 
 #### Patris Product Sync
 - `POST /wp-json/digitalogic/patris/product-sync` - Accept a verified, transformed-only snapshot or update
+- `POST /wp-json/digitalogic/patris/product-sync/receipt` - Read the bounded receipt for one exact event and source revision
 
 The receiver uses a dedicated header-only secret, independently recomputes
 `landed_price`, verifies record/source/event hashes, merges updates, and
@@ -305,6 +316,10 @@ guessing product ownership or creating new variable families. See
 - `GET /wp-json/digitalogic/v1/export?format=excel` - Export products as Excel (XLSX) with custom template
 
 ### Authentication
+
+See the [Digitalogic authentication diagrams](docs/AUTHENTICATION-FLOW.md) for
+the customer sign-in, signup, and recovery paths, including call verification
+and the return to Git.
 
 Interactive customers use the canonical same-origin `/login/` flow. Safe GET
 requests to `wp-login.php` retain their supported action and redirect arguments
@@ -399,7 +414,7 @@ diagnostic output, permissions, and update semantics.
 
 ```bash
 # Clone the repository
-git clone https://github.com/atomicdeploy/digitalogic-wp.git
+git clone https://github.com/DigitalogicIR/digitalogic-wp.git
 cd digitalogic-wp
 
 # Install dependencies
@@ -501,8 +516,8 @@ wp i18n make-mo languages/
 
 ## Support
 
-- GitHub Issues: https://github.com/atomicdeploy/digitalogic-wp/issues
-- Documentation: https://github.com/atomicdeploy/digitalogic-wp/wiki
+- GitHub Issues: https://github.com/DigitalogicIR/digitalogic-wp/issues
+- Documentation: https://github.com/DigitalogicIR/digitalogic-wp/wiki
 
 ## License
 

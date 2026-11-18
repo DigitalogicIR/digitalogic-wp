@@ -46,6 +46,11 @@ final class Digitalogic_Storefront_Catalog {
 			return $args;
 		}
 
+		// Slug lookups resolve archive routes, including parents with products only in child terms.
+		if ( ! empty( $args['slug'] ) ) {
+			return $args;
+		}
+
 		$taxonomies = array_filter( (array) $taxonomies, 'is_string' );
 		if ( ! empty( $args['object_ids'] ) || 'all_with_object_id' === ( $args['fields'] ?? '' ) || count( $taxonomies ) > 1 ) {
 			return $args;

@@ -1,0 +1,377 @@
+:root {
+    --digitalogic-checkout-brand: #1769aa;
+    --digitalogic-checkout-brand-strong: #0d4f86;
+    --digitalogic-checkout-ink: #18354d;
+    --digitalogic-checkout-muted: #64788a;
+    --digitalogic-checkout-border: #d8e4ee;
+    --digitalogic-checkout-surface: #f4f8fb;
+    --digitalogic-checkout-danger: #b4233c;
+}
+
+form.checkout .woocommerce-NoticeGroup-checkout .woocommerce-error,
+form.checkout .digitalogic-checkout-notice {
+    color: var(--digitalogic-checkout-ink) !important;
+    background: #f3f8fc !important;
+    border: 1px solid var(--digitalogic-checkout-border) !important;
+    border-inline-start: 4px solid var(--digitalogic-checkout-brand) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 12px 30px rgba(18, 65, 99, .09) !important;
+    margin: 0 0 24px !important;
+    padding: 16px 18px !important;
+}
+
+form.checkout .woocommerce-NoticeGroup-checkout .woocommerce-error::before,
+form.checkout .digitalogic-checkout-notice::before {
+    color: var(--digitalogic-checkout-brand) !important;
+}
+
+form.checkout .woocommerce-NoticeGroup-checkout .woocommerce-error a,
+form.checkout .woocommerce-NoticeGroup-checkout .woocommerce-error a:hover,
+form.checkout .woocommerce-NoticeGroup-checkout .woocommerce-error a:focus,
+form.checkout .digitalogic-checkout-notice a {
+    color: inherit !important;
+    text-decoration: none !important;
+    border-bottom: 0 !important;
+}
+
+form.checkout .digitalogic-checkout-notice strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 1rem;
+    font-weight: 750;
+}
+
+form.checkout .digitalogic-checkout-notice ul {
+    margin: 0;
+    padding-inline-start: 1.15rem;
+}
+
+form.checkout .digitalogic-checkout-notice li + li {
+    margin-top: 4px;
+}
+
+form.checkout #jckwds-fields.wds-fieldbox {
+    overflow: hidden;
+    border: 1px solid var(--digitalogic-checkout-border);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 10px 28px rgba(18, 65, 99, .08);
+    margin: 22px 0;
+}
+
+form.checkout #jckwds-fields .wds-fieldbox-header {
+    color: #fff;
+    background: var(--digitalogic-checkout-brand);
+    padding: 15px 18px;
+}
+
+form.checkout #jckwds-fields .wds-fieldbox-header__title {
+    font-size: 1rem;
+    font-weight: 780;
+}
+
+form.checkout #jckwds-fields .wds-fieldbox-sub-field {
+    padding: 16px 18px 6px;
+}
+
+form.checkout #jckwds-fields input[type='text'],
+form.checkout #jckwds-fields select {
+    min-height: 48px;
+    border: 1px solid var(--digitalogic-checkout-border) !important;
+    border-radius: 11px !important;
+    background-color: #fff !important;
+    color: var(--digitalogic-checkout-ink) !important;
+    transition: border-color .18s ease, box-shadow .18s ease;
+}
+
+form.checkout #jckwds-fields input[type='text']:focus,
+form.checkout #jckwds-fields select:focus,
+form.checkout .digitalogic-field-invalid input,
+form.checkout .digitalogic-field-invalid select,
+form.checkout .digitalogic-field-invalid textarea {
+    border-color: var(--digitalogic-checkout-brand) !important;
+    box-shadow: 0 0 0 3px rgba(23, 105, 170, .14) !important;
+    outline: none !important;
+}
+
+form.checkout #jckwds-fields .digitalogic-jalali-date-host {
+    position: relative;
+}
+
+form.checkout #jckwds-fields .digitalogic-has-jalali-display {
+    color: transparent !important;
+    caret-color: transparent !important;
+}
+
+form.checkout #jckwds-fields .digitalogic-jalali-date-display {
+    position: absolute;
+    inset-inline: 14px;
+    top: 50%;
+    z-index: 2;
+    color: var(--digitalogic-checkout-ink);
+    direction: rtl;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    pointer-events: none;
+    text-align: right;
+    transform: translateY(-50%);
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar {
+    direction: rtl;
+    font-family: var(--digitalogic-font-family, "YekanBakh", Tahoma, sans-serif);
+    width: min(21rem, calc(100vw - 32px));
+    padding: 12px;
+    color: #17324d;
+    background: #fff;
+    border: 1px solid rgba(12, 159, 201, .24);
+    border-radius: 16px;
+    box-shadow: 0 18px 48px rgba(18, 65, 92, .18);
+    overflow: hidden;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-title,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-prev,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-next {
+    font-family: inherit;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-title {
+    direction: rtl;
+    font-weight: 750;
+    letter-spacing: 0;
+    color: #075e86;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-header {
+    min-height: 44px;
+    padding: 8px 42px;
+    color: #075e86;
+    background: #eaf8ff;
+    border: 0;
+    border-radius: 12px;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-prev,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-next {
+    top: 8px;
+    width: 34px;
+    height: 34px;
+    color: #0879a8;
+    background: #fff;
+    border: 1px solid rgba(8, 121, 168, .18);
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-prev:hover,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-next:hover {
+    color: #fff;
+    background: #079dcc;
+    border-color: #079dcc;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-prev .ui-icon,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-next .ui-icon {
+    position: static;
+    display: grid;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    place-items: center;
+    color: inherit;
+    background: none;
+    font-size: 0;
+    text-indent: 0;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-prev .ui-icon::after,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-next .ui-icon::after {
+    font-size: 1.15rem;
+    line-height: 1;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-prev .ui-icon::after {
+    content: "‹";
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-next .ui-icon::after {
+    content: "›";
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar {
+    margin: 10px 0 0;
+    color: #17324d;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar th {
+    padding: 7px 3px;
+    color: #638095;
+    font-size: .78rem;
+    font-weight: 700;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar td {
+    padding: 3px;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar td > a,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar td > span {
+    display: grid;
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0;
+    place-items: center;
+    color: #1c4f6a;
+    background: #f2f9fc;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    text-align: center;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar td > a:hover,
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar td > a.ui-state-active {
+    color: #fff;
+    background: #079dcc;
+    border-color: #079dcc;
+    box-shadow: 0 5px 14px rgba(7, 157, 204, .24);
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar .ui-datepicker-calendar .ui-datepicker-unselectable > span {
+    color: #9aaebb;
+    background: #f7fafc;
+    opacity: .68;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar [data-digitalogic-jalali-day] {
+    font-size: 0;
+}
+
+#ui-datepicker-div.digitalogic-jalali-calendar [data-digitalogic-jalali-day]::after {
+    content: attr(data-digitalogic-jalali-day);
+    font-size: .88rem;
+    line-height: 1;
+}
+
+form.checkout .digitalogic-field-error {
+    display: block;
+    color: var(--digitalogic-checkout-danger);
+    margin-top: 7px;
+    font-size: .84rem;
+    line-height: 1.6;
+}
+
+form.checkout .digitalogic-checkout-readiness {
+    color: var(--digitalogic-checkout-muted);
+    margin: 12px 0 8px;
+    font-size: .86rem;
+    line-height: 1.55;
+}
+
+form.checkout .digitalogic-checkout-readiness.is-ready {
+    color: var(--digitalogic-checkout-brand-strong);
+}
+
+form.checkout #place_order.digitalogic-checkout-incomplete {
+    filter: saturate(.72);
+    opacity: .84;
+}
+
+form.checkout .quantity {
+    display: inline-grid;
+    grid-template-columns: 42px minmax(44px, 58px) 42px;
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid var(--digitalogic-checkout-border);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 5px 14px rgba(18, 65, 99, .08);
+}
+
+form.checkout .quantity .minus,
+form.checkout .quantity .plus {
+    min-width: 42px !important;
+    min-height: 42px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: var(--digitalogic-checkout-surface) !important;
+    color: var(--digitalogic-checkout-brand-strong) !important;
+    font-size: 1.12rem !important;
+    font-weight: 750 !important;
+    transition: color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+form.checkout .quantity .minus:hover,
+form.checkout .quantity .plus:hover,
+form.checkout .quantity .minus:focus-visible,
+form.checkout .quantity .plus:focus-visible {
+    background: var(--digitalogic-checkout-brand) !important;
+    color: #fff !important;
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .32) !important;
+    outline: none !important;
+}
+
+form.checkout .quantity input.qty {
+    width: 100% !important;
+    min-height: 42px !important;
+    border: 0 !important;
+    border-inline: 1px solid var(--digitalogic-checkout-border) !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    color: var(--digitalogic-checkout-ink) !important;
+    font-variant-numeric: tabular-nums;
+    text-align: center !important;
+    box-shadow: none !important;
+}
+
+.woocommerce-checkout-review-order #shipping_method li {
+    border: 1px solid var(--digitalogic-checkout-border);
+    border-radius: 12px;
+    background: #fff;
+    margin: 8px 0;
+    padding: 11px 12px;
+    transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+.woocommerce-checkout-review-order #shipping_method li:has(input:checked) {
+    border-color: var(--digitalogic-checkout-brand);
+    background: var(--digitalogic-checkout-surface);
+    box-shadow: 0 0 0 3px rgba(23, 105, 170, .1);
+}
+
+.woocommerce-checkout-review-order #shipping_method label {
+    cursor: pointer;
+    color: var(--digitalogic-checkout-ink);
+    margin: 0;
+}
+
+@media (max-width: 767px) {
+    form.checkout .woocommerce-NoticeGroup-checkout .woocommerce-error,
+    form.checkout .digitalogic-checkout-notice {
+        border-radius: 12px !important;
+        margin-inline: 0 !important;
+        padding: 14px 15px !important;
+    }
+
+    form.checkout #jckwds-fields.wds-fieldbox {
+        border-radius: 14px;
+        margin: 18px 0;
+    }
+
+    form.checkout .quantity {
+        grid-template-columns: 44px minmax(46px, 60px) 44px;
+		gap: 0;
+		margin-block: 10px;
+		vertical-align: middle;
+	}
+
+	form.checkout .quantity .minus,
+	form.checkout .quantity .plus,
+	form.checkout .quantity input.qty {
+		box-sizing: border-box !important;
+		line-height: 42px !important;
+		margin: 0 !important;
+		padding: 0 !important;
+    }
+}

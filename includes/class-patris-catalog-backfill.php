@@ -12,6 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /** Expose creation policy without a second product writer. */
 final class Digitalogic_Patris_Catalog_Backfill {
 	const POLICY_OPTION = 'digitalogic_patris_catalog_backfill_policy_v1';
+	const WATCHDOG_HOOK = 'digitalogic_patris_catalog_reconciliation_watchdog';
 	const MAX_BATCH     = 100;
 	/**
 	 * Shared policy adapter.
@@ -38,6 +39,9 @@ final class Digitalogic_Patris_Catalog_Backfill {
 	private function __construct() {
 		add_filter( 'rest_endpoints', array( $this, 'remove_client_named_pricing_routes' ), 1000 );
 		add_filter( 'rest_post_dispatch', array( $this, 'enrich_pricing_response' ), 20, 3 );
+		// Product delivery is synchronous. Remove schedules left by releases that
+		// used a timer-based reconciliation safety net.
+		add_action( 'init', array( __CLASS__, 'deactivate_reconciliation_watchdog' ), 42 );
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			$this->register_cli();
 		}
@@ -58,11 +62,19 @@ final class Digitalogic_Patris_Catalog_Backfill {
 		$positive = is_numeric( $record['final_price'] ?? null ) && (float) $record['final_price'] > 0
 			&& is_numeric( $record['weight_grams'] ?? null ) && (float) $record['weight_grams'] > 0;
 		if ( empty( $policy['enabled'] ) || ! $this->policy_matches_source( $policy, $source )
-			|| ( ! $positive && ( 'publish' === $policy['status'] || empty( $policy['allow_non_positive'] ) ) ) ) {
+			|| ( ! $positive && empty( $policy['allow_non_positive'] ) ) ) {
 			return new WP_Error( 'digitalogic_patris_creation_policy_blocked', 'Missing product creation is outside the configured owner policy.' );
 		}
 		return $policy;
 	}
+
+	/** Remove only this plugin-owned watchdog schedule. */
+	public static function deactivate_reconciliation_watchdog() {
+		if ( function_exists( 'wp_clear_scheduled_hook' ) ) {
+			wp_clear_scheduled_hook( self::WATCHDOG_HOOK, array() );
+		}
+	}
+
 	/**
 	 * Read the effective creation policy.
 	 *

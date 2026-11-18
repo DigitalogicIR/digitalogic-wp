@@ -5,11 +5,64 @@ Digitalogic and Patris Export use one living contract. Because both ends are dep
 ## Endpoints
 
 - `POST /wp-json/digitalogic/patris/product-sync`
+- `POST /wp-json/digitalogic/patris/product-sync/receipt`
 - `GET /wp-json/digitalogic/integration/catalog`
 - `POST /wp-json/digitalogic/integration/pricing-assignments/batch`
 - `GET /wp-json/digitalogic/integration/products/by-code/{code}/pricing`
 
 The product-sync request uses `X-Patris-Product-Sync-Secret`. It may be restricted to exact `{id,dataset}` source pairs.
+
+The receipt endpoint uses that same header and permission boundary. Send the
+exact `event_id`, `generated_at`, plus `source.id`, `source.dataset`, and `source.revision` from
+the original event. Every recognized request returns HTTP 200 with schema
+`digitalogic.product-sync-receipt.v2`, the exact echoed identity including
+`generated_at`, bounded
+pending/deferred counts, and one of `applied`, `pending`, `superseded`, or
+`not_found`. `applied` proves durable acceptance; `superseded` proves that
+the attempt is obsolete, not necessarily that the original event was accepted. `pending`
+must suppress another write while Patris keeps probing; only authoritative
+`not_found` permits one controlled POST retry. Authentication and server
+failures retain their normal non-200 status. If the exact event is absent from
+a saturated receipt history, `not_found` is authoritative only when its exact
+`generated_at` is strictly newer than the durable last-accepted timestamp for
+that source. An older absent event may instead be `superseded` only when the
+current durable state proves a strictly newer complete snapshot: the last event,
+input source/dataset/revision, event type, and exact nanosecond timestamp/order
+must agree, with input products present and no pending, deferred, or quarantined
+products. A later delta, pricing-only projection, or timestamp high-water alone
+is insufficient. This lets the outbox retire an obsolete attempt and send its
+coalesced current snapshot without replaying old data. Other equal, older,
+malformed, or unreasonably future chronology fails closed rather than authorizing
+a replay. The receiver permits five minutes of
+positive clock skew before future chronology becomes inconclusive. No event
+payload, secret, stored product, or delivery-error detail is returned.
+
+WooCommerce write failures retain the existing
+`digitalogic_product_sync_woocommerce_write_failed` code, plus a finite
+`failure_stage` in the delivery result and `last_failure_stage` in pending state.
+Stages distinguish shipping assignment, identity readback, owner backfill,
+combined pricing, pricing/feed writes, materialization commit, record-hash and
+projection readback, and delivery finalization. Exception messages, file paths,
+and traces are never included. A subsequent different failure clears the stale
+stage; successful delivery removes the pending entry.
+
+An already-applied hash is not sufficient destination proof. Source delivery
+also verifies exact normalized stock quantity and management, stock status,
+and the complete missing/null field markers. Pricing-only writes update only
+the pricing portion of those markers and preserve absent operational fields;
+both WooCommerce and direct-database writers persist the same markers. This
+prevents a stale raw-feed marker from hiding a subsequently derived price in
+reports. FX-only writes do not overwrite source stock.
+
+Materialization evicts only the affected post, metadata, and taxonomy
+relationship caches even while the enclosing batch suspends broad WordPress
+invalidation. A newly published product must not be verified against its cached
+draft. Initial taxonomy uses an existing unique category Code + source ID +
+dataset binding. Unreviewed automatic products still on the shop default may
+adopt that exact binding; reviewed or other existing categories are preserved.
+New products without a verified category binding have the shop-default
+relationship removed instead of inheriting an unrelated category. Removal
+does not call the WooCommerce hook that would force the default back onto them.
 
 Product delivery and pricing-assignment lookups match the case-sensitive
 `_digitalogic_patris_product_code` value only. A WooCommerce SKU is never used

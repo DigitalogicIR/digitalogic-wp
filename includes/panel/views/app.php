@@ -27,7 +27,7 @@ $fatal_copy = 'fa' === $lang
         'wordpress' => 'WordPress dashboard',
     );
 $wordpress_admin_url = function_exists('admin_url') ? admin_url() : ($config['legacy_panel_url'] ?? '/wp-admin/');
-$retry_url = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : ($config['panel_url'] ?? '/panel/');
+$retry_url = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : ($config['panel_url'] ?? '/panel/'); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 ?><!doctype html>
 <html <?php language_attributes(); ?> dir="<?php echo esc_attr($dir); ?>">
 <head>

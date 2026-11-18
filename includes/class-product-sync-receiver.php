@@ -121,7 +121,7 @@ final class Digitalogic_Product_Sync_JSON_Decoder {
             }
             $key = $this->parse_string();
             if (array_key_exists($key, $result)) {
-                throw new RuntimeException('Duplicate JSON object key: ' . $key);
+                throw new RuntimeException('Duplicate JSON object key: ' . $key); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
             }
             $this->skip_whitespace();
             if (!$this->consume_character(':')) {
@@ -181,7 +181,7 @@ final class Digitalogic_Product_Sync_JSON_Decoder {
                 try {
                     return json_decode($token, true, 2, JSON_THROW_ON_ERROR);
                 } catch (JsonException $exception) {
-                    throw new RuntimeException('Invalid JSON string.', 0, $exception);
+                    throw new RuntimeException('Invalid JSON string.', 0, $exception); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
                 }
             }
             if (ord($character) < 0x20) {
@@ -252,6 +252,7 @@ class Digitalogic_Product_Sync_Receiver {
 	private const MAX_CATEGORIES                    = 10000;
 	private const MAX_SOURCES                       = 16;
 	private const MAX_RECENT_EVENTS                 = 128;
+	private const RECEIPT_MAX_FUTURE_SKEW_SECONDS   = 300;
 	private const MAX_RESULT_ERRORS                 = 100;
 	private const MAX_DEFERRED_PRODUCTS             = self::MAX_PRODUCTS;
 	private const MAX_DELIVERY_PRODUCTS_PER_REQUEST = 25;
@@ -304,6 +305,7 @@ class Digitalogic_Product_Sync_Receiver {
         'irt_per_cny',
         'price_rounding_digits',
         'price_rounding_mode',
+		'price_rounding_policy',
         'pricing_catalog_revision',
         'pricing_catalog_status',
         'currency_effective_date',
@@ -388,6 +390,7 @@ class Digitalogic_Product_Sync_Receiver {
         'irt_per_cny',
         'price_rounding_digits',
         'price_rounding_mode',
+		'price_rounding_policy',
         'pricing_catalog_revision',
         'pricing_catalog_status',
         'currency_effective_date',
@@ -885,7 +888,7 @@ class Digitalogic_Product_Sync_Receiver {
 		);
 
         $this->record_receiver_timing('transaction_total', $transaction_started);
-		if ( is_array( $result ) ) {
+		if ( is_array( $result ) && ! empty( $result['fully_applied'] ) ) {
 			if ( $this->source_identity_lock_is_owned() ) {
 				$this->pending_applied_receipts[] = array( 'result' => $result, 'envelope' => $envelope );
 			} else {
@@ -933,11 +936,19 @@ class Digitalogic_Product_Sync_Receiver {
             }
         }
 
-        return array(
+        $status = array(
             'source_count' => count($sources),
             'totals' => $totals,
             'sources' => $sources,
         );
+		$status['delivery_mode'] = 'synchronous';
+		$status['scheduled_reconciliation'] = false;
+		$stock_report = Digitalogic_Patris_Feed::instance()->source_stock_conflict_report();
+		$status['stock_conflicts'] = $stock_report['items'];
+		$status['stock_conflict_count'] = $stock_report['total'];
+		$status['stock_conflicts_truncated'] = $stock_report['truncated'];
+
+		return $status;
     }
 
     /**
@@ -1281,6 +1292,196 @@ class Digitalogic_Product_Sync_Receiver {
     }
 
 	/**
+	 * Read a bounded receipt for one exact upstream delivery attempt.
+	 *
+	 * This is deliberately a read-only acknowledgement surface. It exposes no
+	 * stored payload or failure detail, so an upstream outbox can distinguish a
+	 * committed event from an unknown outcome without replaying a write.
+	 *
+	 * @param string $event_id        Exact canonical event identity.
+	 * @param string $source_id       Exact source id.
+	 * @param string $dataset         Exact source dataset.
+	 * @param string $source_revision Exact source revision carried by the event.
+	 * @param string $generated_at    Exact event generation timestamp.
+	 * @return array|WP_Error
+	 */
+	public function get_event_delivery_receipt( $event_id, $source_id, $dataset, $source_revision, $generated_at ) {
+		$event_id        = is_string( $event_id ) ? $event_id : '';
+		$source_id       = is_string( $source_id ) ? $source_id : '';
+		$dataset         = is_string( $dataset ) ? $dataset : '';
+		$source_revision = is_string( $source_revision ) ? $source_revision : '';
+		$generated_at    = is_string( $generated_at ) ? $generated_at : '';
+		if (
+			! $this->is_hash( $event_id )
+			|| ! $this->is_hash( $source_revision )
+			|| '' === trim( $source_id )
+			|| '' === trim( $dataset )
+			|| trim( $source_id ) !== $source_id
+			|| trim( $dataset ) !== $dataset
+			|| strlen( $source_id ) > self::MAX_CODE_LENGTH
+			|| strlen( $dataset ) > self::MAX_CODE_LENGTH
+		) {
+			return $this->error(
+				'digitalogic_product_sync_receipt_identity_invalid',
+				'An exact event_id, source id, dataset, and source revision are required.',
+				400
+			);
+		}
+		$generated_at_order = $this->timestamp_order( $generated_at );
+		if ( is_wp_error( $generated_at_order ) ) {
+			return $this->error(
+				'digitalogic_product_sync_receipt_generated_at_invalid',
+				'An exact RFC3339Nano generated_at is required.',
+				400
+			);
+		}
+
+		$receipt = array(
+			'schema'            => 'digitalogic.product-sync-receipt.v2',
+			'status'            => 'not_found',
+			'event_id'          => $event_id,
+			'generated_at'      => $generated_at,
+			'source'            => array(
+				'id'       => $source_id,
+				'dataset'  => $dataset,
+				'revision' => $source_revision,
+			),
+			'pending_products'  => 0,
+			'deferred_products' => 0,
+			'observed_at'       => gmdate( 'c' ),
+		);
+		$state   = $this->load_state();
+		$key     = $this->source_key( $source_id, $dataset );
+		$source  = is_array( $state['sources'][ $key ] ?? null ) ? $state['sources'][ $key ] : array();
+		$events  = is_array( $source['recent_events'] ?? null ) ? $source['recent_events'] : array();
+		$event_found = array_key_exists( $event_id, $events ) && is_array( $events[ $event_id ] );
+		$event   = is_array( $events[ $event_id ] ?? null ) ? $events[ $event_id ] : array();
+		if ( ! $event_found ) {
+			if ( empty( $source ) ) {
+				return $this->receipt_absence_is_not_future( $generated_at_order ) ? $receipt : $this->receipt_future_inconclusive();
+			}
+			$high_water = $this->receipt_generated_at_high_water( $source );
+			if (
+				$this->receipt_absence_is_not_future( $generated_at_order )
+				&& is_array( $high_water )
+				&& $this->compare_timestamp_order( $generated_at_order, $high_water ) > 0
+			) {
+				return $receipt;
+			}
+			if ( ! $this->receipt_absence_is_not_future( $generated_at_order ) ) {
+				return $this->receipt_future_inconclusive();
+			}
+			if ( $this->receipt_has_superseding_snapshot( $source, $source_id, $dataset, $generated_at_order ) ) {
+				// This proves obsolescence, not acceptance of the missing event.
+				$receipt['status'] = 'superseded';
+				return $receipt;
+			}
+			return $this->error(
+				'digitalogic_product_sync_receipt_history_inconclusive',
+				'The bounded receipt history cannot prove that this event was not accepted.',
+				503,
+				array( 'retryable' => false )
+			);
+		}
+		if (
+			$source_revision !== (string) ( $event['source_revision'] ?? '' )
+			|| $generated_at !== (string) ( $event['generated_at'] ?? '' )
+		) {
+			return $this->error(
+				'digitalogic_product_sync_receipt_event_identity_mismatch',
+				'The stored event does not match the probed source revision and generated_at.',
+				409
+			);
+		}
+
+		if ( $event_id !== (string) ( $source['last_event_id'] ?? '' ) ) {
+			$receipt['status'] = 'superseded';
+			return $receipt;
+		}
+
+		foreach ( (array) ( $source['pending_products'] ?? array() ) as $entry ) {
+			if ( is_array( $entry ) && $event_id === (string) ( $entry['queued_event_id'] ?? '' ) ) {
+				++$receipt['pending_products'];
+			}
+		}
+		foreach ( (array) ( $source['deferred_products'] ?? array() ) as $entry ) {
+			if ( is_array( $entry ) && $event_id === (string) ( $entry['queued_event_id'] ?? '' ) ) {
+				++$receipt['deferred_products'];
+			}
+		}
+		$receipt['status'] = ( $receipt['pending_products'] + $receipt['deferred_products'] ) > 0 ? 'pending' : 'applied';
+
+		return $receipt;
+	}
+
+	/** Prove an absent event obsolete using the current complete accepted snapshot. */
+	private function receipt_has_superseding_snapshot( $source, $source_id, $dataset, $generated_at_order ) {
+		$last_id = $source['last_event_id'] ?? null;
+		$event   = $source['recent_events'][ $last_id ?? '' ] ?? null;
+		$input   = $source['input_source'] ?? null;
+		if (
+			! $this->is_hash( $last_id )
+			|| ! is_array( $event )
+			|| ! is_array( $input )
+			|| $source_id !== ( $input['id'] ?? null )
+			|| $dataset !== ( $input['dataset'] ?? null )
+			|| ! $this->is_hash( $input['revision'] ?? null )
+			|| ( $input['revision'] ?? null ) !== ( $event['source_revision'] ?? null )
+			|| 'snapshot' !== ( $source['last_event_type'] ?? null )
+			|| 'snapshot' !== ( $event['event_type'] ?? null )
+			|| ! is_array( $source['input_products'] ?? null )
+			|| ! empty( $source['quarantined_codes'] )
+			|| array() !== ( $source['pending_products'] ?? null )
+			|| array() !== ( $source['deferred_products'] ?? null )
+			|| ! is_string( $source['generated_at'] ?? null )
+			|| $source['generated_at'] !== ( $event['generated_at'] ?? null )
+		) {
+			return false;
+		}
+		$order = $this->timestamp_order( $source['generated_at'] );
+		return ! is_wp_error( $order )
+			&& $order === ( $source['generated_at_order'] ?? null )
+			&& $this->compare_timestamp_order( $order, $generated_at_order ) > 0;
+	}
+
+	/** Return the greatest durable accepted generated_at order from bounded state. */
+	private function receipt_generated_at_high_water( $source ) {
+		$candidates = array(
+			$source['last_accepted_generated_at'] ?? null,
+			$source['generated_at'] ?? null,
+		);
+		foreach ( (array) ( $source['recent_events'] ?? array() ) as $event ) {
+			$candidates[] = is_array( $event ) ? ( $event['generated_at'] ?? null ) : null;
+		}
+		$high_water = null;
+		foreach ( $candidates as $candidate ) {
+			if ( ! is_string( $candidate ) ) {
+				continue;
+			}
+			$order = $this->timestamp_order( $candidate );
+			if ( ! is_wp_error( $order ) && ( null === $high_water || $this->compare_timestamp_order( $order, $high_water ) > 0 ) ) {
+				$high_water = $order;
+			}
+		}
+		return $high_water;
+	}
+
+	/** Whether an absent event timestamp is within the safe receiver clock boundary. */
+	private function receipt_absence_is_not_future( $generated_at_order ) {
+		return (int) $generated_at_order[0] <= time() + self::RECEIPT_MAX_FUTURE_SKEW_SECONDS;
+	}
+
+	/** Return a fail-closed response for an absent event beyond safe clock skew. */
+	private function receipt_future_inconclusive() {
+		return $this->error(
+			'digitalogic_product_sync_receipt_chronology_inconclusive',
+			'The absent event generated_at is beyond the safe receiver clock boundary.',
+			503,
+			array( 'retryable' => true )
+		);
+	}
+
+	/**
 	 * Read committed owner products without calculation or materialization.
 	 *
 	 * @param array $request Input source and owner catalog binding.
@@ -1342,13 +1543,19 @@ class Digitalogic_Product_Sync_Receiver {
 	 */
 	public function get_owner_dependent_source_identities() {
 		$state = $this->load_state();
+		$rounding = Digitalogic_Shipping_Method_Service::instance()->get_price_rounding_policy();
+		if ( is_wp_error( $rounding ) ) {
+			return $rounding;
+		}
 		foreach ( $state['sources'] as $key => $source ) {
 			if ( ! isset( $source['input_source'], $source['input_products'] ) || ! is_array( $source['input_products'] ) ) {
 				return $this->input_baseline_required();
 			}
 			$dependent = false;
-			foreach ( $source['input_products'] as $product ) {
-				if ( $this->requires_owner_projection( $product, $source ) ) {
+			foreach ( $source['input_products'] as $code => $product ) {
+				$direct_rounding = 'sale_price_direct' === ( $product['price_source_kind'] ?? '' )
+					&& ( isset( $rounding['rounding_policy'] ) || isset( $product['price_rounding_policy'] ) || isset( $source['products'][ $code ]['price_rounding_policy'] ) );
+				if ( $direct_rounding || $this->requires_owner_projection( $product, $source ) ) {
 					$dependent = true;
 					break;
 				}
@@ -1836,7 +2043,7 @@ class Digitalogic_Product_Sync_Receiver {
             !is_array($settings)
             || array_is_list($settings)
             || !empty(array_diff($required, array_keys($settings)))
-            || !empty(array_diff(array_keys($settings), $required))
+            || !empty(array_diff(array_keys($settings), array_merge($required, array('price_rounding_policy'))))
         ) {
             return $this->error(
                 'digitalogic_pricing_settings_invalid',
@@ -1882,6 +2089,17 @@ class Digitalogic_Product_Sync_Receiver {
                 'تعداد ارقام گردکردن باید عدد صحیح صفر تا ۹ و روش آن nearest_half_up باشد.',
                 400
             );
+        }
+        $rounding_policy = $settings['price_rounding_policy'] ?? null;
+        if (null !== $rounding_policy) {
+            try {
+                if (!is_array($rounding_policy)) {
+                    throw new \InvalidArgumentException('Rounding policy must be an object.');
+                }
+                $rounding_policy = \Digitalogic\Pricing\RoundingPolicy::normalize($rounding_policy);
+            } catch (\InvalidArgumentException $exception) {
+                return $this->field_error('settings.price_rounding_policy', $exception->getMessage());
+            }
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d', $settings['effective_date']);
         $date_errors = DateTimeImmutable::getLastErrors();
@@ -1931,6 +2149,7 @@ class Digitalogic_Product_Sync_Receiver {
                 'profit_margin_percent' => $this->decimal_parts_to_string($profit),
                 'price_rounding_digits' => (int) $this->number_to_storage($settings['price_rounding_digits']),
                 'price_rounding_mode' => Digitalogic_Shipping_Method_Service::ROUNDING_MODE,
+                'price_rounding_policy' => $rounding_policy,
             ),
             'profit_overrides' => $normalized_overrides,
             'scope_codes' => $normalized_scope,
@@ -1980,6 +2199,7 @@ class Digitalogic_Product_Sync_Receiver {
                     'profit_margin_percent' => $settings['profit_margin_percent'],
                     'price_rounding_digits' => $settings['price_rounding_digits'],
                     'price_rounding_mode' => $settings['price_rounding_mode'],
+                    'price_rounding_policy' => $settings['price_rounding_policy'] ?? null,
                 )
             )
         );
@@ -2714,6 +2934,7 @@ class Digitalogic_Product_Sync_Receiver {
         if (!is_array($product)) {
             return $this->field_error('products', 'contains invalid stored data');
         }
+        $product['price_rounding_policy'] = $settings['price_rounding_policy'] ?? null;
         $path = 'products.' . ($product['product_code'] ?? '');
         $price_source_kind = (string) ($product['price_source_kind'] ?? '');
         if ('' === $price_source_kind) {
@@ -2730,6 +2951,9 @@ class Digitalogic_Product_Sync_Receiver {
             return $this->field_error($path . '.price_source_kind', 'contains an unsupported selected price source');
         }
         if ('sale_price_direct' === $price_source_kind) {
+            if (!isset($product['price_rounding_policy'])) {
+                unset($product['price_rounding_digits'], $product['price_rounding_mode']);
+            }
             $calculated = $this->evaluate_final_price_formula($product, $path);
             if (is_wp_error($calculated)) {
                 return $calculated;
@@ -2738,6 +2962,10 @@ class Digitalogic_Product_Sync_Receiver {
                 unset($product['final_price']);
             } else {
                 $product['final_price'] = $calculated['value'];
+                if (isset($product['price_rounding_policy'], $calculated['rounding_digits'])) {
+                    $product['price_rounding_digits'] = $calculated['rounding_digits'];
+                    $product['price_rounding_mode'] = Digitalogic_Shipping_Method_Service::ROUNDING_MODE;
+                }
             }
             $validated = $this->validate_final_price_formula($product, $path, true, $calculated);
             if (is_wp_error($validated)) {
@@ -2780,6 +3008,7 @@ class Digitalogic_Product_Sync_Receiver {
         $product['markup_percent'] = $markup_percent;
         $product['price_rounding_digits'] = $settings['price_rounding_digits'];
         $product['price_rounding_mode'] = $settings['price_rounding_mode'];
+        $product['price_rounding_policy'] = $settings['price_rounding_policy'] ?? null;
         $product['pricing_catalog_revision'] = $catalog_revision;
         $product['shipping_price_per_kg'] = $shipping['price_per_kg'];
         $product['shipping_price_per_kg_currency'] = $shipping['currency'];
@@ -2798,6 +3027,10 @@ class Digitalogic_Product_Sync_Receiver {
             unset($product['final_price']);
         } else {
             $product['final_price'] = $calculated['value'];
+            if (isset($product['price_rounding_policy'], $calculated['rounding_digits'])) {
+                $product['price_rounding_digits'] = $calculated['rounding_digits'];
+                $product['price_rounding_mode'] = Digitalogic_Shipping_Method_Service::ROUNDING_MODE;
+            }
         }
         $validated = $this->validate_final_price_formula($product, $path, true, $calculated);
         if (is_wp_error($validated)) {
@@ -3201,15 +3434,22 @@ class Digitalogic_Product_Sync_Receiver {
             return $products;
         }
         if ('go' === $authority) {
-            $catalog = null;
+            $catalog = Digitalogic_Shipping_Method_Service::instance()->get_integration_catalog();
+            if (is_wp_error($catalog)) {
+                return $catalog;
+            }
+            $used_owner_catalog = false;
             foreach ($products as $code => $product) {
                 $validated = $this->validate_final_price_formula($product, 'products.' . $code, !empty($source['formula_id']));
                 if (is_wp_error($validated)) {
                     return $validated;
                 }
-                if (!$this->requires_owner_projection($product, $source)) {
+                $direct_rounding = 'sale_price_direct' === ($product['price_source_kind'] ?? '')
+                    && (isset($catalog['pricing']['rounding_policy']) || isset($product['price_rounding_policy']));
+                if (!$direct_rounding && !$this->requires_owner_projection($product, $source)) {
                     continue;
                 }
+                $used_owner_catalog = true;
                 if (null === $catalog) {
                     $catalog = Digitalogic_Shipping_Method_Service::instance()->get_integration_catalog();
                     if (is_wp_error($catalog)) {
@@ -3229,7 +3469,7 @@ class Digitalogic_Product_Sync_Receiver {
                     );
                 }
             }
-            if (null !== $catalog) {
+            if ($used_owner_catalog) {
                 $verified_owner_catalog_revision = $catalog['revision'];
             }
             return $products;
@@ -3278,6 +3518,12 @@ class Digitalogic_Product_Sync_Receiver {
             // Only priced routes require currency, markup and freight enrichment.
             $product = $this->project_owner_stock($product, $catalog['selected_warehouses'] ?? array());
             if (!$this->requires_owner_projection($product, $source)) {
+                if ('sale_price_direct' === ($product['price_source_kind'] ?? '')) {
+                    $product['price_rounding_policy'] = $catalog['pricing']['rounding_policy'] ?? null;
+                    if (!isset($product['price_rounding_policy'])) {
+                        unset($product['price_rounding_digits'], $product['price_rounding_mode']);
+                    }
+                }
                 $calculated = $this->evaluate_final_price_formula($product, 'products.' . $code);
                 if (is_wp_error($calculated)) {
                     return $calculated;
@@ -3285,6 +3531,10 @@ class Digitalogic_Product_Sync_Receiver {
                 unset($product['final_price']);
                 if (!empty($calculated['available'])) {
                     $product['final_price'] = $calculated['value'];
+                if (isset($product['price_rounding_policy'], $calculated['rounding_digits'])) {
+						$product['price_rounding_digits'] = $calculated['rounding_digits'];
+						$product['price_rounding_mode'] = Digitalogic_Shipping_Method_Service::ROUNDING_MODE;
+                }
                 }
                 $validated = $this->validate_final_price_formula($product, 'products.' . $code, !empty($source['formula_id']), $calculated);
                 if (is_wp_error($validated)) {
@@ -3554,6 +3804,7 @@ class Digitalogic_Product_Sync_Receiver {
             'input_products' => $input_products,
             'generated_at' => $envelope['generated_at'],
             'generated_at_order' => $envelope['generated_at_order'],
+			'last_accepted_generated_at' => $envelope['generated_at'],
             'last_event_id' => $envelope['event_id'],
             'last_event_type' => $envelope['event_type'],
             'products' => $transition['products'],
@@ -3602,9 +3853,9 @@ class Digitalogic_Product_Sync_Receiver {
             }
         }
 
-        $fully_applied = empty($source_state['pending_products']);
+        $fully_applied = empty($source_state['pending_products']) && empty($source_state['deferred_products']);
         $result = array_merge(array(
-            'status' => $fully_applied ? ($same_revision ? 'already_current' : 'accepted') : 'partially_applied',
+			'status' => $fully_applied ? ($same_revision ? 'already_current' : 'accepted') : 'unapplied',
             'replayed' => false,
             'event_id' => $envelope['event_id'],
             'event_type' => $envelope['event_type'],
@@ -3703,9 +3954,9 @@ class Digitalogic_Product_Sync_Receiver {
             }
         }
 
-        $fully_applied = empty($source_state['pending_products']);
+        $fully_applied = empty($source_state['pending_products']) && empty($source_state['deferred_products']);
         $result = array_merge(array(
-            'status' => $fully_applied ? 'recovered' : 'retry_pending',
+			'status' => $fully_applied ? 'recovered' : 'unapplied',
             'replayed' => true,
             'event_id' => $envelope['event_id'],
             'event_type' => $envelope['event_type'],
@@ -3947,7 +4198,10 @@ class Digitalogic_Product_Sync_Receiver {
                     'shipping_method_id', 'shipping_price_per_kg', 'shipping_price_per_kg_currency',
                     'markup_percent', 'irt_per_cny', 'pricing_catalog_revision', 'pricing_catalog_status',
                     'currency_effective_date', 'price_source_amount', 'price_source_currency', 'price_source_kind',
-                    'price_rounding_digits', 'price_rounding_mode', 'final_price',
+					'price_rounding_digits',
+					'price_rounding_mode',
+					'price_rounding_policy',
+					'final_price',
                 )));
                 if (!empty($owner_fields)) {
                     return $this->error('digitalogic_product_sync_owner_fields_forbidden', 'Patris input records must omit website-owned projection fields.', 422, array('fields' => $owner_fields));
@@ -4194,14 +4448,16 @@ class Digitalogic_Product_Sync_Receiver {
         if ($direct_sale_selected) {
             $forbidden_direct_inputs = array_values(
                 array_intersect(
-                    array('markup_percent', 'price_rounding_digits', 'price_rounding_mode', 'irt_per_cny'),
+					isset( $product['price_rounding_policy'] )
+						? array( 'markup_percent', 'irt_per_cny' )
+						: array( 'markup_percent', 'price_rounding_digits', 'price_rounding_mode', 'irt_per_cny' ),
                     array_keys($product)
                 )
             );
             if (!empty($forbidden_direct_inputs)) {
                 return $this->error(
                     'digitalogic_product_sync_direct_sale_inputs_forbidden',
-                    'sale_price_direct must omit markup, rounding, and foreign-exchange inputs.',
+					'sale_price_direct must omit markup and foreign-exchange inputs; rounding fields require a magnitude policy.',
                     422,
                     array('path' => $path, 'fields' => $forbidden_direct_inputs)
                 );
@@ -4255,7 +4511,7 @@ class Digitalogic_Product_Sync_Receiver {
                 }
             } elseif (!$direct_sale_selected && (
                 !$this->is_nonnegative_integer($product['price_rounding_digits'])
-                || (int) $this->number_to_storage($product['price_rounding_digits']) > 9
+				|| (int) $this->number_to_storage( $product['price_rounding_digits'] ) > ( isset( $product['price_rounding_policy'] ) ? 18 : 9 )
             )) {
                 return $this->field_error($path . '.price_rounding_digits', 'must be an integer from 0 through 9');
             } elseif (
@@ -4310,6 +4566,24 @@ class Digitalogic_Product_Sync_Receiver {
         // Formula validation follows authority selection under the delivery
         // lock. PHP receives source facts and validates its own final projection.
 
+		if ( isset( $product['price_rounding_policy'] ) ) {
+			try {
+				if ( ! is_array( $product['price_rounding_policy'] ) ) {
+					throw new \InvalidArgumentException( 'Rounding policy must be an object.' );
+				}
+				foreach ( ( $product['price_rounding_policy']['tiers'] ?? array() ) as $tier_index => $tier ) {
+					if ( isset( $tier['digits'] ) && $tier['digits'] instanceof Digitalogic_Product_Sync_JSON_Number ) {
+						if ( ! preg_match( '/\A(?:0|[1-9][0-9]?)\z/D', $tier['digits']->value ) ) {
+							throw new \InvalidArgumentException( 'Tier digits must be a nonnegative integer.' );
+						}
+						$product['price_rounding_policy']['tiers'][ $tier_index ]['digits'] = (int) $tier['digits']->value;
+					}
+				}
+				$product['price_rounding_policy'] = \Digitalogic\Pricing\RoundingPolicy::normalize( $product['price_rounding_policy'] );
+			} catch ( \InvalidArgumentException $exception ) {
+				return $this->field_error( $path . '.price_rounding_policy', $exception->getMessage() );
+			}
+		}
         $stored = array();
         foreach (self::PRODUCT_FIELDS as $field) {
             if (!array_key_exists($field, $product)) {
@@ -4808,6 +5082,10 @@ class Digitalogic_Product_Sync_Receiver {
         foreach ($changed_products as $product) {
             $code = $product['product_code'];
             $record_hash = $product['record_hash'];
+			$previous_product = is_array( $existing['products'][ $code ] ?? null )
+				? $existing['products'][ $code ]
+				: array();
+			$changed_fields = $this->product_changed_fields( $previous_product, $product );
             $applied_entry = is_array($applied[$code] ?? null) ? $applied[$code] : array();
             if (isset($applied_entry['record_hash']) && hash_equals((string) $applied_entry['record_hash'], $record_hash)) {
                 $woocommerce_id = isset($applied_entry['woocommerce_id'])
@@ -4832,10 +5110,15 @@ class Digitalogic_Product_Sync_Receiver {
                     'product_code' => $code,
                     'record_hash' => $record_hash,
                     'queued_event_id' => $envelope['event_id'],
+					'changed_fields' => $changed_fields,
                     'attempts' => 0,
                 );
                 $pending[$code] = $pending_entry;
                 unset($deferred[$code]);
+			} elseif ( isset( $pending[ $code ] ) ) {
+				$pending[ $code ]['queued_event_id'] = $envelope['event_id'];
+				$pending[ $code ]['changed_fields']  = $changed_fields;
+				unset( $deferred[ $code ] );
             }
         }
 
@@ -4848,6 +5131,67 @@ class Digitalogic_Product_Sync_Receiver {
             'deferred_products' => array_slice($deferred, 0, self::MAX_DEFERRED_PRODUCTS, true),
         );
     }
+
+	/** Project source row deltas onto the bounded, value-free event allowlist. */
+	private function product_changed_fields( $before, $after ) {
+		$groups = array(
+			'name'                           => 'name',
+			'category_code'                  => 'category',
+			'serial'                         => 'sku',
+			'unit'                           => 'unit',
+			'sale_price_source'              => 'sale_price',
+			'partner_price_source'           => 'partner_price',
+			'purchase_price_source'          => 'purchase_price',
+			'warehouse_stock'                => 'stock',
+			'total_stock'                    => 'stock',
+			'minimum_stock'                  => 'stock',
+			'foreign_currency'               => 'currency',
+			'foreign_price'                  => 'cny',
+			'weight_grams'                   => 'weight',
+			'location'                       => 'location',
+			'shipping_method_id'             => 'shipping',
+			'shipping_price_per_kg'          => 'shipping',
+			'shipping_price_per_kg_currency' => 'shipping',
+			'markup_percent'                 => 'markup',
+			'irt_per_cny'                    => 'exchange_rate',
+			'price_source_amount'            => 'pricing',
+			'price_source_currency'          => 'pricing',
+			'price_source_kind'              => 'pricing',
+			'price_rounding_digits'          => 'pricing',
+			'price_rounding_mode'            => 'pricing',
+			'price_rounding_policy'          => 'pricing',
+			'pricing_catalog_revision'       => 'pricing',
+			'pricing_catalog_status'         => 'pricing',
+			'currency_effective_date'        => 'pricing',
+			'final_price'                    => 'pricing',
+			'warnings'                       => 'warnings',
+		);
+		$changes = array();
+		foreach ( $groups as $field => $group ) {
+			$before_exists = array_key_exists( $field, $before );
+			$after_exists  = array_key_exists( $field, $after );
+			if ( $before_exists !== $after_exists || ( $after_exists && $before[ $field ] !== $after[ $field ] ) ) {
+				$changes[ $group ] = true;
+			}
+		}
+		$changes = array_keys( $changes );
+		sort( $changes, SORT_STRING );
+		return $changes;
+	}
+
+	/** Return the exact sorted names stored with one successful materialization. */
+	private function delivery_changed_fields( $delivery_entry, $created ) {
+		$fields = is_array( $delivery_entry['changed_fields'] ?? null )
+			? $delivery_entry['changed_fields']
+			: array();
+		if ( $created ) {
+			$fields[] = 'publication';
+		}
+		$allowed = array( 'name', 'category', 'sku', 'unit', 'sale_price', 'partner_price', 'purchase_price', 'stock', 'currency', 'cny', 'weight', 'location', 'shipping', 'markup', 'exchange_rate', 'pricing', 'warnings', 'publication' );
+		$fields  = array_values( array_unique( array_intersect( $allowed, array_map( 'strval', $fields ) ) ) );
+		sort( $fields, SORT_STRING );
+		return $fields;
+	}
 
     /**
      * Drain selected durable delivery sets and classify outcomes once.
@@ -5059,13 +5403,11 @@ class Digitalogic_Product_Sync_Receiver {
 				if ( class_exists( 'Digitalogic_Patris_Catalog_Materializer' ) ) {
 					$creation_policy = Digitalogic_Patris_Catalog_Backfill::instance()->creation_policy( $product_data, $source_state['source'] ?? array() );
 					$materialized = is_wp_error( $creation_policy ) ? $creation_policy
-						: ( $result['created'] >= (int) $creation_policy['batch_limit']
-							? new WP_Error( 'digitalogic_patris_creation_batch_limit', 'Missing product creation reached the configured batch limit.' )
-							: Digitalogic_Patris_Catalog_Materializer::instance()->materialize_source_record(
+						: Digitalogic_Patris_Catalog_Materializer::instance()->materialize_source_record(
 						$product_data,
 						is_array( $source_state['source'] ?? null ) ? $source_state['source'] : array(),
 						is_array( $source_state['quarantined_codes'] ?? null ) ? $source_state['quarantined_codes'] : array()
-					) );
+					);
 					if ( is_wp_error( $materialized ) ) {
 						$resolved = $materialized;
 					} else {
@@ -5200,6 +5542,7 @@ class Digitalogic_Product_Sync_Receiver {
 				? absint( $pricing_topology['parent_id'] )
 				: (int) $product->get_parent_id();
 
+			$failure_stage = 'shipping_assignment';
             try {
 				if ( $materialization_enabled && ! $owner_backfill_only ) {
 					$assignment = $this->reconcile_materialization_shipping_assignment(
@@ -5225,6 +5568,7 @@ class Digitalogic_Product_Sync_Receiver {
 						}
 					}
 				}
+				$failure_stage = 'identity_readback';
 				$identity_meta_keys = array(
 					Digitalogic_Product_Identifier_Resolver::PATRIS_CODE_META,
 					'_sku',
@@ -5257,6 +5601,7 @@ class Digitalogic_Product_Sync_Receiver {
 				$committed = null;
 				$owner_backfilled = false;
 				if ( $owner_backfill_only ) {
+					$failure_stage = 'owner_backfill';
 					$owner_backfill = Digitalogic_Patris_Catalog_Materializer::instance()->backfill_verified_source_product(
 						$woocommerce_id,
 						$product_data,
@@ -5293,6 +5638,7 @@ class Digitalogic_Product_Sync_Receiver {
 				if ( ! $owner_backfilled ) {
 					$combined_pricing = ! $requires_full_feed && $materialization_enabled;
 					if ( $combined_pricing ) {
+						$failure_stage = 'combined_pricing';
 						$committed = Digitalogic_Patris_Catalog_Materializer::instance()->reprice_source_product(
 							$woocommerce_id,
 							$product_data,
@@ -5303,14 +5649,17 @@ class Digitalogic_Product_Sync_Receiver {
 							return $committed;
 						}
 					} elseif ( ! $requires_full_feed ) {
+						$failure_stage = 'pricing_write';
 						Digitalogic_Patris_Feed::instance()->apply_product_pricing( $product, $product_data );
 					} else {
+						$failure_stage = 'feed_write';
 						$feed_write = Digitalogic_Patris_Feed::instance()->apply_product_feed( $product, $product_data );
 						if ( is_wp_error( $feed_write ) ) {
 							throw new RuntimeException( $feed_write->get_error_code() );
 						}
 					}
 					if ( $materialization_enabled && ! $combined_pricing ) {
+						$failure_stage = 'materialization_commit';
 						$committed = Digitalogic_Patris_Catalog_Materializer::instance()->commit_source_product(
 							$woocommerce_id,
 							$product_data,
@@ -5321,10 +5670,12 @@ class Digitalogic_Product_Sync_Receiver {
 						}
 					}
 				}
+				$failure_stage = 'record_hash_readback';
                 $persisted_hash = (string) get_post_meta($woocommerce_id, '_digitalogic_patris_record_hash', true);
                 if ('' === $persisted_hash || !hash_equals($record_hash, $persisted_hash)) {
                     throw new RuntimeException('WooCommerce record hash readback failed.');
                 }
+				$failure_stage = 'projection_readback';
 				if (
 					! $this->coordinated_price_readback_matches( $woocommerce_id, $product_data )
 					|| (
@@ -5364,6 +5715,7 @@ class Digitalogic_Product_Sync_Receiver {
 						$fallback_positive_prices[ $woocommerce_id ] = (string) $product_data['final_price'];
 					}
 				}
+				$failure_stage = 'delivery_finalize';
                 $applied[$code_key] = array(
                     'product_code' => $product_code,
                     'record_hash' => $record_hash,
@@ -5389,6 +5741,9 @@ class Digitalogic_Product_Sync_Receiver {
 					);
 				}
 				if ( is_array( $committed ) ) {
+					$committed['event_id']       = (string) ( $delivery_entry['queued_event_id'] ?? '' );
+					$committed['change_type']    = $created ? 'created' : 'updated';
+					$committed['changed_fields'] = $this->delivery_changed_fields( $delivery_entry, $created );
 					$this->queue_materializer_product_committed( $committed );
 				} elseif ( ! $materialization_enabled ) {
 					// This identity passed the same hash and canonical readback above.
@@ -5401,18 +5756,24 @@ class Digitalogic_Product_Sync_Receiver {
 							'source_id' => (string) ( $source_state['source']['id'] ?? '' ),
 							'dataset' => (string) ( $source_state['source']['dataset'] ?? '' ),
 							'source_revision' => (string) ( $source_state['source']['revision'] ?? '' ),
+							'event_id' => (string) ( $delivery_entry['queued_event_id'] ?? '' ),
+							'change_type' => $created ? 'created' : 'updated',
+							'changed_fields' => $this->delivery_changed_fields( $delivery_entry, $created ),
 						)
 					);
 				}
             } catch (Throwable $exception) {
                 $result['failed']++;
                 $this->mark_delivery_failure($delivery_entry, 'digitalogic_product_sync_woocommerce_write_failed');
+				// Only our finite stage labels are retained; never exception messages or traces.
+				$delivery_entry['last_failure_stage'] = $failure_stage;
                 unset($delivery_entry['reason']);
                 $pending[$code_key] = $delivery_entry;
                 unset($deferred[$code_key]);
                 $this->append_woo_error($result, array(
                     'product_code' => $product_code,
                     'code' => 'digitalogic_product_sync_woocommerce_write_failed',
+					'failure_stage' => $failure_stage,
                     'retryable' => true,
                 ));
             }
@@ -6276,7 +6637,15 @@ class Digitalogic_Product_Sync_Receiver {
 					}
 				}
                 $result['pricing_warnings'] = array_values((array) ($written['warnings'] ?? array()));
+				$entries_by_code = array();
+				foreach ( $batch_entries as $entry ) {
+					$entries_by_code[ (string) $entry['product_code'] ] = $entry['delivery_entry'];
+				}
 				foreach ( (array) ( $written['commit_snapshots'] ?? array() ) as $snapshot ) {
+					$entry = $entries_by_code[ (string) ( $snapshot['product_code'] ?? '' ) ] ?? array();
+					$snapshot['event_id']       = (string) ( $entry['queued_event_id'] ?? '' );
+					$snapshot['change_type']    = 'updated';
+					$snapshot['changed_fields'] = $this->delivery_changed_fields( $entry, false );
 					$this->queue_materializer_product_committed( $snapshot );
 				}
                 foreach ($batch_entries as $entry) {
@@ -6376,6 +6745,9 @@ class Digitalogic_Product_Sync_Receiver {
 	 * @return bool
 	 */
 	private function delivery_price_projection_matches_timed_work( $woocommerce_id, $product ) {
+		if ( ! Digitalogic_Patris_Feed::instance()->source_sparse_markers_match( $woocommerce_id, $product ) ) {
+			return false;
+		}
 		if ( ! $this->delivery_stock_status_matches( $woocommerce_id, $product ) ) {
 			return false;
 		}
@@ -6469,13 +6841,34 @@ class Digitalogic_Product_Sync_Receiver {
 	 * @return bool
 	 */
 	private function delivery_stock_status_matches( $woocommerce_id, $product ) {
-		$stock = $product['total_stock'] ?? null;
-		$expected = is_numeric( $stock ) && (float) $stock > 0 ? 'instock' : 'outofstock';
-		$rows = array_values( array_map( 'strval', (array) get_post_meta( $woocommerce_id, '_stock_status', false ) ) );
-		$woo = wc_get_product( $woocommerce_id );
+		$hold = Digitalogic_Patris_Feed::instance()->source_stock_conflict( $woocommerce_id );
+		if ( is_wp_error( $hold ) ) {
+			return false;
+		}
+		$stock            = $product['total_stock'] ?? null;
+		$expected         = is_numeric( $stock ) && (float) $stock > 0 ? 'instock' : 'outofstock';
+		$rows             = array_values( array_map( 'strval', (array) get_post_meta( $woocommerce_id, '_stock_status', false ) ) );
+		$woo              = wc_get_product( $woocommerce_id );
+		$quantity         = null === $stock ? null : ( (float) $stock > 0 ? max( 1, (int) floor( (float) $stock ) ) : 0 );
+		$stock_rows       = array_values( (array) get_post_meta( $woocommerce_id, '_stock', false ) );
+		if ( null !== $hold ) {
+			if ( ! $woo instanceof WC_Product ) {
+				return false;
+			}
+			// The stock authority is temporarily Woo. Verify its real projection;
+			// source total_stock remains an independent factual metadata value.
+			$quantity = $woo->get_stock_quantity( 'edit' );
+			$expected = (string) $woo->get_stock_status( 'edit' );
+		}
+		$quantity_matches = null === $quantity
+			? array() === $stock_rows
+			: 1 === count( $stock_rows ) && is_numeric( $stock_rows[0] ) && (float) $quantity === (float) $stock_rows[0];
 
 		return array( $expected ) === $rows
 			&& $woo instanceof WC_Product
+			&& $quantity_matches
+			&& ( null !== $quantity ) === (bool) $woo->get_manage_stock( 'edit' )
+			&& ( null === $quantity ? null === $woo->get_stock_quantity( 'edit' ) : (float) $quantity === (float) $woo->get_stock_quantity( 'edit' ) )
 			&& $expected === (string) $woo->get_stock_status( 'edit' );
 	}
 
@@ -6561,6 +6954,7 @@ class Digitalogic_Product_Sync_Receiver {
     }
 
     private function mark_delivery_failure(&$delivery_entry, $code) {
+        unset($delivery_entry['last_failure_stage']);
         $attempts = max(0, (int) ($delivery_entry['attempts'] ?? 0));
         $delivery_entry['attempts'] = $attempts < PHP_INT_MAX ? $attempts + 1 : PHP_INT_MAX;
         $delivery_entry['last_error'] = (string) $code;
@@ -6630,11 +7024,11 @@ class Digitalogic_Product_Sync_Receiver {
         $deferred = is_array($source_state['deferred_products'] ?? null)
             ? $source_state['deferred_products']
             : array();
-        $fully_applied = empty($pending);
+        $fully_applied = empty($pending) && empty($deferred);
 
         return array(
             'fully_applied' => $fully_applied,
-            'retryable' => !$fully_applied,
+			'retryable' => false,
             'pending_products' => count($pending),
             'deferred_products' => count($deferred),
             'deferred_reconciliation' => $this->deferred_summary($deferred),
@@ -6646,7 +7040,7 @@ class Digitalogic_Product_Sync_Receiver {
         $delivery = $this->delivery_result_state($source_state);
         $receipt = array(
             'event_id' => (string) $source_state['last_event_id'],
-            'status' => $delivery['pending_products'] > 0 ? 'pending' : ($delivery['deferred_products'] > 0 ? 'deferred' : 'complete'),
+			'status' => ( $delivery['pending_products'] + $delivery['deferred_products'] ) > 0 ? 'pending' : 'complete',
             'pending_products' => (int) $delivery['pending_products'],
             'deferred_products' => (int) $delivery['deferred_products'],
             'deferred_missing' => (int) $delivery['deferred_reconciliation']['missing'],
@@ -6748,6 +7142,12 @@ class Digitalogic_Product_Sync_Receiver {
             return $this->error('digitalogic_product_sync_transaction_unavailable', 'The receiver could not start a storage transaction.', 503);
         }
 
+		// Treat the accepted timestamp as a storage invariant, not only an
+		// ingress-field assignment. Every atomic receiver-state write therefore
+		// preserves or backfills the greatest accepted timestamp carried by the
+		// durable source row and its bounded receipt history. This also upgrades
+		// legacy rows without making the read-only receipt endpoint mutate state.
+		$state      = $this->with_accepted_generated_at_high_waters( $state );
         $serialized = maybe_serialize($state);
         if (!is_string($serialized) || strlen($serialized) > self::MAX_STATE_BYTES) {
 			if ( $owns_transaction ) {
@@ -6832,6 +7232,51 @@ class Digitalogic_Product_Sync_Receiver {
         return $read_back;
     }
 
+	/**
+	 * Ensure every persisted source carries its exact durable accepted high-water.
+	 *
+	 * @param array $state Receiver state being committed.
+	 * @return array
+	 */
+	private function with_accepted_generated_at_high_waters( $state ) {
+		if ( ! is_array( $state ) || ! is_array( $state['sources'] ?? null ) ) {
+			return $state;
+		}
+		foreach ( $state['sources'] as &$source ) {
+			if ( ! is_array( $source ) ) {
+				continue;
+			}
+			$candidates = array(
+				$source['last_accepted_generated_at'] ?? null,
+				$source['generated_at'] ?? null,
+			);
+			foreach ( (array) ( $source['recent_events'] ?? array() ) as $event ) {
+				$candidates[] = is_array( $event ) ? ( $event['generated_at'] ?? null ) : null;
+			}
+			$high_water       = '';
+			$high_water_order = null;
+			foreach ( $candidates as $candidate ) {
+				if ( ! is_string( $candidate ) ) {
+					continue;
+				}
+				$order = $this->timestamp_order( $candidate );
+				if (
+					! is_wp_error( $order )
+					&& ( null === $high_water_order || $this->compare_timestamp_order( $order, $high_water_order ) > 0 )
+				) {
+					$high_water       = $candidate;
+					$high_water_order = $order;
+				}
+			}
+			if ( null !== $high_water_order ) {
+				$source['last_accepted_generated_at'] = $high_water;
+			}
+		}
+		unset( $source );
+
+		return $state;
+	}
+
     // phpcs:disable -- Preserve the established receiver formatting while the legacy file remains baseline-managed.
     private function replay_result($envelope, $existing) {
         $result = array_merge(array(
@@ -6893,7 +7338,7 @@ class Digitalogic_Product_Sync_Receiver {
         $complete_rounding      = array_key_exists('price_rounding_digits', $product)
             && null !== $product['price_rounding_digits']
             && $this->is_nonnegative_integer($product['price_rounding_digits'])
-            && (int) $this->number_to_storage($product['price_rounding_digits']) <= 9
+			&& (int) $this->number_to_storage( $product['price_rounding_digits'] ) <= ( isset( $product['price_rounding_policy'] ) ? 18 : 9 )
             && array_key_exists('price_rounding_mode', $product)
             && 'nearest_half_up' === $product['price_rounding_mode'];
         $usable_cny_fact        = array_key_exists('foreign_price', $product)
@@ -7039,6 +7484,13 @@ class Digitalogic_Product_Sync_Receiver {
 			return $this->field_error( $path . '.final_price', 'is required when all selected-price inputs are available' );
 		}
 
+		if ( isset( $product['price_rounding_policy'] ) && (
+			! isset( $product['price_rounding_digits'], $product['price_rounding_mode'], $evaluated['rounding_digits'] )
+			|| (int) $this->number_to_storage( $product['price_rounding_digits'] ) !== $evaluated['rounding_digits']
+			|| 'nearest_half_up' !== $product['price_rounding_mode']
+		) ) {
+			return $this->field_error( $path . '.price_rounding_digits', 'must match the effective magnitude tier and nearest_half_up mode' );
+		}
 		$actual = $this->number_to_storage( $product['final_price'] );
 		if ( ! is_int( $actual ) || $actual !== $evaluated['value'] ) {
 			$message = 'sale_price_direct' === $product['price_source_kind']
@@ -7066,8 +7518,8 @@ class Digitalogic_Product_Sync_Receiver {
 	 * Foreign CNY pricing adds exact item and weight-based freight costs, converts
 	 * them to IRT, applies markup once, then rounds once. Partner IRR pricing uses
 	 * the canonical zero-rate domestic route before markup and rounding. Direct
-	 * sale pricing only performs an exact IRR-to-IRT division and is deliberately
-	 * independent from freight, FX, markup, and rounding settings.
+	 * sale pricing performs exact IRR-to-IRT division and optional magnitude rounding,
+	 * independently from freight, FX and markup.
 	 *
 	 * @param array  $product Canonical product record.
 	 * @param string $path    Error path.

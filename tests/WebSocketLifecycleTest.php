@@ -108,6 +108,50 @@ final class WebSocketLifecycleTest extends TestCase {
         ), Digitalogic_Panel::get_redis_config());
     }
 
+	/** The daemon fences both the package identity and the write-path classes. */
+	public function test_persistent_runtime_watches_release_and_product_sync_files(): void {
+		$server = new Digitalogic_WebSocket_Server();
+		$paths  = $this->invoke_private( $server, 'runtime_release_paths' );
+
+		$this->assertContains( DIGITALOGIC_PLUGIN_DIR . 'digitalogic.php', $paths );
+		$this->assertContains( ( new ReflectionClass( Digitalogic_WebSocket_Server::class ) )->getFileName(), $paths );
+		$this->assertContains( ( new ReflectionClass( Digitalogic_Product_Sync_Receiver::class ) )->getFileName(), $paths );
+	}
+
+	/** A deployed file replacement must make the persistent runtime terminate. */
+	public function test_persistent_runtime_detects_a_replaced_release_file(): void {
+		$path = tempnam( sys_get_temp_dir(), 'digitalogic-ws-release-' );
+		$this->assertIsString( $path );
+		file_put_contents( $path, 'release-a' );
+
+		try {
+			$server = new Digitalogic_WebSocket_Server();
+			$this->write_private( $server, 'runtime_release_fingerprints', array( $path => hash_file( 'sha256', $path ) ) );
+			$this->write_private( $server, 'runtime_release_next_check_at', 0.0 );
+			$this->assertFalse( $this->invoke_private( $server, 'runtime_release_changed' ) );
+
+			file_put_contents( $path, 'release-b' );
+			$this->write_private( $server, 'runtime_release_next_check_at', 0.0 );
+			$this->assertTrue( $this->invoke_private( $server, 'runtime_release_changed' ) );
+		} finally {
+			@unlink( $path );
+		}
+	}
+
+	/** A missing watched file is an incomplete deployment, so writes stop. */
+	public function test_persistent_runtime_fails_closed_when_a_release_file_disappears(): void {
+		$path = tempnam( sys_get_temp_dir(), 'digitalogic-ws-release-' );
+		$this->assertIsString( $path );
+		file_put_contents( $path, 'release-a' );
+
+		$server = new Digitalogic_WebSocket_Server();
+		$this->write_private( $server, 'runtime_release_fingerprints', array( $path => hash_file( 'sha256', $path ) ) );
+		$this->write_private( $server, 'runtime_release_next_check_at', 0.0 );
+		unlink( $path );
+
+		$this->assertTrue( $this->invoke_private( $server, 'runtime_release_changed' ) );
+	}
+
     private function masked_command_frame($payload, $opcode = 1, $fin = true) {
         $mask = 'abcd';
         $length = strlen($payload);
@@ -471,6 +515,52 @@ final class WebSocketLifecycleTest extends TestCase {
 		$this->assertSame( array(), $replay['delivery_warnings'] );
 		$this->assertCount( 1, $GLOBALS['digitalogic_test_options']['digitalogic_panel_events'] );
 		$this->assertSame( $first['event']['id'], $GLOBALS['digitalogic_test_options']['digitalogic_panel_event_sequence'] );
+		$this->assertCount( 1, $this->redis->published );
+	}
+
+	/** A verified Patris commit emits one immutable value-free product event. */
+	public function test_patris_commit_event_is_sanitized_and_idempotent(): void {
+		$GLOBALS['digitalogic_test_posts'][14095] = array(
+			'post_type'   => 'product',
+			'post_status' => 'publish',
+			'post_parent' => 0,
+			'post_title'  => 'GL850',
+			'meta'        => array(),
+		);
+		// phpcs:ignore Generic.Formatting.MultipleStatementAlignment.NotSameWarning
+		$snapshot = array(
+			'product_id'      => 14095,
+			'product_code'    => '116038',
+			'event_id'        => 'sha256:' . str_repeat( '1', 64 ),
+			'source_revision' => 'sha256:' . str_repeat( '2', 64 ),
+			'change_type'     => 'updated',
+			'changed_fields'  => array( 'weight', 'cny', 'weight', 'not_allowed' ),
+			'foreign_price'   => 'must-not-leak',
+			'weight_grams'    => 'must-not-leak',
+		);
+		// phpcs:ignore Generic.Formatting.MultipleStatementAlignment.NotSameWarning
+		$panel = Digitalogic_Panel::instance();
+		$panel->record_committed_product( $snapshot );
+		$panel->record_committed_products_complete();
+		$panel->record_committed_product( $snapshot );
+		$panel->record_committed_products_complete();
+
+		$events = $GLOBALS['digitalogic_test_options']['digitalogic_panel_events'];
+		$this->assertCount( 1, $events );
+		$this->assertSame( 'product.updated', $events[0]['name'] );
+		$this->assertSame(
+			array(
+				'id'              => 14095,
+				'product_id'      => 14095,
+				'parent_id'       => 0,
+				'event_id'        => $snapshot['event_id'],
+				'product_code'    => '116038',
+				'changed_fields'  => array( 'cny', 'weight' ),
+				'source_revision' => $snapshot['source_revision'],
+			),
+			$events[0]['data']
+		);
+		$this->assertStringNotContainsString( 'must-not-leak', wp_json_encode( $events[0] ) );
 		$this->assertCount( 1, $this->redis->published );
 	}
 

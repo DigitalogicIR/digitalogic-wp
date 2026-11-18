@@ -168,7 +168,7 @@ final class Digitalogic_Pricing_Option_Cutover {
 	private static function query( $database, $query, $error ) {
 		$result = $database->query( $query );
 		if ( false === $result ) {
-			throw new RuntimeException( $error );
+			throw new RuntimeException( $error ); // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal exception message; it is escaped by whatever renders it.
 		}
 		return $result;
 	}

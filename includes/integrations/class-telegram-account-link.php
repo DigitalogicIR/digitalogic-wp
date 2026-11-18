@@ -714,7 +714,7 @@ final class Digitalogic_Telegram_Account_Link {
 		$message     = '';
 		$is_error    = false;
 
-		if ( 'POST' === strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) ) {
+		if ( 'POST' === strtoupper( (string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 			$nonce  = isset( $_POST['digitalogic_assistant_nonce'] )
 				? sanitize_text_field( wp_unslash( $_POST['digitalogic_assistant_nonce'] ) )
 				: '';
@@ -1284,7 +1284,7 @@ final class Digitalogic_Telegram_Account_Link {
 			return $user_result;
 		}
 
-		$address = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : 'unknown';
+		$address = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field(wp_unslash((string) $_SERVER['REMOTE_ADDR'])) : 'unknown';
 		return $this->hit_rate_bucket( 'address', $address, self::IP_RATE_LIMIT, self::RATE_WINDOW );
 	}
 

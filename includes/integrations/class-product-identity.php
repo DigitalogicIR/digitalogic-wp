@@ -7,10 +7,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+if ( ! class_exists( 'Digitalogic_Storefront_Icons', false ) ) {
+	require_once __DIR__ . '/class-digitalogic-storefront-icons.php';
+}
+
 final class Digitalogic_Product_Identity {
 
 	private const PRODUCT_CODE_LABEL        = 'کد کالا';
 	private const LEGACY_PRODUCT_CODE_LABEL = 'کد پاتریس';
+	private const PRICE_LABEL               = 'قیمت';
 
 	private static $instance = null;
 
@@ -37,8 +42,18 @@ final class Digitalogic_Product_Identity {
 		add_filter( 'woocommerce_get_item_data', array( $this, 'add_cart_item_patris_code' ), 10, 2 );
 		add_action( 'woocommerce_checkout_create_order_line_item', array( $this, 'add_order_item_patris_code' ), 10, 4 );
 		add_filter( 'woocommerce_structured_data_product', array( $this, 'add_product_schema_identity' ), 10, 2 );
+		add_filter( 'woocommerce_structured_data_product', array( $this, 'remove_invalid_unpriced_product_schema' ), 99, 2 );
 		add_filter( 'rank_math/snippet/rich_snippet_product_entity', array( $this, 'normalize_product_schema_attribute_names' ), 9, 2 );
-		add_filter( 'rank_math/snippet/rich_snippet_product_entity', array( $this, 'add_product_schema_identity' ), 10, 2 );
+		// Rank Math Pro adds variable-product hasVariant entries at its default priority.
+		add_filter( 'rank_math/snippet/rich_snippet_product_entity', array( $this, 'add_product_schema_identity' ), 90, 2 );
+		add_filter( 'rank_math/snippet/rich_snippet_product_entity', array( $this, 'remove_invalid_unpriced_product_schema' ), 99, 2 );
+		add_filter(
+			'rank_math/json_ld',
+			function ( $data ) {
+				return $this->sanitize_schema_node( $data );
+			},
+			1001
+		);
 		add_filter( 'rank_math/woocommerce/og_price', array( $this, 'suppress_unavailable_rank_math_price' ), 10, 1 );
 		add_filter( 'rank_math/opengraph/twitter/twitter_label1', array( $this, 'suppress_unavailable_rank_math_price' ), 10, 1 );
 		add_filter( 'rank_math/opengraph/twitter/twitter_data1', array( $this, 'suppress_unavailable_rank_math_price' ), 10, 1 );
@@ -81,8 +96,8 @@ final class Digitalogic_Product_Identity {
 		if ( ! is_array( $data ) || ! $variation instanceof WC_Product ) {
 			return $data;
 		}
-		$data['digitalogic_patris_name']  = sanitize_text_field( (string) $variation->get_meta( '_digitalogic_patris_name', true ) );
-		$data['digitalogic_patris_code']  = sanitize_text_field( (string) $variation->get_meta( Digitalogic_Product_Identifier_Resolver::PATRIS_CODE_META, true ) );
+		$data['digitalogic_product_name'] = sanitize_text_field( (string) $variation->get_meta( '_digitalogic_patris_name', true ) );
+		$data['digitalogic_product_code'] = sanitize_text_field( (string) $variation->get_meta( Digitalogic_Product_Identifier_Resolver::PATRIS_CODE_META, true ) );
 		$data['digitalogic_persian_name'] = sanitize_text_field( (string) $variation->get_meta( '_digitalogic_persian_name', true ) );
 
 		return $data;
@@ -119,12 +134,24 @@ final class Digitalogic_Product_Identity {
 			}
 		}
 
-		$item_data[] = array(
+		$code_row = array(
 			'key'     => self::PRODUCT_CODE_LABEL,
 			'value'   => $code,
-			'display' => '<span class="digitalogic-cart-patris-code" dir="ltr">' . esc_html( $code ) . '</span>',
+			'display' => '<span class="digitalogic-cart-product-code" dir="ltr">' . esc_html( $code ) . '</span>',
 		);
 
+		// Woodmart adds a separate SKU row before this filter.
+		$theme_sku_label = esc_html( __( 'SKU', 'woodmart' ) );
+		foreach ( $item_data as $index => $item ) {
+			$item_key   = $item['key'] ?? null;
+			$item_value = $item['value'] ?? null;
+			if ( $theme_sku_label === $item_key && $code === $item_value ) {
+				$item_data[ $index ] = $code_row;
+				return $item_data;
+			}
+		}
+
+		$item_data[] = $code_row;
 		return $item_data;
 	}
 
@@ -225,6 +252,15 @@ final class Digitalogic_Product_Identity {
 		} elseif ( isset( $entity['offers'] ) ) {
 			$entity['offers'] = $this->normalize_toman_offer( $entity['offers'] );
 		}
+		if ( isset( $entity['hasVariant'] ) && is_array( $entity['hasVariant'] ) ) {
+			foreach ( $entity['hasVariant'] as &$variant ) {
+				if ( is_array( $variant ) && isset( $variant['offers'] ) ) {
+					$variant['offers'] = $this->normalize_toman_offer( $variant['offers'] );
+				}
+			}
+			unset( $variant );
+		}
+		$entity = $this->sanitize_schema_node( $entity );
 
 		$code = trim( (string) $product->get_meta( Digitalogic_Product_Identifier_Resolver::PATRIS_CODE_META, true ) );
 		if ( '' === $code || (string) $product->get_sku() !== $code ) {
@@ -237,6 +273,85 @@ final class Digitalogic_Product_Identity {
 		}
 
 		return $entity;
+	}
+
+	/**
+	 * Omit an invalid Product entity when required evidence is missing.
+	 *
+	 * Google requires at least one of offers, review, or aggregateRating. Returning
+	 * an empty entity avoids publishing a known-invalid rich result for an unpriced
+	 * product. Merchant listings also require a real product image, so products with
+	 * no image stay as ordinary indexable pages until a verified photo is available.
+	 * Organization and WebPage schema remain intact in both cases.
+	 *
+	 * @param array      $entity Existing Product entity.
+	 * @param WC_Product $product Current product.
+	 * @return array
+	 */
+	public function remove_invalid_unpriced_product_schema( $entity, $product = null ) {
+		if ( ! is_array( $entity ) ) {
+			return $entity;
+		}
+		if ( ! $product instanceof WC_Product ) {
+			$product = $this->current_product();
+		}
+		$type = $entity['@type'] ?? '';
+		if ( is_array( $type ) ) {
+			$type = implode( ' ', $type );
+		}
+		$is_product = false !== stripos( (string) $type, 'Product' );
+		$has_signal = ! empty( $entity['offers'] ) || ! empty( $entity['review'] ) || ! empty( $entity['aggregateRating'] );
+		$has_image  = $this->schema_has_product_image( $entity );
+		$unpriced   = $product instanceof WC_Product
+			&& ( $this->is_canonical_unpriced( $product ) || '' === trim( (string) $product->get_price() ) || $this->is_zero_decimal( trim( (string) $product->get_price() ) ) );
+
+		return $is_product && ( ! $has_image || ( $unpriced && ! $has_signal ) ) ? array() : $entity;
+	}
+
+	/**
+	 * Confirm that a Product or one of its declared variants has a real image value.
+	 *
+	 * @param array $entity Product or ProductGroup schema entity.
+	 */
+	private function schema_has_product_image( array $entity ): bool {
+		if ( isset( $entity['image'] ) && $this->schema_image_value_is_nonempty( $entity['image'] ) ) {
+			return true;
+		}
+
+		foreach ( (array) ( $entity['hasVariant'] ?? array() ) as $variant ) {
+			if ( is_array( $variant ) && $this->schema_has_product_image( $variant ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Accept a non-empty image URL, list, or ImageObject without inventing a fallback.
+	 *
+	 * @param mixed $image Schema image value.
+	 */
+	private function schema_image_value_is_nonempty( $image ): bool {
+		if ( is_string( $image ) ) {
+			return '' !== trim( $image );
+		}
+		if ( ! is_array( $image ) ) {
+			return false;
+		}
+		if ( isset( $image['url'] ) && '' !== trim( (string) $image['url'] ) ) {
+			return true;
+		}
+		if ( isset( $image['contentUrl'] ) && '' !== trim( (string) $image['contentUrl'] ) ) {
+			return true;
+		}
+		foreach ( $image as $value ) {
+			if ( $this->schema_image_value_is_nonempty( $value ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -432,6 +547,52 @@ final class Digitalogic_Product_Identity {
 	}
 
 	/**
+	 * Remove empty/invalid optional fields and decode plain category text.
+	 *
+	 * @param mixed $node Schema node.
+	 * @return mixed
+	 */
+	private function sanitize_schema_node( $node ) {
+		if ( ! is_array( $node ) ) {
+			return $node;
+		}
+		foreach ( $node as $key => $value ) {
+			if ( is_array( $value ) ) {
+				$node[ $key ] = $this->sanitize_schema_node( $value );
+			}
+		}
+		if ( array_key_exists( 'image', $node ) && '' === trim( (string) $node['image'] ) ) {
+			unset( $node['image'] );
+		}
+		if ( isset( $node['category'] ) && is_string( $node['category'] ) ) {
+			$category = wp_strip_all_tags( $node['category'] );
+			for ( $pass = 0; $pass < 3; $pass++ ) {
+				$decoded = html_entity_decode( $category, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+				if ( $decoded === $category ) {
+					break;
+				}
+				$category = $decoded;
+			}
+			$node['category'] = trim( preg_replace( '/\s*>\s*/u', ' / ', $category ) );
+		}
+		if ( isset( $node['priceValidUntil'] ) && ! $this->is_valid_iso_date( $node['priceValidUntil'] ) ) {
+			unset( $node['priceValidUntil'] );
+		}
+
+		return $node;
+	}
+
+	/** Return true only for a real Gregorian YYYY-MM-DD calendar date. */
+	private function is_valid_iso_date( $value ) {
+		$value = trim( (string) $value );
+		if ( ! preg_match( '/^(\d{4})-(\d{2})-(\d{2})$/', $value, $matches ) ) {
+			return false;
+		}
+
+		return checkdate( (int) $matches[2], (int) $matches[3], (int) $matches[1] );
+	}
+
+	/**
 	 * Multiply one nonnegative canonical decimal by ten without float drift.
 	 *
 	 * @param mixed $value Decimal value.
@@ -525,14 +686,17 @@ final class Digitalogic_Product_Identity {
 			'digitalogic-product-identity',
 			'digitalogicProductIdentity',
 			array(
-				'singleProductPatrisName'            => $patris_name,
-				'singleProductPatrisCode'            => $patris_code,
+				'singleProductName'                  => $patris_name,
+				'singleProductCode'                  => $patris_code,
 				'singleProductIsVariable'            => $is_variable || ! empty( $child_codes ),
 				'singleProductChildCodes'            => $child_codes,
 				'singleProductLegacyChildReferences' => ! $is_variable && ! empty( $child_codes ),
 				'codeLabel'                          => self::PRODUCT_CODE_LABEL,
-				'selectModelLabel'                   => 'مدل رو انتخاب کن تا کد دقیقش بیاد',
-				'legacyChildNote'                    => 'این کدها فعلاً مرجع مدل‌ها هستن؛ برای انتخاب کد دقیق با پشتیبانی هماهنگ کن.',
+				'priceLabel'                         => self::PRICE_LABEL,
+				'selectModelLabel'                   => 'مدل را انتخاب کنید',
+				'unavailableLabel'                   => 'ناموجود',
+				'legacyChildNote'                    => 'این کدها مرجع مدل‌های ثبت‌شده هستند.',
+				'barcodeIconPath'                    => Digitalogic_Storefront_Icons::barcode_path(),
 			)
 		);
 	}
@@ -574,22 +738,39 @@ final class Digitalogic_Product_Identity {
 		$output  = '<div class="digitalogic-product-identity" data-digitalogic-product-identity="' . esc_attr( $context ) . '">';
 
 		if ( '' !== $patris_name ) {
-			$output .= '<div class="digitalogic-patris-name" dir="ltr" lang="en">' . esc_html( $patris_name ) . '</div>';
+			$output .= '<div class="digitalogic-product-name" dir="ltr" lang="en">' . esc_html( $patris_name ) . '</div>';
 		}
 
 		if ( '' !== $patris_code ) {
-			$output .= '<div class="digitalogic-patris-code"><span>' . esc_html( self::PRODUCT_CODE_LABEL ) . '</span><code dir="ltr">' . esc_html( $patris_code ) . '</code></div>';
+			$output .= '<div class="digitalogic-product-code"><span>' . esc_html( self::PRODUCT_CODE_LABEL ) . '</span><code dir="ltr">' . esc_html( $patris_code ) . '</code></div>';
 		} elseif ( ! empty( $child_codes ) ) {
-			$output .= '<div class="digitalogic-patris-code-list"><span>کدهای ثبت‌شده برای مدل‌ها</span><div>';
+			$output .= '<div class="digitalogic-product-code-list"><span class="digitalogic-product-code-list__label">مدل‌های قابل انتخاب</span><ul class="digitalogic-product-code-grid" role="list">';
 			foreach ( $child_codes as $child ) {
-				$output .= '<span class="digitalogic-patris-code-item"><i>' . esc_html( $child['name'] ) . '</i><code dir="ltr">' . esc_html( $child['code'] ) . '</code></span>';
+				$available  = ! array_key_exists( 'available', $child ) || (bool) $child['available'];
+				$tag        = $is_variable ? 'button' : 'span';
+				$attrs      = $is_variable ? ' type="button" data-product-code="' . esc_attr( $child['code'] ) . '" aria-pressed="false"' : '';
+				$attrs     .= $is_variable && ! $available ? ' disabled aria-disabled="true"' : '';
+				$item_class = 'digitalogic-product-code-item' . ( $available ? '' : ' is-unavailable' );
+				$output    .= '<li class="' . esc_attr( $item_class ) . '" data-product-code="' . esc_attr( $child['code'] ) . '">';
+				$output    .= '<' . $tag . ' class="digitalogic-product-code-item__select"' . $attrs . '>';
+				$output    .= '<span class="digitalogic-product-code-item__icon" aria-hidden="true">' . Digitalogic_Storefront_Icons::barcode_svg() . '</span>';
+				$output    .= '<span class="digitalogic-product-code-item__body"><span class="digitalogic-product-code-item__model" dir="auto">' . esc_html( $child['name'] ) . '</span>';
+				$output    .= '<span class="digitalogic-product-code-item__code"><span>کد کالا</span><code dir="ltr">' . esc_html( $child['code'] ) . '</code></span>';
+				$price_html = $available && isset( $child['price_html'] ) ? trim( (string) $child['price_html'] ) : '';
+				if ( '' !== $price_html ) {
+					$output .= '<span class="digitalogic-product-code-item__price"><span>' . esc_html( self::PRICE_LABEL ) . '</span><span class="digitalogic-product-code-item__price-value">' . wp_kses_post( $price_html ) . '</span></span>';
+				}
+				$output .= $available ? '' : '<span class="digitalogic-product-code-item__availability">ناموجود</span>';
+				$output .= '</span></' . $tag . '>';
+				$output .= '<button type="button" class="digitalogic-product-code-item__copy" data-copy-product-code="' . esc_attr( $child['code'] ) . '" aria-label="کپی کد کالای ' . esc_attr( $child['name'] ) . '" title="کپی کد کالا">';
+				$output .= '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button></li>';
 			}
-			$output .= '</div></div>';
+			$output .= '</ul></div>';
 			if ( ! $is_variable ) {
-				$output .= '<p class="digitalogic-patris-code-note">این کدها فعلاً مرجع مدل‌ها هستن؛ برای انتخاب کد دقیق با پشتیبانی هماهنگ کن.</p>';
+				$output .= '<p class="digitalogic-product-code-note">این کدها مرجع مدل‌های ثبت‌شده هستند.</p>';
 			}
 		} elseif ( $is_variable ) {
-			$output .= '<div class="digitalogic-patris-code is-placeholder"><span>' . esc_html( self::PRODUCT_CODE_LABEL ) . '</span><em>مدل رو انتخاب کن</em></div>';
+			$output .= '<div class="digitalogic-product-code is-placeholder"><span>' . esc_html( self::PRODUCT_CODE_LABEL ) . '</span><em>مدل را انتخاب کنید</em></div>';
 		}
 
 		return $output . '</div>';
@@ -661,9 +842,35 @@ final class Digitalogic_Product_Identity {
 			if ( '' === $name ) {
 				$name = trim( (string) $variation->get_name() );
 			}
+			$available  = $variation->is_in_stock();
+			$price_raw  = $available ? trim( (string) $variation->get_price() ) : '';
+			$price_html = $available && is_numeric( $price_raw ) && (float) $price_raw > 0
+				? trim( (string) $variation->get_price_html() )
+				: '';
+			if (
+				'' === $price_html
+				&& '' !== $price_raw
+				&& function_exists( 'wc_get_price_to_display' )
+				&& function_exists( 'wc_price' )
+			) {
+				$display_price = wc_get_price_to_display(
+					$variation,
+					array( 'price' => (float) $price_raw )
+				);
+				if ( is_numeric( $display_price ) && (float) $display_price > 0 ) {
+					$price_html = wc_price( $display_price ) . $variation->get_price_suffix();
+				}
+			}
+			$price_text = sanitize_text_field(
+				trim( html_entity_decode( wp_strip_all_tags( $price_html ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) )
+			);
+
 			$identities[ $code ] = array(
-				'name' => $name,
-				'code' => $code,
+				'name'       => $name,
+				'code'       => $code,
+				'available'  => $available,
+				'price_html' => wp_kses_post( $price_html ),
+				'price_text' => $price_text,
 			);
 		}
 

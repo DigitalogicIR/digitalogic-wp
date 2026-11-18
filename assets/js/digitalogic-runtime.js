@@ -154,6 +154,10 @@
     var options = mergeConfig(config);
     if (typeof self === 'undefined' || !self.addEventListener) return;
 
+    function isLoginPage(url) {
+      return /^\/(?:login\/?|wp-login\.php)$/.test(new URL(url).pathname);
+    }
+
     self.addEventListener('install', function(event) {
       event.waitUntil(caches.open(options.cacheName).then(function(cache) {
         return options.cacheAssets && options.cacheAssets.length ? cache.addAll(options.cacheAssets) : Promise.resolve();
@@ -170,6 +174,13 @@
           return caches.delete(key);
         }));
       }).then(function() {
+        return caches.open(options.cacheName).then(async function(cache) {
+          var entries = await cache.keys();
+          await Promise.all(entries.filter(function(request) {
+            return isLoginPage(request.url);
+          }).map(function(request) { return cache.delete(request); }));
+        });
+      }).then(function() {
         return self.clients && self.clients.claim ? self.clients.claim() : null;
       }));
     });
@@ -177,6 +188,7 @@
     self.addEventListener('fetch', function(event) {
       var request = event.request;
       if (!request || request.method !== 'GET') return;
+      if (isLoginPage(request.url)) return;
       var url = normalizeUrl(request.url);
       if (!/digitalogic\.ir|automation\.digitalogic\.ir|meet\.digitalogic\.ir/i.test(url)) return;
 

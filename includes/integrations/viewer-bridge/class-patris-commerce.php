@@ -323,9 +323,9 @@ final class Patris_Commerce {
 
 	public static function prime_ingest_runtime(): void {
 		$request_method = strtoupper(
-			(string) ( $_SERVER['REQUEST_METHOD'] ?? '' )
+			(string) ( $_SERVER['REQUEST_METHOD'] ?? '' ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		);
-		$request_uri    = (string) ( $_SERVER['REQUEST_URI'] ?? '' );
+		$request_uri    = (string) ( $_SERVER['REQUEST_URI'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		$request_path   = (string) wp_parse_url( $request_uri, PHP_URL_PATH );
 		if (
 			$request_method !== 'POST'
@@ -336,10 +336,10 @@ final class Patris_Commerce {
 		) {
 			return;
 		}
-		$content_length = (int) ( $_SERVER['CONTENT_LENGTH'] ?? 0 );
+		$content_length = (int) ( $_SERVER['CONTENT_LENGTH'] ?? 0 ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Server value is only parsed or compared and is never stored or output.
 		$expected       = (string) get_option( self::SECRET_OPTION, '' );
 		$provided       = (string) (
-			$_SERVER['HTTP_X_PATRIS_PRODUCT_SYNC_SECRET'] ?? ''
+			$_SERVER['HTTP_X_PATRIS_PRODUCT_SYNC_SECRET'] ?? '' // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Secret header is compared in constant time and is never stored or output.
 		);
 		if (
 			$content_length < 1

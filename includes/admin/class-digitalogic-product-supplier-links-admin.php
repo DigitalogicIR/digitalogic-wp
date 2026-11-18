@@ -84,6 +84,9 @@ final class Digitalogic_Product_Supplier_Links_Admin {
 		}
 
 		wp_nonce_field( 'digitalogic_save_supplier_links', 'digitalogic_supplier_links_nonce' );
+		if ( class_exists( 'Digitalogic_Product_Research' ) ) {
+			Digitalogic_Product_Research::render( $post->ID );
+		}
 		?>
 		<div
 			id="digitalogic-private-supplier-links"
@@ -267,6 +270,7 @@ final class Digitalogic_Product_Supplier_Links_Admin {
 			$link,
 			array(
 				'id'           => '',
+				'relationship' => 'supplier',
 				'marketplace'  => 'other',
 				'site_name'    => '',
 				'url'          => '',
@@ -287,6 +291,14 @@ final class Digitalogic_Product_Supplier_Links_Admin {
 			<input type="hidden" name="<?php echo esc_attr( $prefix . '[id]' ); ?>" value="<?php echo esc_attr( $link['id'] ); ?>">
 			<input type="hidden" name="<?php echo esc_attr( $prefix . '[created_at]' ); ?>" value="<?php echo esc_attr( $link['created_at'] ); ?>">
 			<div class="digitalogic-supplier-link__grid">
+				<label>
+					<span>نوع ارتباط</span>
+					<select name="<?php echo esc_attr( $prefix . '[relationship]' ); ?>">
+						<?php foreach ( $this->relationship_options() as $value => $label ) : ?>
+							<option value="<?php echo esc_attr( $value ); ?>"<?php echo $value === $link['relationship'] ? ' selected' : ''; ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
 				<label>
 					<span>بازار یا پلتفرم</span>
 					<select name="<?php echo esc_attr( $prefix . '[marketplace]' ); ?>">
@@ -380,6 +392,15 @@ final class Digitalogic_Product_Supplier_Links_Admin {
 			'aliexpress'     => 'علی‌اکسپرس',
 			'iranian_market' => 'فروشگاه ایرانی',
 			'other'          => 'سایر',
+		);
+	}
+
+	/** Relationship labels kept private in the product editor. */
+	private function relationship_options() {
+		return array(
+			'supplier'   => 'منبع / تأمین‌کننده',
+			'partner'    => 'همکار',
+			'competitor' => 'رقیب',
 		);
 	}
 
