@@ -32,7 +32,6 @@ final class Digitalogic_Admin_Suite {
 		require_once $directory . 'class-health.php';
 
 		\DigitalogicAdmin\Webhooks::register();
-		\DigitalogicAdmin\Health::register();
 		if ( \DigitalogicAdmin\Brand::ui_enabled() ) {
 			\DigitalogicAdmin\Branding::register();
 			\DigitalogicAdmin\Digits_Login::register();
