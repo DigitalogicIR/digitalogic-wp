@@ -28,3 +28,7 @@
 - Use the shared Digitalogic password field and reveal button throughout the login and recovery pages, including Digits steps loaded after the page opens. Preserve each provider input and its validation rules. Share checks that enforce the same rule and keep sign-in requirements separate from new-password policy.
 
 - Keep the current Digits challenge, Remember me choice and return destination through a retry or refresh in the same tab. Restore the OTP step without sending a code again or storing the entered OTP, password or CAPTCHA response. If a verification response is interrupted, confirm completion against the existing authenticated WordPress session and the same attempt before advising the user. Keep genuine denials intact and guide the user from the current form.
+
+## Digitalogic interface design
+
+Before implementing or reviewing any user-facing interface, read and follow [Contextual UI and no narration](docs/CONTEXTUAL-UI.md). This standing ecosystem contract covers state-driven rendering, progressive disclosure, semantic actions, conditional affordances and stable layout. Apply it across related controls, preserving existing safety and authorization requirements.

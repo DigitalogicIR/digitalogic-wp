@@ -121,7 +121,7 @@
 				var sku = element('span', 'digitalogic-model-sku');
 				var skuIcon = element('span', 'digitalogic-model-sku__icon');
 				skuIcon.setAttribute('aria-hidden', 'true');
-				skuIcon.append(svgIcon('M5 4h11l3 3v13H5zM15 4v4h4M8 12h8M8 16h5', ''));
+				skuIcon.append(svgIcon(data.barcodeIconPath || '', 'digitalogic-barcode-icon'));
 				var skuLabel = element('span', 'digitalogic-model-sku__label', data.skuLabel + ':');
 				var code = element('bdi', '', productCode);
 				code.dir = 'ltr';

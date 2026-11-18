@@ -7,6 +7,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+if ( ! class_exists( 'Digitalogic_Storefront_Icons', false ) ) {
+	require_once __DIR__ . '/class-digitalogic-storefront-icons.php';
+}
+
 final class Digitalogic_Product_Identity {
 
 	private const PRODUCT_CODE_LABEL        = 'کد کالا';
@@ -680,6 +684,7 @@ final class Digitalogic_Product_Identity {
 				'selectModelLabel'                   => 'مدل را انتخاب کنید',
 				'unavailableLabel'                   => 'ناموجود',
 				'legacyChildNote'                    => 'این کدها مرجع مدل‌های ثبت‌شده هستند.',
+				'barcodeIconPath'                    => Digitalogic_Storefront_Icons::barcode_path(),
 			)
 		);
 	}
@@ -736,7 +741,7 @@ final class Digitalogic_Product_Identity {
 				$item_class = 'digitalogic-product-code-item' . ( $available ? '' : ' is-unavailable' );
 				$output    .= '<li class="' . esc_attr( $item_class ) . '" data-product-code="' . esc_attr( $child['code'] ) . '">';
 				$output    .= '<' . $tag . ' class="digitalogic-product-code-item__select"' . $attrs . '>';
-				$output    .= '<span class="digitalogic-product-code-item__icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6M9 12h4"/></svg></span>';
+				$output    .= '<span class="digitalogic-product-code-item__icon" aria-hidden="true">' . Digitalogic_Storefront_Icons::barcode_svg() . '</span>';
 				$output    .= '<span class="digitalogic-product-code-item__body"><span class="digitalogic-product-code-item__model" dir="auto">' . esc_html( $child['name'] ) . '</span>';
 				$output    .= '<span class="digitalogic-product-code-item__code"><span>کد کالا</span><code dir="ltr">' . esc_html( $child['code'] ) . '</code></span>';
 				$price_html = $available && isset( $child['price_html'] ) ? trim( (string) $child['price_html'] ) : '';

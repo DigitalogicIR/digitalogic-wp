@@ -79,6 +79,7 @@ jobs:
         node --check assets/js/panel-app.js
         node --check assets/js/desktop-app.js
         node --check assets/js/currency-postboxes.js
+        node --check assets/js/admin-order-workspace.js
         node --check assets/js/branding/admin-branding.js
         node --check assets/js/call-verification.js
         node --check assets/js/sidebar-login.js
@@ -126,13 +127,14 @@ jobs:
         fi
         "$visudo_bin" -cf "$sudoers_candidate"
 
-    - name: Check passwordless login and Woodmart search in Chromium
+    - name: Check passwordless login, order workspace, and Woodmart search in Chromium
       run: |
         browser_tools="$(mktemp -d)"
         trap 'rm -rf "$browser_tools"' EXIT
         npm install --prefix "$browser_tools" --no-audit --no-fund playwright-core@1.65.0 jquery@3.7.1
         "$browser_tools/node_modules/.bin/playwright-core" install --with-deps chromium
         NODE_PATH="$browser_tools/node_modules" node tests/passwordless-action.browser.cjs
+        NODE_PATH="$browser_tools/node_modules" node tests/admin-order-workspace.browser.cjs
         NODE_PATH="$browser_tools/node_modules" node --test tests/woodmart-search.browser.cjs
 
     - name: Reject non-synthetic mobile fixtures

@@ -14,8 +14,13 @@
 
 defined( 'ABSPATH' ) || exit;
 
+if ( ! class_exists( 'Digitalogic_Storefront_Icons', false ) ) {
+	require_once __DIR__ . '/class-digitalogic-storefront-icons.php';
+}
+
 final class Digitalogic_Product_Experience {
 	const VERSION = '2.3.2';
+	const SOURCE_IDENTITY_REVIEW_META = '_digitalogic_source_identity_review_state';
 
 	public static function init() {
 		add_filter( 'body_class', array( __CLASS__, 'body_classes' ) );
@@ -106,6 +111,10 @@ final class Digitalogic_Product_Experience {
 	}
 
 	private static function icon( $name ) {
+		if ( 'barcode' === $name ) {
+			return Digitalogic_Storefront_Icons::barcode_svg( 'dgl-icon' );
+		}
+
 		$paths = array(
 			'chip'    => '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
 			'check'   => '<path d="M20 11.1V12a8 8 0 1 1-4.7-7.3"/><path d="m20 4-9 9-3-3"/>',
@@ -231,6 +240,18 @@ final class Digitalogic_Product_Experience {
 		return $rows;
 	}
 
+	/**
+	 * Source aliases can contain catalog shorthand that looks like an electrical
+	 * rating. Keep the aliases available to import and search, but omit them from
+	 * storefront identity widgets while the product is marked pending review.
+	 *
+	 * @param WC_Product $product Current product.
+	 * @return bool
+	 */
+	private static function source_identity_is_pending( WC_Product $product ): bool {
+		return 'pending' === get_post_meta( $product->get_id(), self::SOURCE_IDENTITY_REVIEW_META, true );
+	}
+
 	public static function shortcode_highlights() {
 		$product = self::product();
 		if ( ! $product ) {
@@ -238,7 +259,7 @@ final class Digitalogic_Product_Experience {
 		}
 
 		$items = array();
-		$model = $product->is_type( 'variable' )
+		$model = $product->is_type( 'variable' ) || self::source_identity_is_pending( $product )
 			? ''
 			: trim( (string) get_post_meta( $product->get_id(), '_digitalogic_model', true ) );
 
@@ -256,7 +277,7 @@ final class Digitalogic_Product_Experience {
 					break;
 				}
 			}
-			$items[] = array( 'copy', 'کد کالا', '', 'product_code', true, 'product-code' );
+			$items[] = array( 'barcode', 'کد کالا', '', 'product_code', true, 'product-code' );
 		}
 
 		foreach ( $attribute_rows as $row ) {
@@ -377,16 +398,17 @@ final class Digitalogic_Product_Experience {
 			return '';
 		}
 
-		$identity        = array();
-		$technical       = array();
-		$physical        = array();
-		$sku             = trim( (string) $product->get_sku() );
-		$model           = $product->is_type( 'variable' )
+		$identity         = array();
+		$technical        = array();
+		$physical         = array();
+		$sku              = trim( (string) $product->get_sku() );
+		$identity_pending = self::source_identity_is_pending( $product );
+		$model            = $product->is_type( 'variable' ) || $identity_pending
 			? ''
 			: trim( (string) get_post_meta( $product->get_id(), '_digitalogic_model', true ) );
-		$technical_name  = trim( (string) get_post_meta( $product->get_id(), '_digitalogic_patris_name', true ) );
-		$part_number     = trim( (string) get_post_meta( $product->get_id(), '_digitalogic_part_number', true ) );
-		$normalized_name = preg_replace( '/-{2,}/', '-', $technical_name );
+		$technical_name   = $identity_pending ? '' : trim( (string) get_post_meta( $product->get_id(), '_digitalogic_patris_name', true ) );
+		$part_number      = $identity_pending ? '' : trim( (string) get_post_meta( $product->get_id(), '_digitalogic_part_number', true ) );
+		$normalized_name  = preg_replace( '/-{2,}/', '-', $technical_name );
 		if (
 			'' !== $part_number
 			&& is_string( $normalized_name )

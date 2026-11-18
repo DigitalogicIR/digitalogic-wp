@@ -32,7 +32,8 @@ class Digitalogic_Admin {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_admin_bar_styles'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_bar_styles'));
-        add_action('admin_footer', array($this, 'remove_unwanted_admin_notices'), 1000);
+        require_once __DIR__ . '/class-digitalogic-admin-workspace.php';
+        Digitalogic_Admin_Workspace::register();
         add_action('wp_ajax_digitalogic_get_products', array($this, 'ajax_get_products'));
         add_action('wp_ajax_digitalogic_update_product', array($this, 'ajax_update_product'));
 		add_action( 'wp_ajax_digitalogic_update_product_code', array( $this, 'ajax_update_product_code' ) );
@@ -46,30 +47,6 @@ class Digitalogic_Admin {
         add_action('wp_ajax_digitalogic_update_patris_settings', array($this, 'ajax_update_patris_settings'));
     }
 
-    /**
-     * Remove noisy third-party notices that are not actionable for site editors.
-     */
-    public function remove_unwanted_admin_notices() {
-        if (!current_user_can('manage_options')) {
-            return;
-        }
-        ?>
-        <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('.notice, .updated, .error, .woocommerce-message, .woocommerce-warning').forEach(function(notice) {
-                var text = notice.textContent || '';
-                if (
-                    text.indexOf('Zero Spam Enhanced Protection') !== -1 &&
-                    text.indexOf('missing a valid license key') !== -1
-                ) {
-                    notice.remove();
-                }
-            });
-        });
-        </script>
-        <?php
-    }
-    
     /**
      * Add admin menu
      */

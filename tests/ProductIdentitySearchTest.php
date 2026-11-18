@@ -90,6 +90,7 @@ final class ProductIdentitySearchTest extends TestCase {
 		$this->assertSame( 'ATmega <Core>', $config['singleProductName'] );
 		$this->assertSame( 'PAT-12', $config['singleProductCode'] );
 		$this->assertSame( 'کد کالا', $config['codeLabel'] );
+		$this->assertSame( Digitalogic_Storefront_Icons::barcode_path(), $config['barcodeIconPath'] );
 		$this->assertFalse( $config['singleProductIsVariable'] );
 		$this->assertFalse( $config['singleProductLegacyChildReferences'] );
 		$this->assertSame( array(), $config['singleProductChildCodes'] );
@@ -209,6 +210,7 @@ final class ProductIdentitySearchTest extends TestCase {
 		$this->assertStringContainsString( '<ul class="digitalogic-product-code-grid" role="list">', $html );
 		$this->assertStringContainsString( 'class="digitalogic-product-code-item__select"', $html );
 		$this->assertStringContainsString( 'data-copy-product-code="CHILD-21"', $html );
+		$this->assertStringContainsString( Digitalogic_Storefront_Icons::barcode_svg(), $html );
 		$this->assertStringNotContainsString( 'role="listitem"', $html );
 		$this->assertStringNotContainsString( '<i>', $html );
 		$this->assertStringNotContainsString( 'DRAFT-22', $html );
@@ -220,6 +222,7 @@ final class ProductIdentitySearchTest extends TestCase {
 		$config = $GLOBALS['digitalogic_test_localized_scripts']['digitalogic-product-identity']['digitalogicProductIdentity'];
 		$this->assertTrue( $config['singleProductLegacyChildReferences'] );
 		$this->assertSame( '125,000 تومان', $config['singleProductChildCodes'][0]['price_text'] );
+		$this->assertSame( Digitalogic_Storefront_Icons::barcode_path(), $config['barcodeIconPath'] );
 		$this->assertStringContainsString( 'مرجع مدل‌های ثبت‌شده', $config['legacyChildNote'] );
 	}
 

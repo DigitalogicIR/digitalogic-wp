@@ -6302,7 +6302,7 @@
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();
         document.querySelectorAll('[data-dg-toast-on-load]').forEach(enhanceToast);
-        observeInlineMessages();
+        if (!document.body.classList.contains('wp-admin')) { observeInlineMessages(); }
         if (!document.body.classList.contains('login')) { enableRipples(); }
     });
 })();
