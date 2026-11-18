@@ -9,6 +9,47 @@ require_once dirname(__DIR__) . '/includes/integrations/class-voice-notification
 require_once __DIR__ . '/fixtures/ZeroSpamLogin.php';
 
 final class CallVerificationTest extends TestCase {
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+    #[\PHPUnit\Framework\Attributes\PreserveGlobalState(false)]
+    public function test_internal_callback_principals_require_a_unique_extension_assignment(): void {
+        define('DIGITALOGIC_LAN_PBX_EXTENSIONS', ['first' => '101', 'second' => '102', 'third' => 102]);
+        $normalize = new ReflectionMethod(Digitalogic_Call_Verification::class, 'normalize_pbx_caller');
+        $this->assertSame('pbx:101', $normalize->invoke(null, 'pbx:101'));
+        $this->assertSame('', $normalize->invoke(null, 'pbx:102'));
+        $this->assertSame('', $normalize->invoke(null, 'pbx:103'));
+        $this->assertSame('', $normalize->invoke(null, '101'));
+        $this->assertSame('+989123456789', $normalize->invoke(null, '09123456789'));
+    }
+
+    public function test_public_dial_uses_the_configured_landline_for_the_link_and_display(): void {
+        $dial = new ReflectionMethod(Digitalogic_Call_Verification::class, 'public_dial');
+        $configured = static fn() => '+982155550100';
+        add_filter('digitalogic_call_verification_public_number', $configured);
+        try {
+            $this->assertSame(['tel' => '+982155550100', 'display' => '021-55550100'], $dial->invoke(null, 'IR'));
+            $this->assertSame(['tel' => '+982155550100', 'display' => '+98 21-55550100'], $dial->invoke(null, 'DE'));
+            $this->assertSame($dial->invoke(null, 'DE'), $dial->invoke(null));
+        } finally {
+            remove_filter('digitalogic_call_verification_public_number', $configured);
+        }
+    }
+
+    public function test_request_country_prefers_the_verified_cdn_value(): void {
+        $server = $_SERVER;
+        try {
+            $_SERVER['REMOTE_ADDR'] = '10.0.0.10';
+            $_SERVER['HTTP_CF_IPCOUNTRY'] = 'IR';
+            $_SERVER['DIGITALOGIC_CDN_COUNTRY'] = 'DE';
+            $this->assertSame('DE', Digitalogic_Call_Verification::request_country());
+            foreach (['XX', 'T1', ''] as $unknown) {
+                $_SERVER['DIGITALOGIC_CDN_COUNTRY'] = $unknown;
+                $this->assertNull(Digitalogic_Call_Verification::request_country());
+            }
+        } finally {
+            $_SERVER = $server;
+        }
+    }
+
     public function test_public_phone_normalizer_accepts_ir_mobile_and_full_landline_but_not_local_ani(): void {
         $this->assertSame('+989123456789', Digitalogic_PBX_Phone::normalize('09123456789'));
         $this->assertSame('+989123456789', Digitalogic_PBX_Phone::normalize('۹۸۹۱۲۳۴۵۶۷۸۹'));
@@ -884,7 +925,7 @@ final class CallVerificationTest extends TestCase {
         $this->assertStringContainsString('MAX_CONTACTS_PER_KIND = 10', $source);
 		$this->assertStringNotContainsString("'digits_phone_no','billing_phone'", $source);
 		$this->assertStringContainsString("meta_key IN ('digits_phone','digits_phone_no')", $source);
-		$this->assertStringContainsString( 'wp_set_auth_cookie( $user->ID, false, is_ssl() )', $source );
+		$this->assertStringContainsString( "wp_set_auth_cookie( \$user->ID, true === \$request->get_param( 'rememberme' ), is_ssl() )", $source );
 		$this->assertStringContainsString("'digitalogic_call_rate' === \$reservation->get_error_code()", $source);
 		$challengeUpdate = strpos( $source, '$updated = $wpdb->query' );
 		$challengeWriteError = strpos( $source, 'if ( false === $updated )', $challengeUpdate );
@@ -974,10 +1015,10 @@ final class CallVerificationTest extends TestCase {
 		$this->assertStringContainsString( 'data-digitalogic-sidebar-call-widget hidden', $source );
 		$this->assertStringContainsString( 'data-purpose="login"', $source );
 		$this->assertStringContainsString( 'aria-expanded="false"', $source );
-		$this->assertStringContainsString( 'aria-describedby="<?php echo esc_attr( $phone_help_id ); ?>"', $source );
+		$this->assertStringContainsString( 'aria-describedby="digitalogic-sidebar-call-phone-help"', $source );
 		$this->assertStringContainsString( 'Place the call from the same phone number you entered so caller ID can confirm ownership.', $source );
 		$this->assertStringContainsString( 'data-call-dial', $source );
-		$this->assertStringContainsString( 'When the caller-ID shortcut says «دوست عزیزم»', $source );
+		$this->assertStringContainsString( 'When the caller-ID shortcut says «کاربر گرامی»', $source );
 		$this->assertStringNotContainsString( 'data-call-ivr', $source );
 		$this->assertStringNotContainsString( 'self::IVR_OPTION', $source );
 		$this->assertStringNotContainsString( 'DIGITALOGIC_PBX_VERIFY_SECRET', $localized_source );

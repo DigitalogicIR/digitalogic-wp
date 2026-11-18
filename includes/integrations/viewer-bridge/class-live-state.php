@@ -1598,6 +1598,7 @@ final class Live_State {
 			'id'             => self::order_id( $order->get_id() ),
 			'number'         => sanitize_text_field( (string) $order->get_order_number() ),
 			'status'         => $status,
+			'statusLabel'    => \Digitalogic_Order_Fulfillment::label( $order ),
 			'createdAt'      => $created ? $created->date( 'c' ) : null,
 			'modifiedAt'     => $modified ? $modified->date( 'c' ) : null,
 			'totalLabel'     => self::money_label( (string) $order->get_total(), $order->get_currency() ),
@@ -2358,17 +2359,19 @@ final class Live_State {
 	 * @return string[]
 	 */
 	public static function mutable_order_statuses(): array {
-		return array( 'pending', 'processing', 'on-hold', 'completed' );
+		return array( 'pending', 'review', 'processing', 'shipped', 'on-hold', 'completed' );
 	}
 
 	/**
 	 * @return string[]
 	 */
-	public static function allowed_order_transitions( string $status ): array {
+	public static function allowed_order_transitions( string $status, bool $pickup = false ): array {
 		$map = array(
-			'pending'    => array( 'processing', 'on-hold' ),
-			'processing' => array( 'completed', 'on-hold' ),
-			'on-hold'    => array( 'processing' ),
+			'pending'    => array( 'review', 'on-hold' ),
+			'review'     => array( 'processing', 'on-hold' ),
+			'processing' => array( $pickup ? 'completed' : 'shipped', 'on-hold' ),
+			'shipped'    => array( 'completed' ),
+			'on-hold'    => array( 'review', 'processing' ),
 			'failed'     => array( 'processing', 'on-hold' ),
 			'completed'  => array(),
 			'cancelled'  => array(),

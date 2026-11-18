@@ -1,0 +1,9 @@
+[Unit]
+Description=Reconcile authoritative WooCommerce content and SEO outbox
+After=network-online.target mariadb.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/digitalogic-product-content/worker.py reconcile
+TimeoutStartSec=180
+UMask=0077
+Nice=10

@@ -21,6 +21,287 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 const DIGITALOGIC_PRICE_UPDATED_META = '_digitalogic_price_updated_at_utc';
 
+/** Hide public price HTML even when a formatter uses a saved price. */
+function digitalogic_hide_unavailable_price_html( $html, $product ) {
+	return $product->is_in_stock() ? $html : '';
+}
+add_filter( 'woocommerce_get_price_html', 'digitalogic_hide_unavailable_price_html', PHP_INT_MAX, 2 );
+
+/** Find whether the price range needs to exclude unavailable variations. */
+function digitalogic_has_unavailable_variations( $product ) {
+	if ( ! $product->is_type( 'variable' ) ) {
+		return false;
+	}
+	foreach ( $product->get_visible_children() as $id ) {
+		$variation = wc_get_product( $id );
+		if ( $variation && ! $variation->is_in_stock() ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Filter the display range after WooCommerce loads its cached price data. */
+function digitalogic_available_variation_display_prices( $prices, $product, $for_display ) {
+	if ( ! $for_display ) {
+		return $prices;
+	}
+	foreach ( array_keys( $prices['price'] ) as $id ) {
+		$variation = wc_get_product( $id );
+		if ( ! $variation || ! $variation->is_in_stock() ) {
+			unset( $prices['price'][ $id ], $prices['regular_price'][ $id ], $prices['sale_price'][ $id ] );
+		}
+	}
+	return $prices;
+}
+add_filter( 'woocommerce_variation_prices', 'digitalogic_available_variation_display_prices', PHP_INT_MAX, 3 );
+
+/**
+ * Read the public price bounds without changing WooCommerce's saved lookup rows.
+ *
+ * The column and lookup alias come only from the fixed SQL clauses below.
+ */
+function digitalogic_public_price_bound_sql( $column, $lookup ) {
+	global $wpdb;
+	$aggregate = 'min_price' === $column ? 'MIN' : 'MAX';
+	return "(CASE WHEN {$lookup}.stock_status IN ('instock', 'onbackorder') THEN
+		CASE WHEN EXISTS (
+			SELECT 1 FROM {$wpdb->term_relationships} AS dgl_type_rel
+			JOIN {$wpdb->term_taxonomy} AS dgl_type_tax ON dgl_type_tax.term_taxonomy_id = dgl_type_rel.term_taxonomy_id
+			JOIN {$wpdb->terms} AS dgl_type ON dgl_type.term_id = dgl_type_tax.term_id
+			WHERE dgl_type_rel.object_id = {$lookup}.product_id AND dgl_type_tax.taxonomy = 'product_type' AND dgl_type.slug = 'variable'
+		) THEN (
+			SELECT {$aggregate}(dgl_child_price.{$column})
+			FROM {$wpdb->posts} AS dgl_child
+			JOIN {$wpdb->wc_product_meta_lookup} AS dgl_child_price ON dgl_child_price.product_id = dgl_child.ID
+			WHERE dgl_child.post_parent = {$lookup}.product_id AND dgl_child.post_type = 'product_variation'
+			AND dgl_child.post_status = 'publish' AND dgl_child_price.stock_status IN ('instock', 'onbackorder')
+		) ELSE {$lookup}.{$column} END
+	END)";
+}
+
+/** Replace only WooCommerce's price facet aggregate, preserving its product filters. */
+function digitalogic_public_price_facet_sql( $sql ) {
+	global $wpdb;
+	$lookup = $wpdb->wc_product_meta_lookup;
+	$prefix = '~^\s*SELECT\s+MIN\(\s*min_price\s*\)\s+AS\s+min_price,\s*MAX\(\s*max_price\s*\)\s+AS\s+max_price\s+FROM\s+' . preg_quote( $lookup, '~' ) . '\s+WHERE\s+product_id\s+IN\s*\(~i';
+	if ( ! preg_match( $prefix, $sql, $match ) ) {
+		return $sql;
+	}
+	$min = digitalogic_public_price_bound_sql( 'min_price', $lookup );
+	$max = digitalogic_public_price_bound_sql( 'max_price', $lookup );
+	return "SELECT MIN({$min}) AS min_price, MAX({$max}) AS max_price FROM {$lookup} WHERE product_id IN (" . substr( $sql, strlen( $match[0] ) );
+}
+add_filter( 'woocommerce_price_filter_sql', 'digitalogic_public_price_facet_sql', 20 );
+
+/** Replace qualified lookup columns while retaining WooCommerce's tax logic. */
+function digitalogic_public_price_query_clauses( $clauses ) {
+	foreach ( array( 'min_price', 'max_price' ) as $column ) {
+		$qualified = array( "wc_product_meta_lookup.{$column}", "wc_product_meta_lookup.`{$column}`" );
+		$where     = str_contains( $clauses['where'], $qualified[0] ) || str_contains( $clauses['where'], $qualified[1] );
+		$order     = str_contains( $clauses['orderby'], $qualified[0] ) || str_contains( $clauses['orderby'], $qualified[1] );
+		if ( ! $where && ! $order ) {
+			continue;
+		}
+		$bound = digitalogic_public_price_bound_sql( $column, 'wc_product_meta_lookup' );
+		if ( $where ) {
+			$clauses['where'] = str_replace( $qualified, $bound, $clauses['where'] );
+		}
+		if ( $order ) {
+			$clauses['orderby'] = "({$bound} IS NULL) ASC, " . str_replace( $qualified, $bound, $clauses['orderby'] );
+		}
+	}
+	return $clauses;
+}
+
+/** Apply the public clause filter to classic WooCommerce catalog queries only. */
+function digitalogic_classic_public_price_query_clauses( $clauses, $query ) {
+	return ! is_admin() && 'product_query' === $query->get( 'wc_query' ) ? digitalogic_public_price_query_clauses( $clauses ) : $clauses;
+}
+add_filter( 'posts_clauses', 'digitalogic_classic_public_price_query_clauses', 90, 2 );
+
+/** Keep stock-sensitive scripts on their own versioned URLs. */
+function digitalogic_exclude_stock_price_scripts_from_minify( $excluded ) {
+	foreach ( array( 'variation-selector.js', 'variation-price-presentation.js', 'frontend-search-ws.js' ) as $file ) {
+		$excluded[] = wp_parse_url( DIGITALOGIC_PLUGIN_URL . 'assets/js/' . $file, PHP_URL_PATH );
+	}
+	return $excluded;
+}
+add_filter( 'rocket_exclude_js', 'digitalogic_exclude_stock_price_scripts_from_minify' );
+
+/** Scope Store API hooks to WooCommerce's public product collection callbacks. */
+function digitalogic_store_api_public_price_scope( $response, $handler, $request ) {
+	unset( $handler );
+	if ( ! in_array( $request->get_method(), array( 'GET', 'HEAD' ), true ) ) {
+		return $response;
+	}
+	$start = 'rest_request_before_callbacks' === current_filter();
+	if ( preg_match( '~^/wc/store(?:/v1)?/products/collection-data$~D', $request->get_route() ) ) {
+		if ( $start ) {
+			add_filter( 'query', 'digitalogic_public_price_facet_sql', 20 );
+		} else {
+			remove_filter( 'query', 'digitalogic_public_price_facet_sql', 20 );
+		}
+	} elseif ( preg_match( '~^/wc/store(?:/v1)?/products$~D', $request->get_route() ) ) {
+		if ( $start ) {
+			add_filter( 'posts_clauses', 'digitalogic_public_price_query_clauses', 91 );
+		} else {
+			remove_filter( 'posts_clauses', 'digitalogic_public_price_query_clauses', 91 );
+		}
+	}
+	return $response;
+}
+add_filter( 'rest_request_before_callbacks', 'digitalogic_store_api_public_price_scope', 10, 3 );
+add_filter( 'rest_request_after_callbacks', 'digitalogic_store_api_public_price_scope', 10, 3 );
+
+/** Use WooCommerce's stock-filtered range when a tier formatter can reuse stale tiers. */
+function digitalogic_available_tier_price_html( $html, $default_html, $product ) {
+	return digitalogic_has_unavailable_variations( $product ) ? $default_html : $html;
+}
+add_filter( 'tiered_pricing_table/catalog_pricing/price_html', 'digitalogic_available_tier_price_html', PHP_INT_MAX, 3 );
+
+/** Keep unavailable prices out of social metadata. */
+function digitalogic_available_social_price( $price ) {
+	$product = wc_get_product( get_queried_object_id() );
+	return $product && ( ! $product->is_in_stock() || digitalogic_has_unavailable_variations( $product ) ) ? false : $price;
+}
+add_filter( 'rank_math/woocommerce/og_price', 'digitalogic_available_social_price', 99 );
+add_filter( 'rank_math/opengraph/twitter/twitter_label1', 'digitalogic_available_social_price', 99 );
+add_filter( 'rank_math/opengraph/twitter/twitter_data1', 'digitalogic_available_social_price', 99 );
+
+/** Preserve the social card's other fields while removing its price. */
+function digitalogic_available_slack_price( $data ) {
+	if ( is_array( $data ) && false === digitalogic_available_social_price( true ) ) {
+		unset( $data[ __( 'Price', 'seo-by-rank-math' ) ], $data['Price'] );
+	}
+	return $data;
+}
+add_filter( 'rank_math/opengraph/slack_enhanced_data', 'digitalogic_available_slack_price', 99 );
+
+/** An offer can describe a selected variation even when its parent is in stock. */
+function digitalogic_schema_offer_is_unavailable( $offer ) {
+	return is_array( $offer ) && in_array(
+		$offer['availability'] ?? '',
+		array( 'OutOfStock', 'https://schema.org/OutOfStock', 'http://schema.org/OutOfStock' ),
+		true
+	);
+}
+
+/** Remove offers for unavailable stock from WooCommerce and Rank Math schema. */
+function digitalogic_available_product_schema( $entity, $product = null ) {
+	if ( ! is_array( $entity ) ) {
+		return $entity;
+	}
+	if ( ! $product instanceof WC_Product ) {
+		$product = wc_get_product( get_queried_object_id() );
+	}
+	if ( ! $product ) {
+		return $entity;
+	}
+	$offers            = $entity['offers'] ?? array();
+	$unavailable       = ! $product->is_in_stock();
+	$unavailable_offer = digitalogic_schema_offer_is_unavailable( $offers ) || digitalogic_schema_offer_is_unavailable( $offers[0] ?? null );
+	if ( $unavailable || $unavailable_offer ) {
+		unset( $entity['offers'] );
+		if ( empty( $entity['hasVariant'] ) && empty( $entity['review'] ) && empty( $entity['aggregateRating'] ) ) {
+			return array();
+		}
+	} elseif ( current_filter() === 'rank_math/snippet/rich_snippet_product_entity' && digitalogic_has_unavailable_variations( $product ) ) {
+		unset( $entity['offers'] );
+	}
+	if ( ! empty( $entity['hasVariant'] ) && is_array( $entity['hasVariant'] ) ) {
+		foreach ( $entity['hasVariant'] as &$variant ) {
+			$child_id = is_array( $variant ) && ! empty( $variant['sku'] ) ? wc_get_product_id_by_sku( $variant['sku'] ) : 0;
+			$child    = $child_id ? wc_get_product( $child_id ) : false;
+			if ( is_array( $variant ) && ( $unavailable || ( $child && ! $child->is_in_stock() ) || digitalogic_schema_offer_is_unavailable( $variant['offers'] ?? null ) ) ) {
+				unset( $variant['offers'] );
+			}
+		}
+		unset( $variant );
+	}
+	return $entity;
+}
+add_filter( 'woocommerce_structured_data_product', 'digitalogic_available_product_schema', 98, 2 );
+add_filter( 'rank_math/snippet/rich_snippet_product_entity', 'digitalogic_available_product_schema', 98, 2 );
+
+/** Apply the same policy to the public Store API product representations. */
+function digitalogic_available_store_api_prices( $response, $handler, $request ) {
+	unset( $handler );
+	if ( $request->get_method() !== 'GET' || ! preg_match( '~^/wc/store(?:/v1)?/products(?:/[^/]+)?$~D', $request->get_route() )
+		|| ! $response instanceof WP_REST_Response || $response->is_error() ) {
+		return $response;
+	}
+	$data = $response->get_data();
+	if ( ! is_array( $data ) ) {
+		return $response;
+	}
+	$collection = array_is_list( $data );
+	$products   = $collection ? $data : array( $data );
+	foreach ( $products as &$item ) {
+		if ( ! isset( $item['prices'], $item['is_in_stock'] ) ) {
+			continue;
+		}
+		$price_fields = array( 'price', 'regular_price', 'sale_price' );
+		$public_prices = (array) $item['prices'];
+		if ( ! $item['is_in_stock'] ) {
+			$item['price_html'] = '';
+			foreach ( $price_fields as $field ) {
+				$public_prices[ $field ] = '';
+			}
+			$public_prices['price_range'] = null;
+		} elseif ( 'variable' === ( $item['type'] ?? '' ) ) {
+			$product = wc_get_product( $item['id'] );
+			if ( $product && digitalogic_has_unavailable_variations( $product ) ) {
+				$prices = $product->get_variation_prices( true );
+				foreach ( $price_fields as $field ) {
+					$public_prices[ $field ] = empty( $prices[ $field ] ) ? '' : (string) wc_add_number_precision( (float) min( $prices[ $field ] ) );
+				}
+			}
+		}
+		$item['prices'] = (object) $public_prices;
+	}
+	unset( $item );
+	$response->set_data( $collection ? $products : $products[0] );
+	return $response;
+}
+add_filter( 'rest_request_after_callbacks', 'digitalogic_available_store_api_prices', 20, 3 );
+
+/** Chaty serializes raw WooCommerce values independently of price HTML. */
+function digitalogic_hide_unavailable_chaty_prices() {
+	if ( ! is_product() ) {
+		return;
+	}
+	$product = wc_get_product( get_queried_object_id() );
+	if ( ! $product || ( $product->is_in_stock() && ! digitalogic_has_unavailable_variations( $product ) ) ) {
+		return;
+	}
+	$scripts = wp_scripts();
+	$data    = $scripts->get_data( 'chaty', 'data' );
+	if ( ! is_string( $data ) ) {
+		return;
+	}
+	$updated = preg_replace_callback(
+		'/^var chaty_settings = (.+);$/m',
+		static function ( $match ) {
+			$settings = json_decode( $match[1], true );
+			if ( ! isset( $settings['product'] ) || ! is_array( $settings['product'] ) ) {
+				return $match[0];
+			}
+			foreach ( array( 'price', 'regPrice', 'discount' ) as $field ) {
+				$settings['product'][ $field ] = '';
+			}
+			return 'var chaty_settings = ' . wp_json_encode( $settings, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES ) . ';';
+		},
+		$data
+	);
+	if ( is_string( $updated ) && $updated !== $data ) {
+		$scripts->add_data( 'chaty', 'data', $updated );
+	}
+}
+add_action( 'wp_enqueue_scripts', 'digitalogic_hide_unavailable_chaty_prices', PHP_INT_MAX );
+
+
+
 /**
  * Record future WooCommerce price changes at the moment a price projection is written.
  *
@@ -187,7 +468,7 @@ function digitalogic_format_product_price_update_absolute( $timestamp ) {
  * @return array|null
  */
 function digitalogic_product_price_update_payload( $product ) {
-	if ( ! $product instanceof WC_Product ) {
+	if ( ! $product instanceof WC_Product || ! $product->is_in_stock() || '' === trim( (string) $product->get_price() ) ) {
 		return null;
 	}
 	$resolved  = digitalogic_resolve_product_price_update( $product );
@@ -226,7 +507,7 @@ function digitalogic_render_product_price_update_time() {
 	static $rendered_products = array();
 
 	global $product;
-	if ( ! $product instanceof WC_Product ) {
+	if ( ! $product instanceof WC_Product || ! $product->is_in_stock() ) {
 		return;
 	}
 
@@ -235,7 +516,11 @@ function digitalogic_render_product_price_update_time() {
 		return;
 	}
 
-	$payload                          = $product->is_type( 'variable' ) ? null : digitalogic_product_price_update_payload( $product );
+	$is_variable = $product->is_type( 'variable' );
+	$payload     = $is_variable ? null : digitalogic_product_price_update_payload( $product );
+	if ( ! $is_variable && null === $payload ) {
+		return;
+	}
 	$rendered_products[ $product_id ] = true;
 
 	echo '<div class="digitalogic-price-updated" data-digitalogic-contextual-price-update data-price-updated-source="' . esc_attr( $payload['source'] ?? '' ) . '"' . ( null === $payload ? ' hidden' : '' ) . '>';

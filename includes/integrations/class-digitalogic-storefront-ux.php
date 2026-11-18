@@ -9,11 +9,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+require_once __DIR__ . '/class-digitalogic-order-fulfillment.php';
+
 /** Deliver a translated, responsive, and progressively enhanced storefront. */
 final class Digitalogic_Storefront_UX {
 
 	/** Register public hooks without changing order-status identifiers. */
 	public static function init(): void {
+		Digitalogic_Order_Fulfillment::init();
 		add_filter( 'gettext', array( self::class, 'translate_storefront_text' ), 40, 3 );
 		add_filter( 'widget_title', array( self::class, 'translate_storefront_text' ), 40, 1 );
 		add_filter( 'wc_order_statuses', array( self::class, 'translate_order_statuses' ), 40 );
@@ -108,18 +111,19 @@ final class Digitalogic_Storefront_UX {
 		$labels = array(
 			'wc-pending'                 => 'در انتظار پرداخت',
 			'wc-processing'              => 'در حال پردازش',
-			'wc-on-hold'                 => 'در انتظار بررسی',
-			'wc-completed'               => 'تکمیل‌شده',
-			'wc-cancelled'               => 'لغوشده',
-			'wc-refunded'                => 'بازپرداخت‌شده',
-			'wc-failed'                  => 'ناموفق',
+			'wc-on-hold'                 => 'در انتظار تأیید پرداخت',
+			'wc-completed'               => 'تکمیل شده',
+			'wc-cancelled'               => 'لغو شده',
+			'wc-refunded'                => 'بازپرداخت شده',
+			'wc-failed'                  => 'پرداخت ناموفق',
+			'wc-checkout-draft'          => 'پیش‌نویس سفارش',
 			'wc-spam'                    => 'سفارش مشکوک',
 			'wc-spamorder'               => 'سفارش مشکوک',
 			'wc-pre-ordered'             => 'پیش‌سفارش‌شده',
-			'wc-partially-paid'          => 'بخشی پرداخت‌شده',
-			'wc-partial-payment'         => 'بخشی پرداخت‌شده',
-			'wc-scheduled'               => 'زمان‌بندی‌شده',
-			'wc-scheduled-payment'       => 'زمان‌بندی‌شده',
+			'wc-partially-paid'          => 'پرداخت جزئی',
+			'wc-partial-payment'         => 'پرداخت جزئی',
+			'wc-scheduled'               => 'پرداخت زمان‌بندی شده',
+			'wc-scheduled-payment'       => 'پرداخت زمان‌بندی شده',
 			'wc-pending-deposit-payment' => 'در انتظار پرداخت بیعانه',
 			'wc-pending-deposit'         => 'در انتظار پرداخت بیعانه',
 		);
