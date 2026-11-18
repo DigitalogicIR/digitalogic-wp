@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const phoneNumbers = require('../assets/vendor/libphonenumber-js/libphonenumber-max.js');
 
 const brandingSource = fs.readFileSync(
     path.join(__dirname, '..', 'assets', 'js', 'branding', 'admin-branding.js'),
@@ -15,12 +16,149 @@ const brandingCss = fs.readFileSync(
     'utf8'
 );
 
+test('call status uses WebSocket first and sends fallback proof only in the SSE request header', async () => {
+    const origin = 'https://digitalogic.test';
+    const sockets = [];
+    const fallback = [];
+    const messages = [];
+    let reply = { success: true, data: { status: 'pending' } };
+    class Socket extends EventTarget {
+        readyState = 0;
+
+        constructor(url) {
+            super();
+            sockets.push(url);
+            queueMicrotask(() => {
+                this.readyState = 1;
+                this.dispatchEvent(new Event('open'));
+            });
+        }
+
+        send(frame) {
+            const command = JSON.parse(frame);
+            messages.push(command);
+            this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id: command.id, ...reply }) }));
+        }
+    }
+    const browser = {
+        DigitalogicBranding: {
+            authWebSocket: { enabled: true, url: 'wss://digitalogic.test/wordpress-ws', token: 'public-token' },
+            authEventsUrl: origin + '/wp-json/digitalogic/v1/auth-events'
+        },
+        crypto: { randomUUID: () => 'aabc19e1-2e35-4ee0-88d1-6ef46ab79a6b' },
+        sessionStorage: { getItem: () => null, setItem() {} },
+        location: { href: origin + '/login/', origin, host: 'digitalogic.test', search: '' },
+        URL, WebSocket: Socket, setTimeout, clearTimeout,
+        fetch: async (url, options) => {
+            fallback.push({ url, options });
+            return new Response('event: snapshot\ndata: {"call":{"status":"verified"}}\n\n', {
+                headers: { 'Content-Type': 'text/event-stream' }
+            });
+        }
+    };
+    vm.runInNewContext(brandingSource, {
+        window: browser, document: { documentElement: {}, addEventListener() {} },
+        URL, URLSearchParams, Event, DOMException
+    });
+
+    const realtime = browser.DigitalogicAuthRealtime;
+    assert.equal((await realtime.callStatus('challenge', 'private-proof')).status, 'pending');
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0].searchParams.get('auth'), '1');
+    assert.equal(messages[0].command, 'digitalogic_auth_call_watch');
+    assert.equal(fallback.length, 0);
+
+    reply = { success: false };
+    assert.equal((await realtime.callStatus('challenge', 'private-proof')).status, 'verified');
+    assert.equal(fallback[0].options.headers['X-Digitalogic-CSRF'], 'private-proof');
+    assert.equal(fallback[0].url.searchParams.get('flow'), realtime.flowId());
+    assert.equal(fallback[0].url.href.includes('private-proof'), false);
+    assert.equal(messages.every(command => command.command === 'digitalogic_auth_call_watch'), true);
+});
+
+test('login worker warms only public resources and uses exact asset versions', async () => {
+    const origin = 'https://digitalogic.test';
+    const stylesheet = origin + '/wp-content/plugins/digitalogic-wp/assets/css/branding/admin-branding.css';
+    const login = origin + '/login/';
+    const handlers = new Map();
+    const stored = new Map();
+    const upstream = [];
+    const cache = {
+        keys: async () => Array.from(stored.keys(), url => ({ url })),
+        match: async url => stored.get(url),
+        put: async (url, response) => stored.set(url, response),
+        delete: async request => stored.delete(request.url)
+    };
+    const worker = fs.readFileSync(path.join(__dirname, '..', 'assets', 'js', 'branding', 'auth-assets-worker.js'), 'utf8');
+    vm.runInNewContext(worker, {
+        URL,
+        caches: { open: async () => cache },
+        self: {
+            location: { origin },
+            registration: { scope: login },
+            addEventListener: (name, handler) => handlers.set(name, handler)
+        },
+        fetch: async (input, options) => {
+            const url = input.url || input;
+            upstream.push({ url, options });
+            const headers = new Headers({ 'Content-Type': 'text/css' });
+            if (url.includes('private.css')) headers.set('Cache-Control', 'private, no-store');
+            return new Response(url, { headers });
+        }
+    });
+
+    function warm(urls) {
+        let completion;
+        handlers.get('message')({
+            data: { type: 'DIGITALOGIC_PREFETCH_LOGIN_ASSETS', urls },
+            source: { url: login + '?wp_lang=fa_IR' },
+            waitUntil: promise => { completion = promise; }
+        });
+        return completion;
+    }
+
+    function request(url, destination, method = 'GET') {
+        let response;
+        handlers.get('fetch')({
+            request: { url, method, destination },
+            respondWith: promise => { response = promise; }
+        });
+        return response;
+    }
+
+    const privateFile = stylesheet.replace('admin-branding.css', 'private.css');
+    await warm([
+        stylesheet, stylesheet + '?ver=1', privateFile,
+        login + '?action=register', origin + '/wp-admin/admin-ajax.php',
+        stylesheet + '?ver=1&token=secret', 'https://elsewhere.test' + new URL(stylesheet).pathname
+    ]);
+    assert.deepEqual([...stored.keys()].sort(), [stylesheet, stylesheet + '?ver=1']);
+    assert.equal(upstream.length, 3);
+    assert.equal(upstream.every(({ options }) => options.credentials === 'omit'), true);
+
+    assert.equal(await (await request(stylesheet + '?ver=1', 'style')).text(), stylesheet + '?ver=1');
+    await warm([stylesheet + '?ver=1']);
+    assert.equal(upstream.length, 3);
+    assert.equal(await (await request(stylesheet + '?ver=2', 'style')).text(), stylesheet + '?ver=2');
+    assert.equal(upstream.at(-1).url, stylesheet + '?ver=2');
+    await warm([stylesheet + '?ver=2']);
+    assert.ok(stored.has(stylesheet + '?ver=2'));
+    await request(stylesheet, 'style');
+    assert.equal(upstream.at(-1).options.cache, 'no-cache');
+    assert.equal(request(stylesheet, 'document'), undefined);
+    assert.equal(request(stylesheet, 'style', 'POST'), undefined);
+    assert.equal(request(login, 'document'), undefined);
+});
+
 function fakeClassList(values) {
     const classes = new Set(values || []);
 
     return {
         add(value) {
             classes.add(value);
+        },
+        remove(value) {
+            classes.delete(value);
         },
         contains(value) {
             return classes.has(value);
@@ -108,13 +246,16 @@ function createHarness(options) {
     };
     const window = {
         DigitalogicBranding: config,
+        libphonenumber: options.phoneNumbers,
+        clearTimeout() {},
         URL,
         location: { href: options.locationHref || 'https://digitalogic.test/login/' }
     };
     const context = {
         console,
         document,
-        navigator: { language: options.lang || 'en-US' },
+        MutationObserver: options.MutationObserver,
+        navigator: { language: options.lang || 'en-US', credentials: options.credentials },
         Set,
         URL,
         URLSearchParams,
@@ -126,6 +267,7 @@ function createHarness(options) {
 
     return {
         document,
+        window,
         hooks: config.testHooks,
         recoveryField,
         recoveryLabel
@@ -148,6 +290,266 @@ test('canonical login navigation labels follow href actions, not DOM position', 
 
     assert.equal(lostPassword.textContent, 'Reset password');
     assert.equal(register.textContent, 'Register');
+});
+
+test('native serialized Digits form requests are recognized without matching unrelated AJAX', () => {
+    const {hooks} = createHarness({});
+    assert.equal(hooks.isDigitsAjaxRequest({data:[{name:'action',value:'digits_forms_ajax'}]}),true);
+    assert.equal(hooks.isDigitsAjaxRequest({data:[{name:'digits',value:'1'}]}),true);
+    assert.equal(hooks.isDigitsAjaxRequest({data:[{name:'action',value:'unrelated'}]}),false);
+    assert.equal(hooks.isDigitsAjaxRequest({data:{action:'digits_forms_ajax'}}),true);
+    assert.equal(hooks.isDigitsAjaxRequest({data:'action=digits_forms_ajax'}),true);
+});
+
+test('a successful Digits login resumes its same-site OpenID request with the original parameters', () => {
+    const {document, window, hooks} = createHarness({});
+    const target = new URL('/wp-login.php', window.location.href);
+    target.searchParams.set('action', 'openid-authenticate');
+    target.searchParams.set('client_id', 'git-probe');
+    target.searchParams.set('response_type', 'code');
+    target.searchParams.set('state', 'probe+state/&=%');
+    const hidden = {value: target.href};
+    document.createElement = () => ({});
+    const feedback = { dataset: {}, classList: { add() {}, toggle() {} }, replaceChildren() {}, appendChild() {} };
+    const form = {offsetWidth: 300, matches: () => true, closest: () => ({}),
+        querySelector: selector => selector === 'input[name="digits_redirect_page"]' ? hidden :
+            selector === '.dg-digits-inline-message' ? feedback : null,
+        querySelectorAll: () => []};
+    document.activeElement = {closest: () => form};
+    let guarded;
+    window.jQuery = {ajax(settings) { guarded = settings; }};
+    hooks.patchDigitsAjaxFailureGuard();
+    window.jQuery.ajax({data: [{name: 'action', value: 'digits_forms_ajax'}]});
+
+    const payload = {success: true, data: {process: true, process_type: 'login', redirect: '/', setup_biometric: true, force_biometric: true, delay: 1000}};
+    guarded.success(payload);
+    assert.equal(payload.data.redirect, target.href);
+    assert.equal(payload.data.setup_biometric, false);
+    assert.equal(payload.data.force_biometric, false);
+    assert.equal(payload.data.delay, 0);
+
+    payload.data.redirect = '/';
+    payload.success = false;
+    guarded.success(payload);
+    assert.equal(payload.data.redirect, '/');
+
+    payload.success = true;
+    hidden.value = target.href.replace('digitalogic.test', 'other.test');
+    guarded.success(payload);
+    assert.equal(payload.data.redirect, '/');
+});
+
+test('empty or non-JSON AJAX results cannot enter the native Digits callback', () => {
+    const {hooks} = createHarness({});
+    for(const payload of ['', '0', '<html>Unavailable</html>', null, {}, {success:true,data:{}}]) {
+        assert.equal(hooks.hasUsableDigitsPayload(payload),false);
+    }
+    assert.equal(hooks.hasUsableDigitsPayload({success:false,data:{message:'Invalid mobile'}}),true);
+    assert.equal(hooks.hasUsableDigitsPayload({success:true,data:{html:'<div>Next step</div>'}}),true);
+});
+
+test('client validation rejection does not schedule a misleading registration timeout', () => {
+    const harness=createHarness({});
+    const listeners={};
+    const timers=[];
+    const form={matches:()=>true,checkValidity:()=>true};
+    const button={closest:()=>form};
+    harness.document.addEventListener=(name,callback)=>{listeners[name]=callback;};
+    harness.window.addEventListener=()=>{};
+    harness.window.setTimeout=(callback)=>{timers.push(callback);};
+    harness.hooks.bindLoadingStates();
+    // HTML required fields are populated, but native strength/captcha validation
+    // may reject before AJAX. A click alone is not an in-flight request.
+    listeners.click({target:{closest:()=>button}});
+    assert.equal(timers.length,0);
+});
+
+test('skip password selects the native SMS tab without sending the typed password', () => {
+    let update;
+    const harness = createHarness({
+        labels: {skipPassword: 'ورود بدون رمز عبور', skipPasswordCaption: 'رمز خود را فراموش کرده اید؟'},
+        MutationObserver: class {
+            constructor(callback) { update = callback; }
+            observe() {}
+        }
+    });
+    const listeners = {};
+    const createElement = (tagName) => ({
+        tagName,
+        children: [],
+        attributes: new Map(),
+        classList: fakeClassList(),
+        addEventListener(name, callback) { listeners[name] = callback; },
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        querySelector() { return null; },
+        append(...children) { this.children.push(...children); },
+        appendChild(child) { this.append(child); },
+        prepend(child) { this.children.unshift(child); }
+    });
+    const wrapper = {};
+    let smsClicks = 0;
+    const otpTab = {click: () => { smsClicks++; }};
+    const step = {querySelector: (selector) => selector.includes('data-value') ? otpTab : {}};
+    const password = {value: 'test-input', offsetWidth: 0, getClientRects: () => [], closest: () => step};
+    let action;
+    const primary = {after: (node) => { action = node; }};
+    const form = {
+        dataset: {},
+        classList: fakeClassList(),
+        querySelector: (selector) => selector === '.digits-form_tab_wrapper' ? wrapper : (selector === '.digits-form_rememberme' ? null : primary),
+        closest: () => null,
+        querySelectorAll: (selector) => selector.includes('_otp') ? [] : [password],
+        addEventListener() {}
+    };
+    harness.document.createElement = createElement;
+    harness.document.createElementNS = (namespaceURI, tag) => ({...createElement(tag), namespaceURI});
+    harness.window.addEventListener = () => {};
+    harness.document.querySelectorAll = (selector) => selector === '.dg-digits-login-shell form' ? [form] : [];
+    harness.hooks.normalizeAuthChrome();
+    const [caption, skip] = action.children;
+    const [icon, label] = skip.children;
+    assert.equal(skip.type, 'button');
+    assert.equal(icon.tagName, 'svg');
+    assert.equal(label.textContent, 'ورود بدون رمز عبور');
+    assert.equal(caption.tagName, 'p');
+    assert.equal(caption.textContent, 'رمز خود را فراموش کرده اید؟');
+    assert.equal(skip.attributes.get('aria-describedby'), caption.id);
+    assert.equal(action.hidden, true);
+    password.offsetWidth = 200;
+    update();
+    assert.equal(action.hidden, false);
+    listeners.click();
+    assert.equal(password.value, '');
+    assert.equal(smsClicks, 1);
+    password.disabled = true;
+    update();
+    assert.equal(action.hidden, true);
+});
+
+test('WebOTP waits for the SMS response and submits once', async () => {
+    let receive;
+    let submitted = 0;
+    let request;
+    let signal;
+    const harness = createHarness({credentials: {get(options) {
+        signal = options.signal;
+        return new Promise((resolve) => { receive = resolve; });
+    }}});
+    harness.window.OTPCredential = function () {};
+    harness.window.AbortController = AbortController;
+    harness.window.clearTimeout = () => {};
+    harness.document.body.classList.remove = () => {};
+    harness.window.jQuery = {ajax(settings) { request = settings; }};
+    const otp = {value: '', offsetWidth: 200};
+    const primary = {offsetWidth: 200, focus() {}, click: () => { submitted++; }};
+    const form = {
+        matches: () => true,
+        closest: () => ({}),
+        offsetWidth: 200,
+        querySelector: (selector) => selector.includes('rememberme') ? {} : null,
+        querySelectorAll: (selector) => selector.includes('sms_otp') ? [otp] : [primary]
+    };
+    otp.form = form;
+    harness.document.activeElement = {closest: () => form};
+    harness.hooks.patchDigitsAjaxFailureGuard();
+    harness.window.jQuery.ajax({data: [{name: 'action', value: 'digits_forms_ajax'}, {name: 'sub_action', value: 'sms_otp'}]});
+    request.beforeSend();
+    const sendRequest = request;
+    harness.window.jQuery.ajax({data: [{name: 'action', value: 'digits_forms_ajax'}, {name: 'check_status', value: '1'}, {name: 'sms_otp', value: '123456'}]});
+    assert.equal(request.beforeSend, undefined);
+    assert.equal(request.data.find(field => field.name === 'sms_otp').value, '');
+    assert.equal(signal.aborted, false);
+    receive({code: '123456'});
+    await Promise.resolve();
+    assert.equal(submitted, 0);
+    const payload = {success: true, data: {auto_fill: true, check_remote_status: true}};
+    sendRequest.success(payload);
+    sendRequest.complete();
+    assert.equal(payload.data.auto_fill, false);
+    assert.equal(payload.data.check_remote_status, false);
+    assert.equal(otp.value, '123456');
+    assert.equal(submitted, 1);
+    assert.equal(signal.aborted, true);
+});
+
+test('ordinary Enter remains ordinary when a secondary SMS button exists', () => {
+    const harness=createHarness({});
+    const listeners={};
+    let skipClicks=0;
+    let validityChecks=0;
+    harness.window.addEventListener=()=>{};
+    harness.window.clearTimeout=()=>{};
+    harness.document.addEventListener=(name,callback)=>{listeners[name]=callback;};
+    const skip={click(){skipClicks++;}};
+    const form={dataset:{},matches:()=>true,closest:()=>null,querySelector:()=>skip,querySelectorAll:()=>[],checkValidity(){validityChecks++;return false;}};
+    harness.hooks.bindLoadingStates();
+    listeners.submit({target:form,submitter:{matches:()=>false},preventDefault(){}});
+    assert.equal(skipClicks,0);
+    assert.equal(validityChecks,1);
+});
+
+test('real requests start loading only in beforeSend and cancellation preserves native behavior', () => {
+    const harness=createHarness({});
+    let guarded;
+    let before=0;
+    let completed=0;
+    const timers=[];
+    harness.window.jQuery={ajax(settings){guarded=settings;return 'xhr';}};
+    harness.window.clearTimeout=()=>{};
+    harness.window.setTimeout=(callback,delay)=>{timers.push(delay);return 1;};
+    const attributes=new Map();
+    const form={
+        dataset:{},classList:fakeClassList(),offsetWidth:300,
+        matches:()=>true,
+        setAttribute:(k,v)=>attributes.set(k,v),
+        removeAttribute:(k)=>attributes.delete(k),
+        querySelectorAll:(s)=>s.includes('.digits-form_submit-btn')?[button]:[]
+    };
+    const button={
+        dataset:{},classList:fakeClassList(),offsetWidth:200,disabled:false,
+        closest:()=>form,setAttribute(){},removeAttribute(){},matches:()=>false
+    };
+    harness.document.activeElement={closest:()=>form};
+    harness.hooks.patchDigitsAjaxFailureGuard();
+    harness.window.jQuery.ajax({
+        data:[{name:'action',value:'digits_forms_ajax'}],
+        beforeSend(){before++;return false;},complete(){completed++;}
+    });
+    assert.equal(guarded.timeout,30000);
+    assert.equal(timers.length,0);
+    assert.equal(guarded.beforeSend(),false);
+    assert.equal(before,1);
+    assert.equal(timers.length,0);
+    guarded.complete();
+    assert.equal(completed,1);
+    harness.window.jQuery.ajax({data:[{name:'digits',value:'1'}]});
+    guarded.beforeSend();
+    assert.equal(button.dataset.dgLoading,'true');
+    assert.equal(form.dataset.dgPending,'true');
+    assert.deepEqual(timers,[35000]);
+});
+
+test('registration autofill identifies separate names and keeps already filled values intact', () => {
+    const harness=createHarness({});
+    const fields={};
+    for(const name of ['digits_reg_name','digits_reg_lastname','digits_reg_username','phone','digits_reg_password']){
+        const attrs=new Map();
+        fields[name]={id:name==='digits_reg_lastname'?'native-family-id':'',value:'already-filled',attrs,setAttribute:(k,v)=>attrs.set(k,v)};
+    }
+    const formAttrs=new Map();
+    const form={setAttribute:(k,v)=>formAttrs.set(k,v),querySelector:(s)=>fields[s.match(/name="([^"]+)"/)[1]]};
+    harness.document.querySelectorAll=()=>[form];
+    harness.document.getElementById=()=>null;
+    harness.hooks.prepareDigitsRegistrationAutofill();
+    harness.hooks.prepareDigitsRegistrationAutofill();
+    assert.equal(formAttrs.get('autocomplete'),'on');
+    assert.equal(fields.digits_reg_name.attrs.get('autocomplete'),'section-digitalogic-register given-name');
+    assert.equal(fields.digits_reg_lastname.attrs.get('autocomplete'),'section-digitalogic-register family-name');
+    assert.equal(fields.digits_reg_username.attrs.get('autocomplete'),'section-digitalogic-register username');
+    assert.equal(fields.phone.attrs.get('autocomplete'),'section-digitalogic-register tel-national');
+    assert.equal(fields.digits_reg_password.attrs.get('autocomplete'),'section-digitalogic-register new-password');
+    assert.equal(fields.digits_reg_lastname.id,'native-family-id');
+    for(const field of Object.values(fields)){assert.equal(field.value,'already-filled');assert.ok(field.id);}
 });
 
 test('lost-password navigation keeps login and registration meanings in either order', () => {
@@ -216,8 +618,8 @@ test('WordPress recovery describes only its supported username or email identity
     harness.hooks.normalizeAuthChrome();
 
     assert.equal(harness.recoveryLabel.textContent, 'Username or email address');
-    assert.equal(harness.recoveryField.getAttribute('placeholder'), 'Username or email address');
-    assert.equal(harness.recoveryField.getAttribute('aria-label'), 'Username or email address');
+    assert.equal(harness.recoveryField.getAttribute('dir'), 'auto');
+    assert.equal(harness.recoveryField.getAttribute('placeholder'), undefined);
 });
 
 test('real startup order cannot restore mobile wording on WordPress recovery', () => {
@@ -233,12 +635,11 @@ test('real startup order cannot restore mobile wording on WordPress recovery', (
         }
     });
 
-    // DOMContentLoaded currently normalizes auth chrome before login labels.
-    harness.hooks.normalizeAuthChrome();
     harness.hooks.enhanceLoginLabels();
+    harness.hooks.normalizeAuthChrome();
 
-    assert.match(harness.recoveryLabel.innerHTML, /نام کاربری یا نشانی ایمیل/);
-    assert.doesNotMatch(harness.recoveryLabel.innerHTML, /موبایل/);
+    assert.equal(harness.recoveryLabel.textContent, 'نام کاربری یا نشانی ایمیل');
+    assert.equal(harness.recoveryLabel.dataset.dgLabelReady, undefined);
 });
 
 test('one canonical identity normalizer handles Persian and Arabic digits without spaces', () => {
@@ -257,6 +658,23 @@ test('one canonical identity normalizer handles Persian and Arabic digits withou
     assert.equal(phone.national, '9123456789');
     assert.equal(phone.countryCode, '+98');
     assert.equal(phone.valid, true);
+});
+
+test('phone verification uses the national numbering plan and preserves international prefixes', () => {
+    const { hooks } = createHarness({ phoneNumbers });
+    const cases = [
+        ['۰۲۱۱۲۳۴۵۶۷۸', '+98', 'FIXED_LINE', '+982112345678'],
+        ['09120000000', '+98', 'MOBILE', '+989120000000'],
+        ['00442079460018', '+98', 'FIXED_LINE', '+442079460018'],
+        ['02079460018', '+44', 'FIXED_LINE', '+442079460018'],
+        ['+12025550123', '+98', 'FIXED_LINE_OR_MOBILE', '+12025550123']
+    ];
+    for (const [input, country, kind, e164] of cases) {
+        const phone = hooks.phonePartsFromValue(input, country);
+        assert.equal(phone.kind, kind, input);
+        assert.equal(phone.e164, e164, input);
+    }
+    assert.equal(hooks.phonePartsFromValue('021', '+98').valid, false);
 });
 
 test('password visibility restoration preserves the user-selected range and direction', () => {
