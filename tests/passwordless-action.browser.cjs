@@ -1246,6 +1246,99 @@ async function checkStoryAssetProgress(browser) {
     }
 }
 
+async function checkAuthenticationThemes(browser, direction, labels, width) {
+    for (const [theme, channel] of [['dark', 'sms'], ['light', 'sms'], ['dark', 'email'], ['light', 'email']]) {
+        const page = await browser.newPage({ viewport: { width, height: 850 }, colorScheme: theme, reducedMotion: 'reduce' });
+        page.setDefaultTimeout(15000);
+        let verifications = 0;
+        try {
+            const localizedLabels = direction === 'rtl' ? {
+                ...labels, otpCode: 'کد تأیید', smsCodeInstructions: 'کد پیامکی را وارد کنید.',
+                otpResend: 'ارسال مجدد کد', phoneChannel: 'روش دریافت کد تأیید', phoneSms: 'پیامک', phoneCall: 'تماس تلفنی'
+            } : labels;
+            await render(page, direction, localizedLabels, false, '?recover=1', { ajaxUrl: '/wp-admin/admin-ajax.php' });
+            if (process.env.DG_AUTH_THEME_OUTPUT) {
+                await page.route('https://digitalogic.test/fixture-font.woff2', route => route.fulfill({
+                    path: path.join(process.env.DG_AUTH_THEME_OUTPUT, 'YekanBakh-VF.woff2'), contentType: 'font/woff2'
+                }));
+                await page.addStyleTag({ content: '@font-face{font-family:AuthPreview;src:url("/fixture-font.woff2");font-weight:100 1000}:root{--dg-font:AuthPreview,sans-serif;--dg-auth-digits:AuthPreview,sans-serif}body{margin:0}' });
+                await page.evaluate(() => document.fonts.ready);
+            }
+            // WordPress applies this generic background to every form, including dialogs.
+            await page.addStyleTag({ content: '.login form { background: #fff; }' });
+            await page.route('https://digitalogic.test/wp-admin/admin-ajax.php', route => {
+                const body = route.request().postData();
+                if (body.includes('digitalogic_recovery_nonce')) {
+                    return route.fulfill({ json: { success: true, data: { nonce: 'fixture' } } });
+                }
+                if (body.includes('digitalogic_email_domain')) {
+                    return route.fulfill({ json: { success: true, data: { valid: true } } });
+                }
+                if (body.includes('name="' + channel + '_otp"')) {
+                    return route.fulfill({ json: ++verifications === 1
+                        ? { success: false, data: { message: 'Invalid verification code.' } }
+                        : { success: true, data: { process: true, process_type: 'login', redirect: '/complete' } } });
+                }
+                return route.fulfill({ json: { success: true, data: {
+                    resend_timer: 60,
+                    html: '<div class="digits-form_tab_container"><div class="digits-form_tab_body digits-tab_active">' +
+                        '<div class="digits-form_input_row"><div class="digits-form_input">' +
+                        '<input name="' + channel + '_otp" class="otp_input" maxlength="6">' +
+                        '<input name="otp_step_1" type="hidden" value="1"></div></div>' +
+                        '<button type="button" class="digits-form_resend_otp digits_resend_disabled">Resend</button></div></div>'
+                } } });
+            });
+            await page.route('https://digitalogic.test/complete', route => route.fulfill({ body: 'Signed in' }));
+            async function capture(step) {
+                if (!process.env.DG_AUTH_THEME_OUTPUT) { return; }
+                const name = direction + '-' + theme + '-' + channel + '-' + step;
+                await page.screenshot({ path: path.join(process.env.DG_AUTH_THEME_OUTPUT, name + '.png') });
+                const html = await page.content();
+                require('node:fs').writeFileSync(path.join(process.env.DG_AUTH_THEME_OUTPUT, name + '.html'), html);
+            }
+            const dark = theme === 'dark';
+            const help = page.locator('.dg-sms-identity-help:visible');
+            assert.equal(await help.evaluate(node => getComputedStyle(node).color), dark ? 'rgb(235, 245, 253)' : 'rgb(22, 50, 72)');
+            assert.equal(await page.locator('body').evaluate(node => getComputedStyle(node).colorScheme), theme);
+            await capture('contact');
+            await page.locator('[name="digits_phone"]').fill(channel === 'sms' ? '09120000000' : 'fixture@gmail.com');
+            if (channel === 'email') { await page.locator('#dg-email-domain-status[data-state="valid"]').waitFor(); }
+            await page.getByRole('button', { name: channel === 'sms' ? labels.sendSmsCode : labels.sendEmailCode, exact: true }).click();
+            const cells = page.locator('.dg-otp-slot input');
+            await cells.first().waitFor();
+            await cells.first().focus();
+            const slot = page.locator('.dg-otp-slot').first();
+            assert.equal(await slot.evaluate(node => getComputedStyle(node).boxShadow), 'none');
+            assert.equal(await slot.evaluate(node => getComputedStyle(node).outlineStyle), 'none');
+            assert.equal(await cells.first().evaluate(node => getComputedStyle(node).color), dark ? 'rgb(235, 245, 253)' : 'rgb(22, 50, 72)');
+            assert.equal(await page.locator('.dg-otp-resend').getAttribute('aria-disabled'), 'true');
+            await capture('otp');
+            await cells.first().fill('123456');
+            await page.locator('.dg-otp-editor[aria-invalid="true"]').waitFor();
+            await capture('otp-invalid');
+            await cells.first().fill('654321');
+            await page.getByRole('button', { name: labels.verifyCode, exact: true }).click();
+            const dialog = page.locator('.dg-recovery-dialog');
+            await dialog.waitFor();
+            assert.equal(await dialog.locator('form').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+            assert.equal(await dialog.evaluate(node => getComputedStyle(node).backgroundColor), dark ? 'rgb(18, 29, 44)' : 'rgb(255, 255, 255)');
+            assert.match(await dialog.locator('.button-primary').evaluate(node => getComputedStyle(node).backgroundImage), /linear-gradient/);
+            const password = dialog.locator('input.dg-password-input');
+            await dialog.locator('.dg-password-toggle').click();
+            assert.equal(await password.getAttribute('type'), 'text');
+            assert.equal(await password.evaluate(node => getComputedStyle(node).direction), 'ltr');
+            await capture('reset');
+            await dialog.locator('.dg-recovery-cancel').click();
+            const success = page.locator('.dg-auth-success');
+            await success.waitFor();
+            assert.equal(await success.locator('.dg-auth-success-icon').evaluate(node => getComputedStyle(node).backgroundColor),
+                dark ? 'rgba(15, 212, 140, 0.14)' : 'rgba(14, 167, 107, 0.14)');
+            await capture('success');
+            await page.waitForURL('**/complete');
+        } finally { await page.close(); }
+    }
+}
+
 async function checkLoginSwitchers(browser) {
     for (const showTheme of [false, true]) {
         for (const showLanguage of [false, true]) {
@@ -1351,6 +1444,7 @@ async function checkLoginSwitchers(browser) {
                 continueBySms: direction === 'rtl' ? 'ادامه با پیامک' : 'Continue by SMS',
                 verifyCode: direction === 'rtl' ? 'تأیید کد' : 'Verify code'
             };
+            await checkAuthenticationThemes(browser, direction, labels, width);
             for (const native of [true, false]) {
                 const page = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: direction === 'rtl' });
                 await render(page, direction, labels, native);
