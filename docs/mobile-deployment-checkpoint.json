@@ -416,6 +416,34 @@
         "https://pwa.digitalogic.ir"
       ],
       "evidence_sha256": "3b70f4b4b4e1073f8048beaba52755433c20fecaf9167afc683e7c4e858dba14"
+    },
+    "google_code": {
+      "observed_at_utc": "2026-11-18T05:02:28.016250+00:00",
+      "runtime_commit": "9a534fcf93910cf8f69c4bd2deac0eea5d85f156",
+      "archive_sha256": "b7906dbedd3d5ed95885e208e550aed9ff2b29e4d9c539584414953327a418d4",
+      "source_hashes": {
+        "laravel/app/Services/MobileBrowserSession.php": "64a20c6e8638665d6eeaddf9c291c420ebbf3eca69359cb9cc3c971cba53d47e",
+        "laravel/app/Http/Controllers/MobileBrowserController.php": "49436b688f18f4366bcdc65e7dbf23bb73232b35267c00a48d06ac3af4809f8d",
+        "laravel/app/Http/Controllers/MobileIdentityController.php": "8b1dd4b804b0bf58ff5ccf69630c23896839915b1aae9e12e319403e8a67023f",
+        "laravel/app/Http/Controllers/MobileCatalogController.php": "de455ddff81b00bb9795542eb68ad3c4e18007627742cc9a2976d61d5eb9f3e9",
+        "laravel/routes/internal.php": "f45ef3c32844236b5f14c4275a20c07f5dad353bfa288a76181fde0e0ba4e363",
+        "includes/integrations/class-digitalogic-mobile-api.php": "b2a466f361311c42f8ccfdceca4bb04361c954bc79fdb670828280c856bf2662",
+        "laravel/app/Services/MobileBrowserGoogleCode.php": "354e9d7fae60df0d54fc0cbe89fb7996a1af00835982467b232562a949cf0fc6"
+      },
+      "backup": "/var/backups/digitalogic-pwa-google-code.oubwnob2",
+      "capability": "browser_google_code",
+      "enabled": true,
+      "options_unchanged": true,
+      "full_tests": 1391,
+      "full_assertions": 15019,
+      "platform_skips": 35,
+      "isolated_checks": 42,
+      "public_no_send_checks": 17,
+      "release_version_code_unchanged": 27,
+      "real_google_popup_acceptance": "frontend gate",
+      "production_google_exchanges": 0,
+      "production_customer_sessions_created": 0,
+      "sms_sent": 0
     }
   }
 }
