@@ -1820,6 +1820,30 @@ msgstr "شماره موبایل یا تلفن ثابت"
 msgid "Create call code"
 msgstr "دریافت کد تماس"
 
+#: includes/integrations/class-call-verification.php
+msgid "Include the area code for landlines."
+msgstr "برای تلفن ثابت، کد شهر را هم وارد کنید."
+
+#: includes/integrations/class-call-verification.php
+msgid "Back to sign in"
+msgstr "بازگشت به ورود"
+
+#: includes/integrations/class-call-verification.php
+msgid "Your call code"
+msgstr "کد تماس شما"
+
+#: includes/integrations/class-call-verification.php
+msgid "Call from the same number you entered. When you hear «کاربر گرامی», enter the code using your phone keypad."
+msgstr "از همان شماره‌ای که وارد کردید تماس بگیرید. پس از شنیدن «کاربر گرامی»، کد را با صفحه‌کلید تلفن وارد کنید."
+
+#: includes/integrations/class-call-verification.php
+msgid "Call Digitalogic"
+msgstr "تماس با دیجیتالاجیک"
+
+#: includes/integrations/class-call-verification.php
+msgid "Edit phone number"
+msgstr "ویرایش شماره تلفن"
+
 #: includes/integrations/class-call-verification.php:1402
 #: includes/integrations/class-call-verification.php:1443
 msgid "Call"
@@ -2196,8 +2220,8 @@ msgid "%s seconds remaining"
 msgstr "%s ثانیه تا پایان اعتبار کد"
 
 #: includes/integrations/class-call-verification.php
-msgid "Call from the same number you entered. When the caller-ID shortcut says «دوست عزیزم», enter this six-digit code. If no live challenge is found, the call continues to the operator."
-msgstr "از همان شماره‌ای که وارد کرده‌اید تماس بگیرید. وقتی میان‌بر تشخیص شماره پیام «دوست عزیزم» را پخش کرد، این کد شش‌رقمی را وارد کنید. اگر درخواست فعالی پیدا نشود، تماس مستقیماً به اپراتور ادامه پیدا می‌کند."
+msgid "Call from the same number you entered. When the caller-ID shortcut says «کاربر گرامی», enter this six-digit code. If no live challenge is found, the call continues to the operator."
+msgstr "از همان شماره‌ای که وارد کرده‌اید تماس بگیرید. وقتی میان‌بر تشخیص شماره پیام «کاربر گرامی» را پخش کرد، این کد شش‌رقمی را وارد کنید. اگر درخواست فعالی پیدا نشود، تماس مستقیماً به اپراتور ادامه پیدا می‌کند."
 
 #: includes/class-report-engine.php
 msgid "Calculated price is explicitly null"

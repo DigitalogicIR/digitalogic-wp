@@ -97,9 +97,24 @@
         var onSearchStart = options.onSearchStart;
         var onSearchError = options.onSearchError;
         var onHide = options.onHide;
+        var formatResult = options.formatResult;
         return $.extend({}, options, {
             triggerSelectOnValidInput: false,
             noCache: true,
+            formatResult: function(suggestion, query) {
+                var html = formatResult.call(this, suggestion, query);
+                if (suggestion.is_in_stock === false) {
+                    var result = document.createElement('template');
+                    result.innerHTML = html;
+                    var badge = document.createElement('span');
+                    badge.className = 'digitalogic-search-stock';
+                    badge.textContent = rootConfig.unavailable || 'ناموجود';
+                    var content = result.content.querySelector('.wd-suggestion-content') || result.content;
+                    content.appendChild(badge);
+                    return result.innerHTML;
+                }
+                return html;
+            },
             onHide: function() {
                 var instance = $(this).data('autocomplete');
                 if (instance) { instance.suggestions = []; }

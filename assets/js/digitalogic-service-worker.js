@@ -1,4 +1,4 @@
-importScripts('/wp-content/plugins/digitalogic-wp/assets/js/digitalogic-runtime.js');
+importScripts('/wp-content/plugins/digitalogic-wp/assets/js/digitalogic-runtime.js?ver=2');
 
 self.DigitalogicRuntime.installServiceWorkerHandlers({
   appName: 'Digitalogic',

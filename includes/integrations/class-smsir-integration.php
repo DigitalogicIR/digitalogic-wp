@@ -275,6 +275,7 @@ final class Digitalogic_Smsir_Integration
     private static function render_order_message(string $template, WC_Order $order): string
     {
         $replacements = array(
+            '{order_status}' => Digitalogic_Order_Fulfillment::label($order),
             '{site_name}' => wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES),
             '{order_id}' => (string) $order->get_id(),
             '{customer_name}' => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
