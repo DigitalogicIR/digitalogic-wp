@@ -100,6 +100,7 @@ def public_copy_check(job, copy):
 def generate(job):
     public_input = dict(job['product'])
     public_input.pop('source_name', None)
+    public_input.pop('copy_verified_at', None)
     prompt = (INSTALL / 'draft-prompt.txt').read_text() + '\nPUBLIC_PRODUCT_INPUT\n' + json.dumps(public_input, ensure_ascii=False)
     with tempfile.TemporaryDirectory(dir=ROOT) as folder:
         output = Path(folder) / 'draft.json'
@@ -200,9 +201,14 @@ def seo(job):
         return dict(status='retry', retry_seconds=21600,
                     result={'public_readiness': readiness, 'google': {'state': 'inspection_failed', 'http': getattr(error, 'code', None)}})
     indexed = google.get('verdict') == 'PASS'
-    return dict(status='done' if indexed else 'waiting_google',
+    from datetime import datetime
+    copy_time = job['product'].get('copy_verified_at')
+    crawl_time = google.get('lastCrawlTime')
+    fresh = not copy_time or bool(crawl_time and datetime.fromisoformat(crawl_time) >= datetime.fromisoformat(copy_time))
+    return dict(status='done' if indexed and fresh else 'waiting_google',
                 retry_seconds=min(604800, 86400 * max(1, job['attempts'])),
-                result={'public_readiness': readiness, 'google': google, 'indexing_request_submitted': False})
+                result={'public_readiness': readiness, 'google': google, 'currently_indexed': indexed,
+                        'latest_copy_crawled': bool(indexed and fresh), 'indexing_request_submitted': False})
 
 
 def main():

@@ -48,8 +48,10 @@ SEO verifies HTTP 200, canonical URL, robots indexability, a nonempty descriptio
 and exact inclusion in a product sitemap. It reuses the installed Search Console
 importer's root-only credential and existing proxy for **read-only URL inspection**.
 An inspection failure is retried. A non-PASS verdict becomes `waiting_google`
-and is checked again in one to seven days. Only Google's observed PASS verdict
-closes the SEO job. This does not use the restricted Google Indexing API for
+and is checked again in one to seven days. An already indexed URL also waits
+when Google's last crawl predates the verified copy publication. Only a PASS
+verdict with a sufficiently recent crawl closes that publication's SEO job.
+This does not use the restricted Google Indexing API for
 ordinary product pages and does not claim to request or guarantee indexing.
 
 ## Operations

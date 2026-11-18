@@ -37,5 +37,14 @@ class QueueWorkerTest(unittest.TestCase):
             with patch.object(worker, 'fetch', return_value=(body, 'text/html')):
                 with self.assertRaises(ValueError): worker.public_seo(self.job()['product']['url'])
 
+    def test_already_indexed_old_copy_still_waits_for_recrawl(self):
+        job = self.job(); job['product']['copy_verified_at'] = '2026-11-18T04:00:00+00:00'
+        google = {'verdict': 'PASS', 'lastCrawlTime': '2026-11-17T22:00:00Z'}
+        with patch.object(worker, 'public_seo', return_value={'http': 200}), patch.object(worker, 'google_inspect', return_value=google):
+            result = worker.seo(job)
+            self.assertEqual('waiting_google', result['status'])
+            self.assertTrue(result['result']['currently_indexed'])
+            self.assertFalse(result['result']['latest_copy_crawled'])
+
 
 if __name__ == '__main__': unittest.main()

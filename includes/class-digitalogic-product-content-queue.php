@@ -354,6 +354,7 @@ class Digitalogic_Product_Content_Queue {
 					'source_name'       => get_post_meta( $p->ID, '_digitalogic_patris_name', true ),
 					'seo_title'         => get_post_meta( $p->ID, 'rank_math_title', true ),
 					'seo_description'   => get_post_meta( $p->ID, 'rank_math_description', true ),
+					'copy_verified_at'  => get_post_meta( $p->ID, '_digitalogic_content_evidence', true )['verified_at'] ?? null,
 				);
 				return $row;
 			}
