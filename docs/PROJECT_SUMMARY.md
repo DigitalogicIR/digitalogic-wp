@@ -237,11 +237,11 @@ digitalogic-wp/
 ## Development Team
 - Developed for: Digitalogic (https://digitalogic.ir)
 - License: GPL v2 or later
-- Repository: https://github.com/atomicdeploy/digitalogic-wp
+- Repository: https://github.com/DigitalogicIR/digitalogic-wp
 
 ## Support
-- Issues: https://github.com/atomicdeploy/digitalogic-wp/issues
-- Documentation: https://github.com/atomicdeploy/digitalogic-wp/wiki
+- Issues: https://github.com/DigitalogicIR/digitalogic-wp/issues
+- Documentation: https://github.com/DigitalogicIR/digitalogic-wp/wiki
 
 ---
 
