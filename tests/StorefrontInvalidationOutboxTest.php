@@ -71,7 +71,7 @@ final class StorefrontInvalidationOutboxTest extends TestCase {
 		}
 		$GLOBALS['digitalogic_test_schedule_failure'] = false;
 		$GLOBALS['wpdb']                              = new Digitalogic_Invalidation_Test_WPDB();
-		foreach ( array( 'Digitalogic_Product_Sync_Receiver', 'Digitalogic_Pricing_Service' ) as $class ) {
+		foreach ( array( 'Digitalogic_Product_Sync_Receiver', 'Digitalogic_Pricing_Service', 'Digitalogic_Report_Engine' ) as $class ) {
 			( new ReflectionClass( $class ) )->setStaticPropertyValue( 'instance', null );
 		}
 		$this->redis = new Digitalogic_Test_Redis_Client();
@@ -193,5 +193,70 @@ final class StorefrontInvalidationOutboxTest extends TestCase {
 		$this->assertTrue( $current['pending'] );
 		$GLOBALS['digitalogic_test_update_failures'] = array();
 		$this->assertTrue( Digitalogic_Storefront_Invalidation_Outbox::dispatch() );
+	}
+
+	/** Simulate verified request metadata without saving any product fixture. */
+	private function queue_verified_fixture(): array {
+		$receiver = Digitalogic_Product_Sync_Receiver::instance();
+		$property = new ReflectionProperty( $receiver, 'materializer_committed_snapshots' );
+		$property->setValue( $receiver, array( 'verified-test' => array( 'product_id' => 123 ) ) );
+		return array( 'status' => 'applied' );
+	}
+
+	/** The actual source owner stages before COMMIT and publishes after both locks. */
+	public function test_source_owner_commits_and_dispatches_only_after_unlock(): void {
+		$redis = $this->redis;
+		$GLOBALS['digitalogic_test_filters']['digitalogic_panel_redis_client'] = function () use ( $redis ) {
+			$this->assertContains( 'COMMIT', $GLOBALS['wpdb']->queries );
+			$this->assertFalse( Digitalogic_Pricing_Service::instance()->source_delivery_lock_is_owned() );
+			$this->assertFalse( Digitalogic_Product_Sync_Receiver::instance()->source_identity_lock_is_owned() );
+			return $redis;
+		};
+		$result = Digitalogic_Pricing_Service::instance()->run_source_delivery_transaction(
+			function () {
+				return $this->queue_verified_fixture();
+			}
+		);
+		$this->assertIsArray( $result );
+		$this->assertSame( 'applied', $result['status'] );
+		$this->assertFalse( $GLOBALS['digitalogic_test_options'][ Digitalogic_Storefront_Invalidation_Outbox::OPTION ]['pending'] );
+		$this->assertCount( 1, $GLOBALS['digitalogic_test_options']['digitalogic_panel_events'] );
+	}
+
+	/** The owner's final deadline guard rolls back its already-staged marker. */
+	public function test_source_owner_final_guard_rolls_back_staged_invalidation(): void {
+		$service = Digitalogic_Pricing_Service::instance();
+		$clock   = new ReflectionProperty( $service, 'source_delivery_clock' );
+		$times   = array( 0, 0, PHP_INT_MAX );
+		$clock->setValue(
+			$service,
+			static function () use ( &$times ) {
+				return array_shift( $times ) ?? PHP_INT_MAX;
+			}
+		);
+		$result = $service->run_source_delivery_transaction(
+			function () {
+				return $this->queue_verified_fixture();
+			}
+		);
+		$this->assertInstanceOf( WP_Error::class, $result );
+		$this->assertSame( 'digitalogic_source_delivery_deadline_exceeded', $result->get_error_code() );
+		$this->assertContains( 'ROLLBACK', $GLOBALS['wpdb']->queries );
+		$this->assertArrayNotHasKey( Digitalogic_Storefront_Invalidation_Outbox::OPTION, $GLOBALS['digitalogic_test_options'] );
+		$this->assertArrayNotHasKey( 'digitalogic_panel_events', $GLOBALS['digitalogic_test_options'] );
+	}
+
+	/** A mandatory outbox write failure aborts the actual source transaction. */
+	public function test_source_owner_rolls_back_when_staging_fails(): void {
+		$GLOBALS['digitalogic_test_update_failures'][] = Digitalogic_Storefront_Invalidation_Outbox::OPTION;
+		$result                                        = Digitalogic_Pricing_Service::instance()->run_source_delivery_transaction(
+			function () {
+				return $this->queue_verified_fixture();
+			}
+		);
+		$this->assertInstanceOf( WP_Error::class, $result );
+		$this->assertSame( 'digitalogic_storefront_invalidation_stage_failed', $result->get_error_code() );
+		$this->assertContains( 'ROLLBACK', $GLOBALS['wpdb']->queries );
+		$this->assertArrayNotHasKey( 'digitalogic_panel_events', $GLOBALS['digitalogic_test_options'] );
 	}
 }

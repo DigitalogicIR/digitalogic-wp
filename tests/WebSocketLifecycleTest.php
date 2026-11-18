@@ -1025,6 +1025,31 @@ final class WebSocketLifecycleTest extends TestCase {
 		}
 	}
 
+	public function test_public_retention_reset_handles_burst_and_backward_cursor_once(): void {
+		foreach ( array( 'public', 'mobile_shopper' ) as $principal ) {
+			foreach ( array( array( 100, 799 ), array( 900, 0 ) ) as $case ) {
+				$socket = fopen( 'php://temp', 'w+b' );
+				$events = array();
+				if ( $case[1] ) for ( $id = 600; $id <= 799; ++$id ) $events[] = array( 'id' => $id, 'name' => 'product.updated', 'data' => array( 'id' => 55 ) );
+				$GLOBALS['digitalogic_test_options']['digitalogic_panel_events'] = $events;
+				$GLOBALS['digitalogic_test_options']['digitalogic_panel_event_sequence'] = $case[1];
+				$server = new Digitalogic_WebSocket_Server();
+				$this->write_private( $server, 'clients', array( 42 => array( 'socket' => $socket, 'handshake' => true, 'last_event_id' => $case[0], 'user_id' => 0, 'principal' => $principal ) ) );
+				$this->invoke_private( $server, 'send_missed_panel_events' );
+				rewind( $socket );
+				$frame = stream_get_contents( $socket );
+				$reset = $this->decode_websocket_frame( $frame );
+				$this->assertSame( 'catalog.updated', $reset['event'] );
+				$this->assertTrue( $reset['data']['cursor_reset_required'] );
+				$this->assertSame( $case[1], $reset['data']['cursor'] );
+				$this->assertSame( $case[1], $this->read_private( $server, 'clients' )[42]['last_event_id'] );
+				$this->invoke_private( $server, 'send_missed_panel_events' );
+				$this->assertSame( strlen( $frame ), ftell( $socket ) );
+				fclose( $socket );
+			}
+		}
+	}
+
 	public function test_connected_pricing_service_receives_explicit_reset_when_cursor_falls_outside_retention(): void {
 		$pair = @stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
 		if ( false === $pair ) {

@@ -28,14 +28,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   async function evaluate(expression){const r=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
   await call('Page.enable');await call('Runtime.enable');await call('Network.enable');await call('Fetch.enable',{patterns:[{urlPattern:'*'}]});
   const evidence=[];
-  for(const [url,selector,event] of [['https://digitalogic.ir/catalog/','.dgl-catalog-results','digitalogic:catalog-refreshed'],['https://digitalogic.ir/shop/','.products','digitalogic:cards-refreshed']]) {
+  for(const [url,selector,event] of [['https://digitalogic.ir/catalog/','.dgl-catalog-results','digitalogic:catalog-refreshed'],['https://digitalogic.ir/product-category/product-category-121/','.products','digitalogic:cards-refreshed']]) {
    await call('Page.navigate',{url});let ready=false;for(let i=0;i<80&&!ready;i++){await sleep(250);ready=await evaluate(`!!document.querySelector(${JSON.stringify(selector)}) && document.readyState==='complete'`);}
    assert(ready,url+' ready');await sleep(1000);
-   const result=await evaluate(`(async()=>{const before=location.href;let done;const p=new Promise(r=>done=r);const start=performance.now();window.addEventListener(${JSON.stringify(event)},()=>done({elapsed_ms:Math.round(performance.now()-start),url_unchanged:location.href===before}),{once:true});for(let i=0;i<10;i++)window.dispatchEvent(new CustomEvent('digitalogic:product-invalidated',{detail:{id:Date.now()+i,name:'product.updated',data:{product_id:11589}}}));return await Promise.race([p,new Promise(r=>setTimeout(()=>r({timeout:true}),15000))]);})()`);
+   const result=await evaluate(`(async()=>{const before=location.href;let done;const p=new Promise(r=>done=r);const start=performance.now();window.addEventListener(${JSON.stringify(event)},()=>done({elapsed_ms:Math.round(performance.now()-start),url_unchanged:location.href===before}),{once:true});for(let i=0;i<10;i++)window.dispatchEvent(new CustomEvent('digitalogic:product-invalidated',{detail:{id:Date.now()+i,name:'product.updated',data:{product_id:14003}}}));return await Promise.race([p,new Promise(r=>setTimeout(()=>r({timeout:true}),15000))]);})()`);
    assert(!result.timeout,url+' invalidation render');assert(result.url_unchanged);evidence.push({url,...result});
   }
-  fs.writeFileSync(path.join(scratch,'acceptance.json'),JSON.stringify({candidate:process.argv.includes('--candidate'),evidence,errors,requests:requests.filter(r=>/catalog_page|digitalogic_realtime|search-freshness/.test(r.url))},null,2));
+  fs.writeFileSync(path.join(scratch,'acceptance.json'),JSON.stringify({candidate:process.argv.includes('--candidate'),evidence,errors,requests:requests.filter(r=>/catalog_page|product_fragments|digitalogic_realtime|search-freshness/.test(r.url))},null,2));
   console.log(JSON.stringify({evidence,errors}));await call('Browser.close');
  } finally {if(ws)ws.close();child.kill();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
-
