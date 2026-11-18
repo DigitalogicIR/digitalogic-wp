@@ -3848,6 +3848,16 @@ final class Digitalogic_Patris_Catalog_Materializer {
 	}
 
 	private function flush_product_caches( $product_id ) {
+		// Coordinated delivery suspends broad WordPress invalidation. Its clean_*
+		// helpers can therefore leave the initial draft cached after SQL publishes
+		// it. Evict exact readback inputs without releasing the outer suspension
+		// or firing premature publication hooks. The durable post-COMMIT plan
+		// invalidates them again before public events.
+		wp_cache_delete( (int) $product_id, 'posts' );
+		wp_cache_delete( (int) $product_id, 'post_meta' );
+		foreach ( get_object_taxonomies( 'product' ) as $taxonomy ) {
+			wp_cache_delete( (int) $product_id, $taxonomy . '_relationships' );
+		}
 		if (
 			class_exists( 'WC_Cache_Helper' )
 			&& is_callable( array( 'WC_Cache_Helper', 'invalidate_cache_group' ) )

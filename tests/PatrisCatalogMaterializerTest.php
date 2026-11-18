@@ -6,6 +6,32 @@ use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 final class PatrisCatalogMaterializerTest extends TestCase {
 
+	/** Exact readback eviction must work while the outer batch suspends broad hooks. */
+	public function test_publication_readback_evicts_draft_cache_without_releasing_suspension(): void {
+		$id = 991;
+		$cache_enabled = $GLOBALS['digitalogic_test_object_cache_enabled'] ?? false;
+		$cache_before = $GLOBALS['digitalogic_test_object_cache'] ?? array();
+		$GLOBALS['digitalogic_test_object_cache_enabled'] = true;
+		wp_cache_set( $id, (object) array( 'ID' => $id, 'post_status' => 'draft' ), 'posts' );
+		$GLOBALS['digitalogic_test_post_meta_cache'][ $id ] = array( '_price' => 'old' );
+		wp_cache_set( $id, array( 'exclude-from-catalog' ), 'product_visibility_relationships' );
+		$before = wp_suspend_cache_invalidation( true );
+		try {
+			clean_post_cache( $id );
+			$this->assertIsObject( wp_cache_get( $id, 'posts' ) );
+			$method = new ReflectionMethod( Digitalogic_Patris_Catalog_Materializer::class, 'flush_product_caches' );
+			$method->invoke( Digitalogic_Patris_Catalog_Materializer::instance(), $id );
+			$this->assertFalse( wp_cache_get( $id, 'posts' ) );
+			$this->assertArrayNotHasKey( $id, $GLOBALS['digitalogic_test_post_meta_cache'] );
+			$this->assertFalse( wp_cache_get( $id, 'product_visibility_relationships' ) );
+			$this->assertTrue( $GLOBALS['digitalogic_test_cache_invalidation_suspended'] );
+		} finally {
+			wp_suspend_cache_invalidation( $before );
+			$GLOBALS['digitalogic_test_object_cache_enabled'] = $cache_enabled;
+			$GLOBALS['digitalogic_test_object_cache'] = $cache_before;
+		}
+	}
+
 	private static $fixture_json;
 	private static $fixture;
 
