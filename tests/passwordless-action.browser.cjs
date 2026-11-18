@@ -1248,7 +1248,9 @@ async function checkStoryAssetProgress(browser) {
 
 async function checkAuthenticationThemes(browser, direction, labels, width) {
     for (const [theme, channel] of [['dark', 'sms'], ['light', 'sms'], ['dark', 'email'], ['light', 'email']]) {
-        const page = await browser.newPage({ viewport: { width, height: 850 }, colorScheme: theme, reducedMotion: 'reduce' });
+        const page = await browser.newPage({
+            viewport: { width, height: 850 }, colorScheme: theme, reducedMotion: 'reduce', hasTouch: direction === 'rtl'
+        });
         page.setDefaultTimeout(15000);
         let verifications = 0;
         try {
