@@ -28,7 +28,8 @@ function publicAsset(value) {
     const extension = url.pathname.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase();
     if (!Object.hasOwn(supportedTypes, extension)) return null;
     if (url.search && !/^\?ver=[\w.-]+$/.test(url.search)) return null;
-    return { url: url.href, type: supportedTypes[extension], versioned: Boolean(url.search) };
+    return { url: url.href, type: supportedTypes[extension], versioned: Boolean(url.search),
+        image: /^(?:svg|webp|png|jpe?g|avif)$/.test(extension) };
 }
 
 async function remember(cache, asset, response) {
@@ -70,23 +71,29 @@ self.addEventListener('message', event => {
 
 self.addEventListener('fetch', event => {
     const request = event.request;
-    if (request.method !== 'GET' || !destinations.has(request.destination) ||
+    const artwork = request.destination === '' && request.credentials === 'omit' && request.headers.get('Accept') === 'image/*';
+    if (request.method !== 'GET' || (!artwork && !destinations.has(request.destination)) ||
         request.cache === 'reload' || request.cache === 'no-store') return;
     const asset = publicAsset(request.url);
-    if (!asset) return;
+    if (!asset || (artwork && !asset.image)) return;
 
     event.respondWith((async () => {
         const cache = await caches.open(cacheName).catch(() => null);
         const existing = await cache?.match(asset.url).catch(() => undefined);
-        if (!existing) return fetch(request);
-        if (asset.versioned) return existing;
+        if (!existing && !artwork) return fetch(request);
+        if (existing && asset.versioned) return existing;
         // Revalidate URLs without a content version through the browser HTTP cache.
         try {
             const response = await fetch(asset.url, { credentials: 'omit', redirect: 'error', cache: 'no-cache' });
-            await remember(cache, asset, response).catch(() => {});
+            if (cache) {
+                const saved = remember(cache, asset, response).catch(() => {});
+                if (artwork) event.waitUntil(saved);
+                else await saved;
+            }
             return response;
         } catch (error) {
-            return existing;
+            if (existing) return existing;
+            throw error;
         }
     })());
 });

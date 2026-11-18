@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { createServer } = require('node:http');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
@@ -385,6 +386,138 @@ async function checkEmailGate(page, labels) {
     assert.equal(await primary.getAttribute('data-dg-identity-blocked'), 'true');
 }
 
+async function checkBrowserManagedSignIn(browser) {
+    for (const method of ['google', 'google-expired', 'fedcm', 'fedcm-retry', 'passkey', 'passkey-race']) {
+        const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
+        try {
+            const google = method.startsWith('google');
+            const passkey = method.startsWith('passkey');
+            const retry = method.endsWith('-retry');
+            const googleExpired = method === 'google-expired';
+            const providers = passkey ? [] : [{
+                key: google ? 'google' : 'partner',
+                label: 'Partner', clientId: 'registered-client', oneTap: true,
+                fedcm: 'https://partner.test/fedcm.json', redirect: false
+            }];
+            const completed = [];
+            let prepared = 0;
+            let releaseOptions;
+            const optionsReleased = new Promise(resolve => { releaseOptions = resolve; });
+            await page.route('**/federation/prepare', route => route.fulfill({
+                json: { nonce: ++prepared === 1 ? 'bound-challenge' : 'renewed-challenge', expires_in: 600 }
+            }));
+            await page.route('**/federation/complete', route => {
+                completed.push(route.request().postDataJSON());
+                if ((retry || googleExpired) && completed.length === 1) {
+                    return route.fulfill({ status: 403, json: { code: 'federation_expired' } });
+                }
+                return route.fulfill({ json: { redirect: '/intended-destination' } });
+            });
+            await page.route('**/passkey-vendor', async route => {
+                const start = route.request().postData().includes('start_passwordless_login');
+                if (start && method === 'passkey-race') { await optionsReleased; }
+                return route.fulfill({
+                    json: start ? { success: true, data: { token: { challenge: 'nonce', rpId: 'digitalogic.test' } } }
+                        : { success: true, data: { process: true, process_type: 'login', redirect: '/intended-destination' } }
+                });
+            });
+            await render(page, 'ltr', {}, false, '', {
+                federatedLogin: { prepare: '/federation/prepare', complete: '/federation/complete', providers, passkeys: passkey }
+            });
+            await page.evaluate(() => {
+                window.digitalogicBrowserSuccess = 0;
+                window.DigitalogicAuthSuccess = () => { window.digitalogicBrowserSuccess++; };
+                window.GoogleFixture = {};
+                window.google = { accounts: { id: {
+                    initialize(options) { window.GoogleFixture.options = options; },
+                    renderButton(slot) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.textContent = 'GIS fixture';
+                        button.addEventListener('click', () => window.GoogleFixture.options.callback({ credential: 'signed-fixture' }));
+                        slot.append(button);
+                    },
+                    prompt() { window.GoogleFixture.prompted = true; },
+                    cancel() { window.GoogleFixture.cancelled = true; }
+                } } };
+                window.IdentityCredential = class {};
+                window.PublicKeyCredential.isConditionalMediationAvailable = async () => true;
+                window.digits_preparePublicKeyOptions = value => value;
+                window.digits_preparePublicKeyCredentials = value => value;
+                window.dig_script = { ajax_url: '/passkey-vendor' };
+                window.DigitalogicFinishBrowserPasskey = (_form, data) => {
+                    window.passkeyDestination = data.redirect;
+                    return true;
+                };
+                window.manualPasskeyClicks = 0;
+                document.addEventListener('click', event => {
+                    if (event.target.closest('.digits-form_passwordless_login')) { window.manualPasskeyClicks++; }
+                });
+                Object.defineProperty(navigator.credentials, 'get', { value: async options => {
+                    window.credentialOptions = options;
+                    return options.identity ? { token: 'signed-fixture' } : { id: 'stored-passkey' };
+                } });
+            });
+            await page.addScriptTag({ path: path.join(__dirname, '..', 'assets', 'js', 'branding', 'browser-signin.js') });
+            const button = page.getByRole('button', { name: 'Sign in in the browser with Partner' });
+            if (google) {
+                await page.waitForFunction(() => window.GoogleFixture.prompted);
+                const options = await page.evaluate(() => ({
+                    nonce: window.GoogleFixture.options.nonce, auto: window.GoogleFixture.options.auto_select
+                }));
+                assert.deepEqual(options, { nonce: 'bound-challenge', auto: false });
+                const oauth = page.locator('#digits_google_login');
+                assert.equal(await oauth.isVisible(), true);
+                assert.equal(await page.getByRole('button', { name: 'GIS fixture' }).count(), 0);
+                await page.evaluate(() => window.GoogleFixture.options.callback({ credential: 'signed-fixture' }));
+                if (googleExpired) {
+                    await page.getByText('Google One Tap expired. Use the Google button to continue.').waitFor();
+                    assert.equal(completed.length, 1);
+                    assert.equal(prepared, 1);
+                    assert.equal(await page.evaluate(() => window.digitalogicBrowserSuccess), 0);
+                    await oauth.click();
+                    assert.equal(await page.evaluate(() => window.GoogleFixture.cancelled), true);
+                    continue;
+                }
+            } else if (!passkey) {
+                await button.click();
+                const request = await page.evaluate(() => window.credentialOptions.identity);
+                assert.equal(request.mode, 'active');
+                assert.deepEqual(request.providers[0].params, { nonce: 'bound-challenge' });
+            } else {
+                const vendorRequested = method === 'passkey-race' ? page.waitForRequest('**/passkey-vendor') : undefined;
+                await page.locator('input[name="digits_phone"]').click();
+                if (method === 'passkey-race') {
+                    try {
+                        await vendorRequested;
+                        await page.locator('.dg-passkey-options summary').click();
+                        const explicit = page.locator('.digits-form_passwordless_login');
+                        await explicit.click();
+                        await explicit.click();
+                        assert.equal(await page.evaluate(() => window.manualPasskeyClicks), 0);
+                    } finally { releaseOptions(); }
+                    await page.waitForFunction(() => window.manualPasskeyClicks === 1);
+                    assert.equal(await page.evaluate(() => window.credentialOptions), undefined);
+                    continue;
+                }
+                await page.waitForFunction(() => window.passkeyDestination === '/intended-destination');
+                assert.equal(await page.evaluate(() => window.credentialOptions.mediation), 'conditional');
+                continue;
+            }
+            const expected = [{ nonce: 'bound-challenge', credential: 'signed-fixture' }];
+            if (retry) {
+                await page.getByText('A new sign-in request is ready.').waitFor();
+                assert.equal(prepared, 2);
+                assert.equal(completed.length, 1, 'A fresh browser response requires another selection');
+                await button.click();
+                expected.push({ nonce: 'renewed-challenge', credential: 'signed-fixture' });
+            }
+            await page.waitForFunction(() => window.digitalogicBrowserSuccess === 1);
+            assert.deepEqual(completed.map(({ nonce, credential }) => ({ nonce, credential })), expected);
+        } finally { await page.close(); }
+    }
+}
+
 async function checkStoryDrawer(browser, direction, labels) {
     const page = await browser.newPage({ viewport: { width: 1050, height: 850 } });
     try {
@@ -401,12 +534,25 @@ async function checkStoryDrawer(browser, direction, labels) {
         const shell = page.locator('.dg-has-story-drawer');
         const toggle = shell.locator('.dg-story-drawer-toggle');
         await page.waitForFunction(() => document.querySelector('.dg-story-drawer-toggle')?.getAttribute('aria-expanded') === 'true');
-        assert.equal(await shell.locator('.dg-story-loading').isVisible(), true);
+        const loader = shell.locator('.dg-story-loading');
+        assert.equal(await loader.isVisible(), true);
+        assert.match(await loader.locator('span').evaluate(mark => getComputedStyle(mark, '::after').backgroundImage), /\/images\/icon\.svg/);
         showStories();
-        await shell.locator('.dg-story-loading').waitFor({ state: 'hidden' });
+        await loader.waitFor({ state: 'hidden' });
         await shell.evaluate(node => Promise.all(node.getAnimations({ subtree: true })
             .filter(animation => ['width', 'margin-left', 'transform'].includes(animation.transitionProperty))
             .map(animation => animation.finished.catch(() => {}))));
+        const expanded = await toggle.boundingBox();
+        const drawer = shell.locator('.dg-story-drawer');
+        const panel = await drawer.boundingBox();
+        assert.ok(expanded.height > expanded.width && expanded.height < 56, 'The handle has a compact vertical shape');
+        assert.ok(Math.abs(expanded.x + expanded.width / 2 - panel.x - panel.width) <= 1, 'The handle straddles the right border');
+        assert.ok(Math.abs(expanded.y + expanded.height / 2 - panel.y - panel.height / 2) <= 1, 'The handle is vertically centered');
+        const chevron = toggle.locator('.dg-story-toggle-chevron');
+        assert.equal(await chevron.evaluate(node => getComputedStyle(node).opacity), '0');
+        await toggle.hover();
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('.dg-story-toggle-chevron')).opacity === '1');
+        await page.mouse.move(0, 0);
         const track = shell.locator('.dg-story-track');
         const gap = await track.evaluate(element => {
             const [a, b] = element.children;
@@ -428,10 +574,13 @@ async function checkStoryDrawer(browser, direction, labels) {
         assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '1');
         await page.waitForFunction(() => {
-            const rail = document.querySelector('.dg-story-drawer-toggle');
-            return Math.abs(rail.parentElement.clientWidth - rail.clientWidth) <= 1;
+            const drawer = document.querySelector('.dg-story-drawer');
+            return drawer?.clientWidth === 0 && getComputedStyle(drawer).visibility === 'hidden';
         });
         const grip = await toggle.boundingBox();
+        const closedCard = await shell.boundingBox();
+        assert.ok(Math.abs(grip.x + grip.width / 2 - closedCard.x - closedCard.width) <= 1, 'The reopen handle straddles the right edge');
+        assert.ok(Math.abs(grip.y + grip.height / 2 - closedCard.y - closedCard.height / 2) <= 1, 'The reopen handle is vertically centered');
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
         const movement = 96;
@@ -439,16 +588,14 @@ async function checkStoryDrawer(browser, direction, labels) {
         await page.mouse.down();
         await page.mouse.move(x + movement, y, { steps: 12 });
         const moved = await toggle.boundingBox();
-        assert.ok(Math.abs(moved.x - grip.x - movement) < 1, 'The rail follows the pointer at 1:1 scale');
+        assert.ok(Math.abs(moved.x - grip.x - movement) < 1, 'The button follows the pointer at 1:1 scale');
+        assert.equal(await drawer.evaluate(node => getComputedStyle(node).visibility), 'visible');
         await page.mouse.up();
         assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
         if (direction === 'rtl') {
             await toggle.click();
-            await page.waitForFunction(() => {
-                const rail = document.querySelector('.dg-story-drawer-toggle');
-                return Math.abs(rail.parentElement.clientWidth - rail.clientWidth) <= 1;
-            });
+            await page.waitForFunction(() => document.querySelector('.dg-story-drawer')?.clientWidth === 0);
             await page.evaluate(() => {
                 window.storyVibrations = [];
                 Object.defineProperty(navigator, 'vibrate', {
@@ -457,8 +604,8 @@ async function checkStoryDrawer(browser, direction, labels) {
             });
             const cdp = await page.context().newCDPSession(page);
             await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
-            const rail = await toggle.boundingBox();
-            const touch = { x: rail.x + rail.width / 2, y: rail.y + rail.height / 2 };
+            const button = await toggle.boundingBox();
+            const touch = { x: button.x + button.width / 2, y: button.y + button.height / 2 };
             await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch] });
             await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, x: touch.x + 40 }] });
             await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, x: touch.x + 112 }] });
@@ -473,7 +620,8 @@ async function checkStoryDrawer(browser, direction, labels) {
         assert.equal(await page.evaluate(() => localStorage.getItem('digitalogic-login-stories-collapsed')), '0');
         await page.waitForFunction(() => document.body.dataset.redirected === 'yes');
         await page.setViewportSize({ width: 390, height: 850 });
-        assert.equal(await shell.locator('.dg-story-drawer').isVisible(), false);
+        assert.equal(await drawer.isVisible(), false);
+        assert.equal(await toggle.isVisible(), false);
     } finally { await page.close(); }
 }
 
@@ -613,6 +761,19 @@ async function checkSmsAction(page, labels) {
     const first = page.locator('.dg-otp-slot input').first();
     await first.waitFor();
     assert.equal(await page.locator('body').getAttribute('data-selected-channel'), 'sms_otp');
+    const recipient = page.locator('.dg-otp-stack .dg-auth-identity--phone');
+    const number = recipient.locator('.dg-auth-identity-value');
+    assert.equal(await number.textContent(), '+989120000000');
+    assert.ok(await number.evaluate(value => {
+        const field = value.parentElement;
+        const valueBox = value.getBoundingClientRect();
+        const fieldBox = field.getBoundingClientRect();
+        const style = getComputedStyle(value);
+        return !field.querySelector('input, button, [contenteditable]') &&
+            Math.abs(valueBox.left + valueBox.right - fieldBox.left - fieldBox.right) < 2 &&
+            style.direction === 'ltr' && style.fontVariantNumeric === 'proportional-nums' &&
+            parseFloat(style.letterSpacing) < 0 && parseFloat(getComputedStyle(field).borderTopWidth) >= 1;
+    }), 'The read-only recipient is centered with compact proportional digits');
     const caption = page.locator('.dg-otp-instructions');
     await caption.locator('.digits_otp_info_ic').waitFor();
     const digits = page.locator('.dg-otp-slot input:visible');
@@ -914,7 +1075,7 @@ async function checkLoginStories(browser) {
         body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
     }));
     await page.addInitScript(() => {
-        window.DigitalogicBranding = { loginSlidesUrl: '/stories', showLoginThemeSwitcher: true };
+        window.DigitalogicBranding = { loginSlidesUrl: '/stories', showLoginThemeSwitcher: true, loginStoryNavThumbs: false };
     });
     async function open() {
         await page.goto('https://digitalogic.test/login/');
@@ -930,6 +1091,8 @@ async function checkLoginStories(browser) {
     await panel.locator('.dg-story-loading').waitFor({ state: 'hidden' });
     assert.equal(requests, 1);
     async function assertSingleRow(visibleLabels) {
+        await page.waitForFunction(count => [...document.querySelectorAll('.dg-story-controls .dg-story-label')]
+            .filter(label => label.getClientRects().length).length === count, visibleLabels);
         await panel.evaluate(node => Promise.all(node.getAnimations()
             .filter(animation => animation.transitionProperty === 'transform')
             .map(animation => animation.finished.catch(() => {}))));
@@ -953,17 +1116,26 @@ async function checkLoginStories(browser) {
     await page.setViewportSize({ width: 768, height: 1024 });
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'قطعات');
     assert.equal(await page.locator('#login > .dg-login-preferences').count(), 1);
-    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/light.webp');
+    const image = panel.locator('article:not([inert]) .dg-story-image[src^="blob:"]');
+    await image.waitFor();
+    const lightSource = await image.getAttribute('src');
     const theme = page.locator('.dg-login-preferences .dg-theme-toggle-button');
     await theme.click();
-    await page.locator('[data-dg-theme-choice="dark"]').click();
-    assert.equal(await panel.locator('article:not([inert]) img').getAttribute('src'), 'https://digitalogic.test/story.webp');
+    await Promise.all([
+        page.waitForResponse('**/story.webp'),
+        page.locator('[data-dg-theme-choice="dark"]').click()
+    ]);
+    await page.waitForFunction(previous => {
+        const source = document.querySelector('.dg-story-card.is-active .dg-story-image')?.getAttribute('src');
+        return source?.startsWith('blob:') && source !== previous;
+    }, lightSource);
     assert.equal(await panel.locator('.dg-story-rotation').isVisible(), false);
     await panel.locator('.dg-story-dot').first().press('ArrowLeft');
     assert.equal(await panel.locator('article:not([inert]) h2').textContent(), 'ساخت برد');
     assert.equal(await panel.getByRole('link', { name: 'مشاهده' }).getAttribute('href'), 'https://digitalogic.test/product/1');
     assert.equal(await panel.locator('article[inert]:not([data-dg-clone])').count(), 2);
     assert.equal(await panel.locator('.dg-story-dot').count(), 3);
+    assert.equal(await panel.locator('.dg-story-thumb').count(), 0);
     await panel.locator('.dg-story-dot').first().click();
     assert.equal(await panel.locator('.dg-story-dot[aria-pressed="true"]').count(), 1);
     await panel.getByRole('button', { name: 'اسلاید قبلی' }).click();
@@ -1004,6 +1176,74 @@ async function checkLoginStories(browser) {
     assert.equal(await panel.locator('article img[alt="تصویر معرفی"]').count(), 1);
     assert.equal(await panel.locator('.dg-story-controls, .dg-story-stage[data-draggable]').count(), 0);
     await page.close();
+}
+
+async function checkStoryAssetProgress(browser) {
+    const frame = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+    const pending = new Map();
+    const server = createServer((request, response) => {
+        const url = new URL(request.url, 'http://localhost');
+        if (url.pathname === '/stories') {
+            response.setHeader('Content-Type', 'application/json');
+            response.end(JSON.stringify([
+                { title: 'Known length', image: '/known.gif', thumbnail: '/thumb.gif' },
+                { title: 'Unknown length', image: '/unknown.gif' }
+            ]));
+        } else if (url.pathname.endsWith('.gif')) {
+            response.setHeader('Content-Type', 'image/gif');
+            if (url.pathname !== '/unknown.gif') { response.setHeader('Content-Length', frame.length); }
+            if (url.pathname === '/thumb.gif') { response.end(frame); return; }
+            pending.set(url.pathname, response);
+            response.write(frame.subarray(0, 12));
+        } else {
+            response.setHeader('Content-Type', 'text/html');
+            response.end('<body class="login"><div id="login"><div class="dg-digits-login-shell"><div class="digits-form_container">Sign in</div></div></div></body>');
+        }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const page = await browser.newPage({ viewport: { width: 1050, height: 840 }, reducedMotion: 'no-preference' });
+    try {
+        await page.addInitScript(() => {
+            window.DigitalogicBranding = { loginSlidesUrl: '/stories', loginStoryNavThumbs: true };
+        });
+        await page.goto('http://127.0.0.1:' + server.address().port);
+        await page.addStyleTag({ path: styles });
+        await page.addScriptTag({ path: branding });
+        await page.evaluate(() => document.dispatchEvent(new Event('DOMContentLoaded')));
+        await page.waitForFunction(expected => {
+            const meter = document.querySelector('.dg-story-card.is-active progress');
+            return meter?.value === expected && meter.max > meter.value;
+        }, frame.length + 12);
+        assert.equal(await page.locator('.dg-story-loading').isVisible(), false);
+        const active = page.locator('.dg-story-card.is-active');
+        const preview = active.locator('.dg-story-preview[src^="blob:"]');
+        const photo = active.locator('.dg-story-image');
+        await preview.waitFor();
+        assert.equal(await preview.evaluate(node => getComputedStyle(node).filter), 'blur(4px)');
+        assert.equal(await photo.evaluate(node => getComputedStyle(node).opacity), '0');
+        assert.equal(await active.locator('progress').getAttribute('max'), String(frame.length * 2));
+        await page.locator('.dg-story-dot').nth(1).click();
+        await active.getByText('12 bytes').waitFor();
+        assert.equal(await active.locator('progress').getAttribute('value'), null);
+        await page.locator('.dg-story-dot').first().click();
+        await photo.evaluate(node => {
+            node.addEventListener('transitionrun', event => {
+                if (event.propertyName === 'opacity') {
+                    node.dataset.fadingOverPreview = getComputedStyle(node.previousElementSibling).visibility;
+                }
+            }, { once: true });
+        });
+        for (const response of pending.values()) { response.end(frame.subarray(12)); }
+        await active.locator('.dg-story-transfer').waitFor({ state: 'hidden' });
+        await preview.waitFor({ state: 'hidden' });
+        assert.equal(await photo.getAttribute('data-fading-over-preview'), 'visible');
+        assert.equal(await photo.evaluate(node => getComputedStyle(node).opacity), '1');
+        assert.equal(await page.locator('.dg-story-thumb-image[src^="blob:"]:visible').count(), 2);
+    } finally {
+        await page.close();
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+    }
 }
 
 async function checkLoginSwitchers(browser) {
@@ -1089,6 +1329,8 @@ async function checkLoginSwitchers(browser) {
     try {
         await checkLoginSwitchers(browser);
         await checkLoginStories(browser);
+        await checkStoryAssetProgress(browser);
+        await checkBrowserManagedSignIn(browser);
         for (const [direction, width, skipPassword, skipPasswordCaption] of [
             ['rtl', 390, 'ورود بدون رمز عبور', 'رمز خود را فراموش کرده اید؟'],
             ['ltr', 1024, 'Sign in without a password', 'Forgot your password?']
@@ -1122,9 +1364,26 @@ async function checkLoginSwitchers(browser) {
                     await checkIdentityPrompt(page, labels.phonePlaceholder);
                     await identity.fill('');
                     await checkIdentityPrompt(page, labels.identityPlaceholder);
+                    const shell = page.locator('.dg-digits-login-shell');
+                    const cardHeight = (await shell.boundingBox()).height;
                     await page.locator('.dg-passkey-options summary').click();
                     await checkIconAndLabel(page.getByRole('button', { name: labels.passkeyLogin, exact: true }), direction, 10);
-                    await page.locator('input[name="digits_phone"]').fill('fixture-user');
+                    assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Opening other methods must not resize the card');
+                    await identity.fill('09120000000');
+                    await page.locator('.dg-phone-channels').getByRole('radio').last().waitFor();
+                    assert.ok(Math.abs((await shell.boundingBox()).height - cardHeight) < 1, 'Showing verification choices must not resize the card');
+                    if (direction === 'rtl') {
+                        await page.setViewportSize({ width, height: 320 });
+                        await identity.fill('');
+                        await page.locator('.dg-passkey-options summary').click();
+                        await page.waitForFunction(() => {
+                            const card = document.querySelector('.dg-digits-login-shell');
+                            return card.getBoundingClientRect().bottom <= innerHeight &&
+                                !card.matches('[data-dg-reserve-phone], [data-dg-reserve-passkey]');
+                        });
+                        await page.setViewportSize({ width, height: 800 });
+                    }
+                    await identity.fill('fixture-user');
                     await page.getByRole('button', { name: labels.continue, exact: true }).click();
                     assert.equal(await remember.count(), 0);
                     await checkAlternatives(page, false);

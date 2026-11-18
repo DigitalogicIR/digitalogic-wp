@@ -1688,6 +1688,17 @@
         return true;
     }
 
+    window.DigitalogicFinishBrowserPasskey = function (form, data) {
+        if (!data?.process || data.process_type !== 'login') { return false; }
+        finishBrandedDigitsLogin(form, data);
+        try {
+            var destination = new URL(data.redirect || config.loginUrl || '/', window.location.href);
+            if (destination.origin !== window.location.origin || destination.username || destination.password) { return false; }
+            showAuthSuccess(function () { window.location.assign(destination.href); });
+            return true;
+        } catch (error) { return false; }
+    };
+
     async function showRecoveryDialog(destination, loginForm) {
         var endpoint = config.ajaxUrl || '/wp-admin/admin-ajax.php';
         async function post(action, fields) {
@@ -2729,6 +2740,7 @@
                 ? authRequestLabel('Your email', 'ایمیل شما')
                 : authRequestLabel('Your phone number', 'شمارهٔ شما'));
             recipient.classList.add('dg-auth-identity--recipient');
+            if (!email) { recipient.classList.add('dg-auth-identity--phone'); }
             recipient.querySelector('bdi').dir = 'ltr';
             stack.appendChild(recipient);
         }
@@ -3586,7 +3598,8 @@
             phoneInput.required = visibleMode === 'phone';
             phoneInput.type = nextMode === 'phone' ? 'tel' : 'text';
             phoneInput.setAttribute('inputmode', nextMode === 'phone' ? 'tel' : 'text');
-            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national' : 'username');
+            phoneInput.setAttribute('autocomplete', nextMode === 'phone' ? 'tel-national'
+                : phoneInput.dataset.dgPasskeyAutofill ? 'username webauthn' : 'username');
             var firstLetter = phoneInput.value.match(/\p{Letter}/u)?.[0] || '';
             phoneInput.dir = nextMode === 'username' && /[\p{Script=Arabic}\p{Script=Hebrew}]/u.test(firstLetter) ? 'rtl' : 'ltr';
         }
@@ -4083,7 +4096,7 @@
                 ? getLabel('phoneSms', 'Text message') : getLabel('phoneCall', 'Phone call')));
             channels.appendChild(label);
         });
-        phoneInput.closest('.digits-mobile_wrapper')?.after(channels);
+        phoneInput.closest('.digits-form_tab_wrapper')?.append(channels);
         function updatePhoneChannels() {
             var number = phonePartsFromValue(phoneInput.value, countryCode?.value);
             channels.hidden = shell.dataset.dgIdentity !== 'phone' || !canChoosePhoneChannel(number, shell);
@@ -4492,12 +4505,15 @@
                 var image = storyUrl(row.image);
                 var lightImage = storyUrl(row.image_light) || image;
                 var darkImage = storyUrl(row.image_dark) || image;
+                var thumbnail = storyUrl(row.thumbnail);
                 var link = storyUrl(row.link);
                 var title = typeof row.title === 'string' ? row.title.trim() : '';
                 if (!lightImage && !darkImage) { return []; }
                 return [{
                     lightImage: lightImage || darkImage,
                     darkImage: darkImage || lightImage,
+                    lightThumb: storyUrl(row.thumbnail_light) || thumbnail || lightImage || darkImage,
+                    darkThumb: storyUrl(row.thumbnail_dark) || thumbnail || darkImage || lightImage,
                     alt: typeof row.alt === 'string' ? row.alt : '',
                     link: link,
                     title: title,
@@ -4524,7 +4540,7 @@
                 if (!cards.length) {
                     var url = new URL(config.loginSlidesUrl, window.location.href);
                     url.searchParams.set('locale', locale);
-                    var fallback = await window.fetch(url, { credentials: 'same-origin' });
+                    var fallback = await window.fetch(url, { credentials: 'same-origin', signal: window.AbortSignal?.timeout?.(10000) });
                     cards = readCards(fallback.ok ? await fallback.json() : null);
                 }
                 if (cards.length && shell.isConnected) {
@@ -4555,15 +4571,25 @@
         panel.inert = true;
         var loader = document.createElement('div');
         loader.className = 'dg-story-loading';
-        loader.setAttribute('aria-hidden', 'true');
-        loader.append(document.createElement('span'));
+        loader.setAttribute('role', 'status');
+        loader.setAttribute('aria-label', fa ? 'در حال دریافت اطلاعات اسلایدها' : 'Loading carousel information');
+        var mark = document.createElement('span');
+        mark.setAttribute('aria-hidden', 'true');
+        loader.append(mark);
         panel.append(loader);
         var toggle = document.createElement('button');
         toggle.className = 'dg-story-drawer-toggle';
         toggle.type = 'button';
         toggle.setAttribute('aria-controls', panel.id);
-        drawer.append(panel, toggle);
-        shell.prepend(drawer);
+        var grip = document.createElement('span');
+        grip.className = 'dg-story-toggle-grip';
+        putAuthIcon(grip, 'dragGrip');
+        var chevron = document.createElement('span');
+        chevron.className = 'dg-story-toggle-chevron';
+        putAuthIcon(chevron, 'chevronDown');
+        toggle.append(grip, chevron);
+        drawer.append(panel);
+        shell.prepend(toggle, drawer);
         shell.classList.add('dg-has-login-stories', 'dg-has-story-drawer');
 
         var storageKey = 'digitalogic-login-stories-collapsed';
@@ -4575,7 +4601,6 @@
         var panelWidth = 0;
         var formWidth = 0;
         var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-        var started = performance.now();
 
         function measure() {
             var width = Math.max(0, layout.clientWidth - 2);
@@ -4596,7 +4621,6 @@
                 (fa ? 'باز کردن پنل محصولات' : 'Expand product panel');
             toggle.setAttribute('aria-label', label);
             toggle.title = label;
-            putAuthIcon(toggle, open ? 'back' : 'arrow');
             if (userAction) {
                 manual = true;
                 try { window.localStorage.setItem(storageKey, open ? '0' : '1'); } catch (error) { /* Storage is optional. */ }
@@ -4636,9 +4660,9 @@
                 haptic(event, 7);
                 changed();
             }
-            var rail = toggle.getBoundingClientRect().width;
-            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - 14);
-            var width = Math.max(rail, Math.min(limit, drag.width + delta));
+            var edgeInset = toggle.offsetWidth / 2 + 2;
+            var limit = Math.min(panelWidth, document.documentElement.clientWidth - drag.left - formWidth - edgeInset);
+            var width = Math.max(0, Math.min(limit, drag.width + delta));
             layout.style.setProperty('--dg-story-reveal', width + 'px');
             shell.style.setProperty('--dg-story-fold', (reduced.matches ? 0 : -22 * (1 - width / panelWidth)) + 'deg');
             var atDetent = (open ? -delta : delta) >= 72;
@@ -4685,20 +4709,16 @@
         return {
             panel: panel,
             isOpen: function () { return open && !drag?.active && !drawer.hasAttribute('aria-busy'); },
-            ready: function (image) {
-                var loaded = image?.decode ? image.decode().catch(function () {}) : Promise.resolve();
-                var fade = new Promise(function (resolve) { window.setTimeout(resolve, Math.max(0, 250 - (performance.now() - started))); });
-                var deadline = new Promise(function (resolve) { window.setTimeout(resolve, 1600); });
-                void Promise.race([Promise.all([loaded, fade]), deadline]).then(function () {
-                    loader.hidden = true;
-                    drawer.removeAttribute('aria-busy');
-                    changed();
-                });
+            ready: function () {
+                loader.hidden = true;
+                drawer.removeAttribute('aria-busy');
+                changed();
             },
             remove: function () {
                 resize?.disconnect();
                 window.removeEventListener('resize', measure);
                 success.disconnect();
+                toggle.remove();
                 drawer.remove();
                 shell.classList.remove('dg-has-login-stories', 'dg-has-story-drawer');
                 shell.removeAttribute('data-drawer-open');
@@ -4707,6 +4727,66 @@
                 ['--dg-story-panel-width', '--dg-story-form-width', '--dg-story-anchor',
                     '--dg-story-reveal'].forEach(function (name) { layout.style.removeProperty(name); });
             }
+        };
+    }
+
+    function createStoryAssetLoader(onChange) {
+        var assets = new Map();
+
+        async function load(url, asset) {
+            var source;
+            try {
+                var response = await window.fetch(url, {
+                    mode: 'same-origin', credentials: 'omit', headers: { Accept: 'image/*' },
+                    signal: window.AbortSignal?.timeout?.(30000)
+                });
+                var type = response.headers.get('Content-Type') || '';
+                if (!response.ok || !/^image\//i.test(type)) { throw new Error('Image response'); }
+                var encoding = response.headers.get('Content-Encoding');
+                var length = Number(response.headers.get('Content-Length'));
+                if ((!encoding || encoding === 'identity') && Number.isSafeInteger(length) && length > 0) {
+                    asset.total = length;
+                }
+                onChange();
+
+                var blob;
+                if (response.body) {
+                    var chunks = [];
+                    var reader = response.body.getReader();
+                    while (true) {
+                        var chunk = await reader.read();
+                        if (chunk.done) { break; }
+                        chunks.push(chunk.value);
+                        asset.bytes += chunk.value.byteLength;
+                        if (asset.total !== null && asset.bytes > asset.total) { asset.total = null; }
+                        onChange();
+                    }
+                    blob = new Blob(chunks, { type: type });
+                } else {
+                    blob = await response.blob();
+                    asset.bytes = blob.size;
+                }
+                asset.total = asset.bytes;
+                source = URL.createObjectURL(blob);
+                var image = new Image();
+                image.src = source;
+                await image.decode();
+                asset.src = source;
+            } catch (_error) {
+                if (source) { URL.revokeObjectURL(source); }
+                asset.failed = true;
+            } finally {
+                onChange();
+            }
+        }
+
+        return function (url) {
+            if (!assets.has(url)) {
+                var asset = { bytes: 0, total: null, src: '', failed: false };
+                assets.set(url, asset);
+                void load(url, asset);
+            }
+            return assets.get(url);
         };
     }
 
@@ -4721,6 +4801,7 @@
         var region = drawer?.panel || element('aside', 'dg-login-stories');
         var rtl = getComputedStyle(shell).direction === 'rtl';
         var multiple = cards.length > 1;
+        var showThumbnails = config.loginStoryNavThumbs !== false;
         region.setAttribute('aria-label', fa ? 'محصولات و خدمات دیجیتالاجیک' : 'Digitalogic products and services');
         if (multiple) { region.setAttribute('aria-roledescription', fa ? 'نمایش اسلاید' : 'carousel'); }
         var header = element('div', 'dg-story-header');
@@ -4736,18 +4817,31 @@
         announcement.setAttribute('aria-live', 'polite');
         var articles = [];
         var indicators = [];
+        var previews = [];
+        var percentFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en', { style: 'percent', maximumFractionDigits: 0 });
+        var bytesFormat = new Intl.NumberFormat(fa ? 'fa-IR' : 'en');
 
         cards.forEach(function (card, index) {
             var article = element('article', 'dg-story-card');
             article.dir = rtl ? 'rtl' : 'ltr';
+            article.dataset.storyIndex = index;
             var figure = element('div', 'dg-story-figure');
+            var previewImage = element('img', 'dg-story-preview');
+            previewImage.alt = '';
+            previewImage.draggable = false;
+            previewImage.hidden = true;
             var photo = element('img', 'dg-story-image');
-            photo.dataset.lightImage = card.lightImage;
-            photo.dataset.darkImage = card.darkImage;
             photo.alt = card.alt;
             photo.decoding = 'async';
             photo.draggable = false;
-            figure.append(photo);
+            photo.setAttribute('aria-hidden', 'true');
+            var transfer = element('div', 'dg-story-transfer');
+            var caption = element('span', 'dg-story-transfer-label', fa ? 'دریافت تصویر' : 'Downloading artwork');
+            var readout = element('span', 'dg-story-transfer-readout');
+            var meter = element('progress', 'dg-story-download');
+            meter.setAttribute('aria-label', caption.textContent);
+            transfer.append(caption, readout, meter);
+            figure.append(previewImage, photo, transfer);
             card.notes.forEach(function (note) { figure.append(element('span', 'dg-story-note', note)); });
             var copy = element('div', 'dg-story-copy');
             if (card.title) { copy.append(element('h2', 'dg-story-title', card.title)); }
@@ -4769,6 +4863,18 @@
                 var dot = element('button', 'dg-story-dot');
                 dot.type = 'button';
                 dot.setAttribute('aria-label', card.tab ? position + ', ' + card.tab : position);
+                if (showThumbnails) {
+                    var tile = element('span', 'dg-story-thumb');
+                    tile.setAttribute('aria-hidden', 'true');
+                    var thumb = element('img', 'dg-story-thumb-image');
+                    thumb.alt = '';
+                    thumb.draggable = false;
+                    thumb.hidden = true;
+                    var thumbMeter = element('progress', 'dg-story-download');
+                    tile.append(thumb, thumbMeter);
+                    dot.append(tile);
+                    previews.push({ photo: thumb, meter: thumbMeter });
+                }
                 if (card.tab) { dot.append(element('span', 'dg-story-label', card.tab)); }
                 dot.addEventListener('click', function () { select(index, true); });
                 indicators.push(dot);
@@ -4791,16 +4897,83 @@
             track.append(wrapCopy(ordered[0]));
         }
 
-        var photos = track.querySelectorAll('.dg-story-image');
+        var figures = Array.from(track.querySelectorAll('.dg-story-figure'), function (figure) {
+            return {
+                index: Number(figure.closest('article').dataset.storyIndex),
+                root: figure,
+                preview: figure.querySelector('.dg-story-preview'),
+                photo: figure.querySelector('.dg-story-image'),
+                transfer: figure.querySelector('.dg-story-transfer'),
+                label: figure.querySelector('.dg-story-transfer-label'),
+                readout: figure.querySelector('.dg-story-transfer-readout'),
+                meter: figure.querySelector('progress')
+            };
+        });
+        var pictures = [];
+        var repaint = 0;
+        var getAsset = createStoryAssetLoader(function () {
+            if (!repaint) { repaint = window.requestAnimationFrame(renderImages); }
+        });
+
         function syncImages() {
-            var theme = document.body.dataset.dgTheme === 'dark' ? 'darkImage' : 'lightImage';
-            photos.forEach(function (photo) {
-                var next = photo.dataset[theme];
-                if (photo.getAttribute('src') !== next) { photo.src = next; }
+            var dark = document.body.dataset.dgTheme === 'dark';
+            pictures = cards.map(function (card) {
+                var preview = getAsset(dark ? card.darkThumb : card.lightThumb);
+                var main = getAsset(dark ? card.darkImage : card.lightImage);
+                return { preview: preview, main: main };
             });
+            if (timer !== undefined) { schedule(); }
+            renderImages();
         }
-        syncImages();
-        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
+
+        function setImage(photo, source) {
+            photo.hidden = !source;
+            if (source && photo.getAttribute('src') !== source) { photo.src = source; }
+        }
+
+        function setDownload(meter, state) {
+            meter.hidden = !state.loading;
+            if (state.loading && state.total > 0) {
+                meter.max = state.total;
+                meter.value = state.bytes;
+            } else {
+                meter.removeAttribute('value');
+            }
+        }
+
+        function renderImages() {
+            repaint = 0;
+            var states = pictures.map(function (picture) {
+                var assets = picture.preview === picture.main ? [picture.main] : [picture.preview, picture.main];
+                return {
+                    loading: assets.some(function (asset) { return !asset.src && !asset.failed; }),
+                    bytes: assets.reduce(function (sum, asset) { return sum + asset.bytes; }, 0),
+                    total: assets.every(function (asset) { return asset.total !== null && !asset.failed; })
+                        ? assets.reduce(function (sum, asset) { return sum + asset.total; }, 0) : null
+                };
+            });
+            figures.forEach(function (figure) {
+                var picture = pictures[figure.index];
+                var state = states[figure.index];
+                setImage(figure.preview, picture.preview === picture.main ? '' : picture.preview.src);
+                var source = picture.main.src;
+                if (source && figure.photo.getAttribute('src') !== source) { figure.photo.src = source; }
+                figure.root.toggleAttribute('data-artwork-ready', Boolean(source));
+                figure.photo.setAttribute('aria-hidden', String(!source));
+                figure.transfer.hidden = !state.loading && !picture.main.failed;
+                figure.label.textContent = picture.main.failed ? (fa ? 'تصویر باز نشد' : 'Artwork unavailable') :
+                    (fa ? 'دریافت تصویر' : 'Downloading artwork');
+                figure.readout.textContent = state.loading ? (state.total > 0 ? percentFormat.format(Math.floor(state.bytes * 100 / state.total) / 100) :
+                    (state.bytes ? bytesFormat.format(state.bytes) + (fa ? ' بایت' : ' bytes') : '')) : '';
+                setDownload(figure.meter, state);
+            });
+            previews.forEach(function (preview, index) {
+                var picture = pictures[index];
+                setImage(preview.photo, picture.preview.src || picture.main.src);
+                setDownload(preview.meter, states[index]);
+            });
+            if (multiple && timer === undefined) { schedule(); }
+        }
 
         var active = 0;
         var timer;
@@ -4840,7 +5013,8 @@
             var offset = String(remaining / interval);
             progressLine.style.strokeDashoffset = offset;
             var focused = document.activeElement;
-            if ((!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
+            var artwork = pictures[active]?.main;
+            if ((artwork?.src || artwork?.failed) && (!drawer || drawer.isOpen()) && !drag && playing && !reduced.matches && wide.matches && onScreen &&
                 !document.hidden && !hovering && (focused === rotation || !region.contains(focused))) {
                 startedAt = performance.now();
                 progressAnimation = progressLine.animate?.([{ strokeDashoffset: offset }, { strokeDashoffset: '0' }],
@@ -4980,12 +5154,14 @@
             syncRotation();
         }
 
-        select(0, false);
-        if (drawer) { drawer.ready(articles[0].querySelector('.dg-story-image')); }
+        if (drawer) { drawer.ready(); }
         else {
             shell.prepend(region);
             shell.classList.add('dg-has-login-stories');
         }
+        syncImages();
+        select(0, false);
+        new MutationObserver(syncImages).observe(document.body, { attributes: true, attributeFilter: ['data-dg-theme'] });
     }
 
 
@@ -5213,6 +5389,7 @@
         user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
         userPlus: 'M15 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM19 8v6m-3-3h6',
         chevronDown: 'M6 9l6 6 6-6',
+        dragGrip: 'M9 7h.01 M15 7h.01 M9 12h.01 M15 12h.01 M9 17h.01 M15 17h.01',
         trash: 'M4 6h16M9 6V3h6v3m3 0-1 15H7L6 6m4 4v7m4-7v7',
         home: 'M3 11l9-8 9 8 M5 10v10h14V10 M10 20v-6h4v6',
         email: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z M3 7l9 6 9-6',
@@ -5662,13 +5839,10 @@
                     document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(function (node) {
                         urls.add(node.src || node.href);
                     });
-                    document.querySelectorAll('.dg-story-image').forEach(function (image) {
-                        urls.add(image.dataset.lightImage);
-                        urls.add(image.dataset.darkImage);
-                    });
                     performance.getEntriesByType('resource').forEach(function (entry) {
                         if (['css', 'script', 'link'].includes(entry.initiatorType) ||
-                            entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/')) {
+                            (entry.initiatorType === 'img' &&
+                                entry.name.startsWith(window.location.origin + '/wp-content/plugins/digitalogic-wp/assets/images/'))) {
                             urls.add(entry.name);
                         }
                     });
@@ -5969,6 +6143,53 @@
         });
     }
 
+    function fitLoginOptionsToViewport() {
+        var shell = document.querySelector('body.login #login > .dg-digits-login-shell');
+        if (!shell || shell.dataset.dgViewportFit) { return; }
+        shell.dataset.dgViewportFit = 'true';
+        var viewport = window.visualViewport;
+        var frame = 0;
+        var reserve = ['data-dg-reserve-phone', 'data-dg-reserve-passkey'];
+
+        function measure() {
+            frame = 0;
+            var visualHeight = viewport?.scale === 1 && viewport.height < document.documentElement.clientHeight - 1
+                ? Math.floor(viewport.height) + 'px' : '';
+            document.body.style.setProperty('--dg-login-viewport-height', visualHeight);
+
+            var form = shell.querySelector('form.digloginpage.digits_form_index_section');
+            var panel = form?.closest('.digits-form_container') || form;
+            var scrollTop = panel?.scrollTop || 0;
+            reserve.forEach(function (attribute) { shell.removeAttribute(attribute); });
+            if (!panel || !isVisibleElement(form)) { return; }
+
+            var shouldReserve = [
+                callVerificationEnabled(shell) && Boolean(form.querySelector('.dg-phone-channels')),
+                isVisibleElement(form.querySelector('.dg-passkey-options'))
+            ];
+            reserve.forEach(function (attribute, index) {
+                if (!shouldReserve[index]) { return; }
+                shell.setAttribute(attribute, '');
+                if (panel.scrollHeight > panel.clientHeight) { shell.removeAttribute(attribute); }
+            });
+            if (scrollTop && panel.scrollTop !== scrollTop) { panel.scrollTop = scrollTop; }
+        }
+
+        function schedule() {
+            if (!frame) { frame = window.requestAnimationFrame(measure); }
+        }
+
+        var formContainer = shell.querySelector(':scope > :is(.digits-form_container, form)') || shell;
+        new MutationObserver(schedule).observe(formContainer, {
+            subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'open', 'class']
+        });
+        if (window.ResizeObserver) { new ResizeObserver(schedule).observe(shell); }
+        viewport?.addEventListener('resize', schedule);
+        window.addEventListener('resize', schedule);
+        document.fonts?.ready.then(schedule);
+        schedule();
+    }
+
     function observeAuthChallenges() {
         var shell = document.querySelector('.dg-digits-login-shell');
         if (!shell) { return; }
@@ -6076,6 +6297,7 @@
         routeBrandedAuth?.();
         animateBrandedAuthSteps();
         observeAuthChallenges();
+        fitLoginOptionsToViewport();
         enforceDigitsRegisterMobile();
         scheduleDigitsAjaxFailureGuard();
         bindLoadingStates();

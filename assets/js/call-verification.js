@@ -3,6 +3,11 @@
 
 	const config = window.DigitalogicCallVerification || {};
 	const messages = config.messages || {};
+	const tehranTimeZone = ['Asia/Tehran', 'Iran'].includes(Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+	function displayCallNumber(number, country) {
+		return country === 'IR' || tehranTimeZone ? number.replace(/^\+98\s*(?=[1-9])/, '0') : number;
+	}
 
 	async function request(url, options = {}) {
 		const response = await window.fetch(url, {
@@ -103,6 +108,7 @@
 		const dial = widget.querySelector('[data-call-dial]');
 		const dialNumber = dial?.querySelector('[data-call-dial-number]') || dial;
 		const callerSummary = widget.querySelector('[data-call-caller]');
+		const callerNumber = callerSummary?.querySelector('[data-call-caller-number]');
 		const lanAction = widget.closest('.dg-digits-login-shell')?.querySelector('[data-call-lan-action]');
 		const publicDial = { href: dial?.getAttribute('href'), display: dialNumber?.textContent };
 		const lanNote = widget.querySelector('[data-call-lan-note]');
@@ -530,11 +536,12 @@
 				if (dialNumber && data.dial) {
 					const display = String(data.dial.display || '');
 					const tel = String(data.dial.tel || '');
-					if (display) { dialNumber.textContent = display; }
-				if (dial.matches('a') && /^\+?[0-9]+$/.test(tel)) {
+					if (display) { dialNumber.textContent = displayCallNumber(display, data.request_country); }
+					if (dial.matches('a') && /^\+?[0-9]+$/.test(tel)) {
 						dial.setAttribute('href', `tel:${tel}`);
 					}
 				}
+				if (callerNumber) { callerNumber.textContent = displayCallNumber(phone.value, data.request_country); }
 				expiresAt = Date.now() + (Math.max(0, Number(data.expires_in) || 0) * 1000);
 				if (countdown) {
 					countdown.hidden = false;
@@ -606,7 +613,7 @@
 						phone.value = internal ? '' : value;
 						delivery = internal ? 'extension' : 'incoming';
 						if (callerSummary) {
-							callerSummary.querySelector('[data-call-caller-number]').textContent = phone.value;
+							if (callerNumber) { callerNumber.textContent = displayCallNumber(phone.value); }
 							callerSummary.hidden = !phone.value;
 						}
 						if (dial && dialNumber) {

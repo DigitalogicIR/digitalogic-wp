@@ -150,6 +150,14 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertSame('https://digitalogic.test/' . rest_get_url_prefix() . '/digitalogic/v1/login-slides', $config['loginSlidesUrl']);
         $this->assertSame(array(), $config['rememberedAccount']);
         $this->assertTrue($config['showLoginThemeSwitcher']);
+        $this->assertTrue($config['loginStoryNavThumbs']);
+
+        $GLOBALS['digitalogic_test_options']['digitalogic_login_story_nav_thumbnails'] = '0';
+        try {
+            $this->assertFalse($method->invoke(null, true, false)['loginStoryNavThumbs']);
+        } finally {
+            unset($GLOBALS['digitalogic_test_options']['digitalogic_login_story_nav_thumbnails']);
+        }
     }
 
     public function test_login_reuses_only_an_existing_session_on_ordinary_entry(): void {
@@ -178,6 +186,8 @@ final class AdminBrandingAuthTest extends TestCase {
         $this->assertSame($rest, $socket(['locale' => 'fa_IR'])['slides']);
         $this->assertSame(['components', 'pcb', 'sourcing'], array_column($rest, 'id'));
         $this->assertStringEndsWith('/components-aluminum-light.webp', $rest[0]['image_light']);
+        $this->assertStringEndsWith('/components-aluminum-light-thumb.webp', $rest[0]['thumbnail_light']);
+        $this->assertStringEndsWith('/components-thumb.webp', $rest[0]['thumbnail_dark']);
         $this->assertNotSame(array_column($rest, 'title'), array_column($socket(['locale' => 'en_US'])['slides'], 'title'));
 
         $custom = [['image' => '/custom.webp', 'alt' => 'معرفی']];
