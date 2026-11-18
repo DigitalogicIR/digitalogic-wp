@@ -88,6 +88,7 @@ $GLOBALS['digitalogic_test_registered_post_types'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_post_type_meta_caps'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_registered_post_meta'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_meta_boxes'] = array(); // phpcs:ignore
+$GLOBALS['digitalogic_test_meta_box_calls'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_current_screen'] = (object) array( 'post_type' => 'product' ); // phpcs:ignore
 $GLOBALS['digitalogic_test_autosaves'] = array(); // phpcs:ignore
 $GLOBALS['digitalogic_test_revisions'] = array(); // phpcs:ignore
@@ -435,13 +436,15 @@ function get_current_screen() {
  * @return void
  */
 function add_meta_box( $id, $title, $callback, $screen = null, $context = 'advanced', $priority = 'default' ) {
-	$GLOBALS['digitalogic_test_meta_boxes'][ $id ] = array(
+	$meta_box = array(
 		'title'    => $title,
 		'callback' => $callback,
 		'screen'   => is_object( $screen ) && isset( $screen->id ) ? $screen->id : $screen,
 		'context'  => $context,
 		'priority' => $priority,
 	);
+	$GLOBALS['digitalogic_test_meta_boxes'][ $id ] = $meta_box;
+	$GLOBALS['digitalogic_test_meta_box_calls'][]  = array( 'id' => $id ) + $meta_box;
 }
 
 /**

@@ -3526,7 +3526,7 @@ final class Digitalogic_Currency_Admin_Async {
 
 	/** Show a durable enqueue failure after an ACF redirect instead of false success. */
 	public function render_admin_issue() {
-		if ( ! $this->can_manage_currency() ) {
+		if ( ! $this->can_manage_currency() || ! $this->is_currency_admin_page() ) {
 			return;
 		}
 		$user_id = function_exists( 'get_current_user_id' ) ? (int) get_current_user_id() : 0;

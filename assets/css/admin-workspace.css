@@ -1,0 +1,289 @@
+/* Select only known announcements and context-specific setup messages. */
+.dg-workspace-admin #rediscache .sidebar-column:has(> .section-pro),
+.dg-workspace-admin #acf-to-rest-api-settings p:has(.acf-to-rest-api-donation-button),
+.dg-workspace-admin .wt-pklist-promo-banner,
+.dg-workspace-admin .notice.digitsnews,
+.dg-workspace-admin .notice.banner_after_bulk_print_ipc,
+.dg-workspace-admin .wppd-parsigate-install-notice,
+.dg-workspace-admin #zerospam-promo-wrapper,
+.dg-workspace-dashboard #woocommerce_dashboard_status .extensions-without-subscription,
+.dg-workspace-admin .woocommerce-message:has(a[href*="wc-hide-notice="][href*="woocommerce_deposits_activation"]),
+.dg-workspace-admin #rocket-notice-rocket_update_notice,
+.dg-workspace-admin #rocket-notice-rocketcdn_install_notice,
+.dg-workspace-admin:not(.dg-workspace-show-support-update) .notice:has(a[href*="fluentsupport_pro_check_update="]),
+.dg-workspace-admin:not(.dg-workspace-show-cleantalk-setup) #cleantalk_notice_key_is_empty,
+.dg-workspace-admin:not(.dg-workspace-show-zero-spam-setup) .notice:has(a[href*="page=wordpress-zero-spam-settings"][href*="subview=zerospam"]),
+.dg-workspace-hide-rank-math-setup #new_post_type.rank-math-notice {
+	display: none !important;
+}
+
+.dg-workspace-dashboard #dashboard-widgets .postbox {
+	min-width: 0;
+}
+
+.dg-workspace-links {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin: 0;
+}
+
+.dg-workspace-links li {
+	margin: 0;
+}
+
+.dg-workspace-links a {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 44px;
+	box-sizing: border-box;
+	padding: 8px 12px;
+	border: 1px solid var(--dg-border, #c3c4c7);
+	border-radius: 8px;
+	text-decoration: none;
+}
+
+.dg-workspace-links a:hover {
+	border-color: currentColor;
+	text-decoration: underline;
+}
+
+.dg-workspace-page {
+	max-width: 1080px;
+}
+
+.dg-workspace-announcements {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+	gap: 14px;
+}
+
+.dg-workspace-panel {
+	min-width: 0;
+	padding: 16px 18px;
+	border: 1px solid var(--dg-border, #c3c4c7);
+	border-radius: 12px;
+	background: var(--dg-panel-strong, #fff);
+}
+
+[data-dg-theme="dark"] .dg-workspace-panel {
+	background: var(--dg-panel-strong, #1d2327);
+}
+
+.dg-workspace-page > .dg-workspace-panel {
+	margin-block: 16px;
+}
+
+.dg-workspace-panel h2 {
+	margin-block: 0 8px;
+}
+
+.dg-patris-disclosure > summary {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 4px 12px;
+	padding-block: 10px;
+	cursor: pointer;
+	list-style: none;
+}
+
+.dg-patris-disclosure > summary::-webkit-details-marker {
+	display: none;
+}
+
+.dg-patris-disclosure > summary::after {
+	content: "";
+	grid-column: 2;
+	grid-row: 1 / span 2;
+	inline-size: 7px;
+	block-size: 7px;
+	border: solid currentColor;
+	border-width: 0 2px 2px 0;
+	transform: rotate(-45deg);
+	margin-inline-end: 3px;
+}
+
+.rtl .dg-patris-disclosure > summary::after {
+	transform: rotate(135deg);
+}
+
+.dg-patris-disclosure[open] > summary::after {
+	transform: rotate(45deg);
+}
+
+.dg-patris-disclosure[open] > summary .dg-patris-preview {
+	display: none;
+}
+
+.dg-patris-summary-heading,
+.dg-patris-preview,
+.dg-patris-product {
+	display: flex;
+	align-items: baseline;
+	gap: 6px 12px;
+	min-inline-size: 0;
+}
+
+.dg-patris-summary-heading {
+	flex-wrap: wrap;
+}
+
+.dg-patris-count,
+.dg-patris-product-id {
+	color: var(--dg-text-soft, #50575e);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.dg-patris-ellipsis {
+	overflow: hidden;
+	min-inline-size: 0;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dg-patris-disclosure-body {
+	padding-block: 4px 12px;
+}
+
+.dg-patris-products {
+	display: grid;
+	gap: 6px;
+	margin: 0;
+}
+
+.dg-patris-products li {
+	min-inline-size: 0;
+	margin: 0;
+}
+
+.dg-patris-product {
+	justify-content: space-between;
+	padding: 7px 10px;
+	border: 1px solid var(--dg-border, #c3c4c7);
+	border-radius: 6px;
+	text-decoration: none;
+}
+
+a.dg-patris-product:hover .dg-patris-ellipsis {
+	text-decoration: underline;
+}
+
+.dg-patris-product:focus-visible,
+.dg-patris-disclosure > summary:focus-visible {
+	outline: 2px solid var(--dg-accent-strong, #2271b1);
+	outline-offset: 2px;
+}
+
+#patris-mappings .dg-patris-disclosure + .dg-patris-disclosure {
+	border-block-start: 1px solid var(--dg-border, #c3c4c7);
+}
+
+#patris-mappings .dg-patris-products {
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+}
+
+#patris-mappings .dg-patris-ellipsis {
+	overflow-wrap: anywhere;
+	white-space: normal;
+}
+
+.dg-workspace-panel .digitalogic-admin-health {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+	gap: 12px;
+}
+
+.dg-workspace-panel .digitalogic-admin-health__item {
+	display: grid;
+	align-content: start;
+	gap: 4px;
+}
+
+.dg-workspace-panel .digitalogic-admin-health__label {
+	color: var(--dg-text-soft, #50575e);
+}
+
+@media (max-width: 782px) {
+	body.dg-workspace-dashboard #wpbody #wpbody-content #dashboard-widgets.columns-2 .postbox-container {
+		float: none;
+		width: 100%;
+	}
+}
+
+@media (max-width: 340px) {
+	.dg-workspace-links {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (min-width: 783px) and (max-width: 1220px) {
+	.dg-workspace-admin #wpadminbar #wp-admin-bar-root-default > :is(
+		#wp-admin-bar-woocommerce-site-visibility-badge,
+		#wp-admin-bar-digitalogic,
+		#wp-admin-bar-rank-math,
+		#wp-admin-bar-fluent_form
+	) {
+		display: none;
+	}
+}
+
+.dg-announcement-tabs {
+	margin-block: 18px;
+}
+
+.dg-announcement-group,
+.dg-announcement-updates {
+	margin-block: 20px;
+}
+
+.dg-announcement-group h2,
+.dg-announcement-group h3 {
+	margin-block: 0 10px;
+}
+
+.dg-announcement-update-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+	gap: 4px 20px;
+	margin: 0;
+}
+
+.dg-announcement-update-list li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 4px 14px;
+	margin: 0;
+	padding-block: 9px;
+	border-block-end: 1px solid var(--dg-border, #c3c4c7);
+}
+
+.dg-announcement-update-list li bdi:last-child {
+	color: var(--dg-text-soft, #50575e);
+}
+
+
+/* Preserve the Digits controls while fitting them to WooCommerce's sidebar. */
+#digitalogic-order-tracking:not(:has(.digits-tracking-wrapper)) {
+	display: none;
+}
+
+#digitalogic-order-tracking .digits-tracking-wrapper {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 100%;
+	margin: 0;
+}
+
+#digitalogic-order-tracking :is(input[type="text"], button) {
+	box-sizing: border-box;
+	max-width: 100%;
+}
+
+#digitalogic-order-tracking .tracking-row {
+	margin-block: 10px;
+}

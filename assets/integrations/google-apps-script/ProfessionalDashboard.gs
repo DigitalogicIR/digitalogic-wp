@@ -470,7 +470,7 @@ function digitalogicBuildHelp_(sheet) {
     ['Identity', 'Product matching uses exact, case-sensitive Product Code. A woo:<id> display key keeps unmatched WooCommerce rows visible; SKU is never fallback identity.'],
     ['Pricing', 'Final price combines foreign price, weight-based freight, FX conversion, and profit, then applies one final nearest-half-up step using the shared rounding-digits setting. Missing inputs stay visibly blocked.'],
     ['Publishing', 'Shipping assignment does not mean readiness. Missing Code, weight, price, images, descriptions, categories, or variation review remains a stop condition.'],
-    ['Support', 'Digitalogic: https://digitalogic.ir  |  Automation: https://automation.digitalogic.ir  |  GitHub issue: atomicdeploy/digitalogic-wp#99'],
+    ['Support', 'Digitalogic: https://digitalogic.ir  |  Automation: https://automation.digitalogic.ir  |  GitHub issue: DigitalogicIR/digitalogic-wp#99'],
   ];
   digitalogicSection_(sheet, 'A5:H5', 'QUICK REFERENCE | راهنمای سریع', colors.blue);
   sheet.getRange(6, 1, rows.length, 2).setValues(rows);

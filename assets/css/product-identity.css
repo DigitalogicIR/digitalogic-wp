@@ -118,6 +118,11 @@ button.digitalogic-product-code-item:focus-visible {
 	width: 1rem;
 }
 
+.digitalogic-product-code-item__icon .digitalogic-barcode-icon {
+	stroke-linecap: butt;
+	stroke-linejoin: miter;
+}
+
 .digitalogic-product-code-item i {
 	color: var(--wd-text-color, #5f6b7a);
 	font-size: 0.9em;

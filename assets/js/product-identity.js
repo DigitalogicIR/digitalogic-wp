@@ -9,17 +9,16 @@
 		return value === undefined || value === null ? '' : String(value).trim();
 	}
 
-	function productCodeIcon() {
+	function productCodeIcon(pathData) {
 		var namespace = 'http://www.w3.org/2000/svg';
 		var svg = document.createElementNS(namespace, 'svg');
-		var bookmark = document.createElementNS(namespace, 'path');
-		var detail = document.createElementNS(namespace, 'path');
+		var bars = document.createElementNS(namespace, 'path');
+		svg.setAttribute('class', 'digitalogic-barcode-icon');
 		svg.setAttribute('viewBox', '0 0 24 24');
 		svg.setAttribute('focusable', 'false');
 		svg.setAttribute('aria-hidden', 'true');
-		bookmark.setAttribute('d', 'M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3V5a2 2 0 0 1 2-2Z');
-		detail.setAttribute('d', 'M9 8h6M9 12h4');
-		svg.append(bookmark, detail);
+		bars.setAttribute('d', text(pathData));
+		svg.append(bars);
 		return svg;
 	}
 
@@ -117,7 +116,7 @@
 				var icon = document.createElement('span');
 				icon.className = 'digitalogic-product-code-item__icon';
 				icon.setAttribute('aria-hidden', 'true');
-				icon.appendChild(productCodeIcon());
+				icon.appendChild(productCodeIcon(settings.barcodeIconPath));
 				itemBody = document.createElement('span');
 				itemBody.className = 'digitalogic-product-code-item__body';
 				itemName = document.createElement('span');
