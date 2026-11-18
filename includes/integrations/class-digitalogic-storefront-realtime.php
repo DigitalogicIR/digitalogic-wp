@@ -53,6 +53,7 @@ final class Digitalogic_Storefront_Realtime {
 
 	/** Register the public read-only route and storefront client. */
 	private function __construct() {
+		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-page-cache.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/class-digitalogic-storefront-invalidation-outbox.php';
 		require_once DIGITALOGIC_PLUGIN_DIR . 'includes/integrations/class-digitalogic-storefront-product-fragments.php';
 		Digitalogic_Storefront_Invalidation_Outbox::register();

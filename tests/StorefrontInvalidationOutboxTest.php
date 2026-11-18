@@ -10,6 +10,7 @@
 use PHPUnit\Framework\TestCase;
 
 require_once dirname( __DIR__ ) . '/includes/class-digitalogic-storefront-invalidation-outbox.php';
+require_once dirname( __DIR__ ) . '/includes/integrations/class-digitalogic-storefront-page-cache.php';
 
 /** Model SQL's exact-value predicate, absent from the general WPDB fixture. */
 class Digitalogic_Invalidation_Test_WPDB extends Digitalogic_Test_WPDB {
@@ -112,7 +113,7 @@ final class StorefrontInvalidationOutboxTest extends TestCase {
 	public function test_committed_metadata_coalesces_and_generation_survives_ack(): void {
 		$first  = $this->stage_commit();
 		$second = $this->stage_commit();
-		$this->assertSame( array( 'generation', 'token', 'staged_at', 'pending' ), array_keys( $second ) );
+		$this->assertSame( array( 'generation', 'token', 'staged_at', 'pending', 'cache_product_ids' ), array_keys( $second ) );
 		$this->assertSame( 2, $second['generation'] );
 		$this->assertNotSame( $first['token'], $second['token'] );
 		$this->assertTrue( Digitalogic_Storefront_Invalidation_Outbox::dispatch() );
@@ -129,6 +130,34 @@ final class StorefrontInvalidationOutboxTest extends TestCase {
 		);
 		$this->assertFalse( $GLOBALS['digitalogic_test_options'][ Digitalogic_Storefront_Invalidation_Outbox::OPTION ]['pending'] );
 		$this->assertSame( 3, $this->stage_commit()['generation'] );
+	}
+
+	/** A newer transaction cannot discard an older unpurged product's HTML. */
+	public function test_pending_cache_coverage_survives_coalescing(): void {
+		$receiver = Digitalogic_Product_Sync_Receiver::instance();
+		$property = new ReflectionProperty( $receiver, 'materializer_committed_snapshots' );
+		$property->setValue( $receiver, array( array( 'product_id' => 123 ) ) );
+		$this->assertSame( array( 123 ), $this->stage_commit()['cache_product_ids'] );
+		$property->setValue( $receiver, array( array( 'product_id' => 456 ) ) );
+		$this->assertSame( array( 123, 456 ), $this->stage_commit()['cache_product_ids'] );
+		$property->setValue( $receiver, array() );
+	}
+
+	/** A missing cache provider after process loss must retain recovery work. */
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	#[\PHPUnit\Framework\Attributes\PreserveGlobalState( false )]
+	public function test_cache_failure_after_restart_retains_marker_without_publication(): void {
+		define( 'WP_CACHE', true );
+		$this->queue_verified_fixture();
+		$this->stage_commit();
+		( new ReflectionClass( Digitalogic_Product_Sync_Receiver::class ) )->setStaticPropertyValue( 'instance', null );
+		$this->assertFalse( Digitalogic_Storefront_Invalidation_Outbox::dispatch() );
+		$record = $GLOBALS['digitalogic_test_options'][ Digitalogic_Storefront_Invalidation_Outbox::OPTION ];
+		$this->assertTrue( $record['pending'] );
+		$this->assertSame( array( 123 ), $record['cache_product_ids'] );
+		$this->assertArrayNotHasKey( 'digitalogic_panel_events', $GLOBALS['digitalogic_test_options'] );
+		$this->assertSame( array(), $this->redis->published );
+		$this->assertNotFalse( wp_next_scheduled( Digitalogic_Storefront_Invalidation_Outbox::RETRY_HOOK, array() ) );
 	}
 
 	/** An unavailable downstream queue cannot consume a pending marker. */

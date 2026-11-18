@@ -662,6 +662,18 @@ class Digitalogic_Product_Sync_Receiver {
 		return ! empty( $this->materializer_committed_snapshots );
 	}
 
+	/** Exact Woo IDs whose committed HTML must be invalidated, including recovery. */
+	public function pending_public_product_ids() {
+		$ids = array();
+		foreach ( $this->materializer_committed_snapshots as $snapshot ) {
+			$id = absint( $snapshot['product_id'] ?? 0 );
+			if ( $id > 0 ) {
+				$ids[ $id ] = $id;
+			}
+		}
+		return array_values( $ids );
+	}
+
 	/**
 	 * Queue one assignment event until the outer pricing transaction commits.
 	 *

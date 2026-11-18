@@ -410,7 +410,12 @@ final class ProductSyncReceiverTest extends TestCase {
 		$status = $receiver->get_status();
 		$this->assertSame( 'synchronous', $status['delivery_mode'] );
 		$this->assertFalse( $status['scheduled_reconciliation'] );
-		$this->assertSame( array(), $GLOBALS['digitalogic_test_scheduled_events'] );
+		// A failed Redis wake may schedule notification delivery, never a
+		// replay of the already committed product/business operation.
+		foreach ( $GLOBALS['digitalogic_test_scheduled_events'] as $event ) {
+			$this->assertSame( 'digitalogic_panel_event_wake_retry_v1', $event['hook'] );
+			$this->assertSame( '', $event['recurrence'] );
+		}
 	}
 
 	/** Legacy product-sync watchdog schedules are removed and never recreated. */

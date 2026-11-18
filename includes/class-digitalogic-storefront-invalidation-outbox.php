@@ -58,7 +58,13 @@ final class Digitalogic_Storefront_Invalidation_Outbox {
 			'staged_at'  => gmdate( 'Y-m-d\TH:i:s\Z' ),
 			'pending'    => true,
 		);
-		$raw    = maybe_serialize( $record );
+		// Preserve older unacknowledged cache coverage when transactions coalesce.
+		$ids = ! empty( $previous['pending'] ) ? ( $previous['cache_product_ids'] ?? array() ) : array();
+		if ( class_exists( 'Digitalogic_Product_Sync_Receiver', false ) ) {
+			$ids = array_merge( $ids, Digitalogic_Product_Sync_Receiver::instance()->pending_public_product_ids() );
+		}
+		$record['cache_product_ids'] = array_values( array_unique( array_map( 'absint', $ids ) ) );
+		$raw                         = maybe_serialize( $record );
 		// phpcs:disable WordPress.DB.DirectDatabaseQuery -- Same SQL transaction as the canonical owner; no WordPress option hooks or precommit cache publication.
 		$written = null === $row
 			? $wpdb->insert(
@@ -133,6 +139,14 @@ final class Digitalogic_Storefront_Invalidation_Outbox {
 					return true;
 				}
 				try {
+					// Purge before publishing the cursor: fresh HTML must not contain
+					// old values alongside an already-current event cursor.
+					if ( ! empty( $record['cache_product_ids'] ) && (
+						! class_exists( 'Digitalogic_Storefront_Page_Cache' )
+						|| ! Digitalogic_Storefront_Page_Cache::purge( $record['cache_product_ids'] )
+					) ) {
+						continue;
+					}
 					$result = Digitalogic_Panel::record_event_result(
 						'catalog.updated',
 						array(
@@ -216,6 +230,16 @@ final class Digitalogic_Storefront_Invalidation_Outbox {
 		$record = maybe_unserialize( $raw );
 		if ( ! is_array( $record ) || ! is_int( $record['generation'] ?? null ) || $record['generation'] < 1 || ! is_bool( $record['pending'] ?? null ) || 1 !== preg_match( '/\Asha256:[a-f0-9]{64}\z/D', (string) ( $record['token'] ?? '' ) ) || 1 !== preg_match( '/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/D', (string) ( $record['staged_at'] ?? '' ) ) ) {
 			return self::error( 'record_invalid' );
+		}
+		if ( isset( $record['cache_product_ids'] ) ) {
+			if ( ! is_array( $record['cache_product_ids'] ) || ! array_is_list( $record['cache_product_ids'] ) ) {
+				return self::error( 'record_invalid' );
+			}
+			foreach ( $record['cache_product_ids'] as $id ) {
+				if ( ! is_int( $id ) || $id < 1 ) {
+					return self::error( 'record_invalid' );
+				}
+			}
 		}
 		return $record;
 	}
