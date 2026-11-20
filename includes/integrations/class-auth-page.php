@@ -14,9 +14,22 @@ final class Digitalogic_Plugin_Auth_Routes {
 
 	/** Public providers that do not require an MX lookup. */
 	public const EMAIL_PROVIDERS = array(
-		'gmail.com', 'googlemail.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com',
-		'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com',
-		'rocketmail.com', 'aol.com', 'proton.me', 'protonmail.com',
+		'gmail.com',
+		'googlemail.com',
+		'hotmail.com',
+		'outlook.com',
+		'live.com',
+		'msn.com',
+		'icloud.com',
+		'me.com',
+		'mac.com',
+		'yahoo.com',
+		'yahoo.co.uk',
+		'ymail.com',
+		'rocketmail.com',
+		'aol.com',
+		'proton.me',
+		'protonmail.com',
 	);
 
 	private const ACCOUNT_HINT_COOKIE = 'digitalogic_account_hint';
@@ -664,7 +677,7 @@ final class Digitalogic_Plugin_Auth_Routes {
 		do_action( 'digitalogic_branded_login_content' );
         echo '</div>';
 
-        self::render_login_footer( $logged_out );
+		self::render_login_footer( $logged_out );
         exit;
     }
 

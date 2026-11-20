@@ -136,43 +136,13 @@ jobs:
         NODE_PATH="$browser_tools/node_modules" node tests/passwordless-action.browser.cjs
         NODE_PATH="$browser_tools/node_modules" node tests/admin-order-workspace.browser.cjs
         NODE_PATH="$browser_tools/node_modules" node --test tests/woodmart-search.browser.cjs
+        NODE_PATH="$browser_tools/node_modules" node --test tests/storefront-account-activity.test.cjs
+        NODE_PATH="$browser_tools/node_modules" node tests/storefront-account-activity.browser.cjs
 
     - name: Reject non-synthetic mobile fixtures
       run: |
-        python - <<'PY'
-        import pathlib
-        import re
-        import sys
-
-        excluded = {'.git', 'vendor', 'node_modules'}
-        # Existing SMS CLI examples plus the PBX test number; all are overtly synthetic.
-        synthetic_mobiles = {'09120000000', '09120000001', '09123456789'}
-        digit_map = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
-        candidate = re.compile(r'(?<!\d)(?:\+98|0098|98|0)?9\d{9}(?!\d)')
-        violations = []
-
-        for path in pathlib.Path('.').rglob('*'):
-          if not path.is_file() or any(part in excluded for part in path.parts):
-            continue
-          try:
-            content = path.read_text(encoding='utf-8').translate(digit_map)
-          except (OSError, UnicodeDecodeError):
-            continue
-          for match in candidate.finditer(content):
-            digits = re.sub(r'\D', '', match.group())
-            if digits.startswith('0098'):
-              digits = digits[4:]
-            elif digits.startswith('98'):
-              digits = digits[2:]
-            if len(digits) == 10 and digits.startswith('9'):
-              digits = '0' + digits
-            if digits not in synthetic_mobiles:
-              violations.append(f'{path}:{content.count(chr(10), 0, match.start()) + 1}')
-
-        if violations:
-          print('Non-synthetic mobile fixture found at: ' + ', '.join(violations), file=sys.stderr)
-          sys.exit(1)
-        PY
+        python -m unittest discover -s tests -p test_synthetic_mobile_fixture_guard.py
+        python .github/scripts/check_synthetic_mobile_fixtures.py
 
     - name: Run PHPUnit tests
       run: composer test

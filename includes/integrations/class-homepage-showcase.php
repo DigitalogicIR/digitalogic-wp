@@ -408,7 +408,7 @@ final class Digitalogic_Homepage_Showcase {
 	 * @return string
 	 */
 	private function product_card( $product, $compact = false ) {
-		if ( ! $product instanceof WC_Product ) {
+		if ( ! $product instanceof WC_Product || ( class_exists( 'Digitalogic_Storefront_Catalog' ) && ! Digitalogic_Storefront_Catalog::product_has_public_title( $product ) ) ) {
 			return '';
 		}
 

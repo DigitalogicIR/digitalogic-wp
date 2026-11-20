@@ -1,0 +1,69 @@
+{
+  "observed_at_utc": "2026-11-15",
+  "status": "deployed_schema_and_activated_no_setup_sms",
+  "source_commit": "6ec7e622b3e8b58b5006a8b0c0c9a08b6d2c543a",
+  "canonical_main_reviewed": "7ad2763",
+  "provider_template": {
+    "id": 757947,
+    "status": "approved_owner_verified",
+    "evidence_source": "release owner verified saved provider details",
+    "body": "کد ورود دیجیتالاجیک: #CODE#\nq3HQy4X3L3v\ndigitalogic.ir",
+    "parameter": "CODE",
+    "enabled": true
+  },
+  "production_preflight": {
+    "identity_schema": "2",
+    "format_schema": null,
+    "format_column_present": false,
+    "android_option_exists": false,
+    "android_enabled": false,
+    "legacy_provider_ready": true
+  },
+  "drift_review": {
+    "smsir_difference": "comments, whitespace and optional trailing commas only",
+    "normalized_executable_tokens_match": true,
+    "other_existing_files_match_base": true,
+    "main_updates_touch_rollout_paths": false
+  },
+  "archive_sha256": "346b81f4809292d66abd134266f734d210c8d2bcf973ee3aa07a1b2699d1bf89",
+  "files_in_dependency_order": {
+    "laravel/app/Services/MobileOtpSmsFormat.php": {
+      "expected_live_sha256": null,
+      "candidate_sha256": "987a5b997ff55f9d7c2d5a6bf6cd268d6f3e46d297b8bfdb9c79861f5088d149"
+    },
+    "includes/integrations/class-smsir-integration.php": {
+      "expected_live_sha256": "0a43f64290b9e6ddf7d5ea897f47e669661a549bb27d648f495956a96a1fe428",
+      "candidate_sha256": "5c3bb2f42e5d6ee4b5aa8f13f9871e69ecfc39dfa7075bec7215e80348f4b489"
+    },
+    "laravel/app/Services/MobileIdentityStore.php": {
+      "expected_live_sha256": "070a5757886e693c72266a2a19b634762a869522816438d6dd7012f91b411e4f",
+      "candidate_sha256": "a611cc7e341442a573a7fff66bef26435acb4616d25635a22f4cbdac67c4eab0"
+    },
+    "laravel/app/Http/Controllers/MobileIdentityController.php": {
+      "expected_live_sha256": "bd3021ff741a70425196ed308c00e7e93ee75b569fe472898cf485a8b88b7387",
+      "candidate_sha256": "c3a2fde3aab3b88a8b45ce4bd34deaa9777a3043d0dace464158d20e19df5162"
+    },
+    "laravel/app/Http/Controllers/MobileCatalogController.php": {
+      "expected_live_sha256": "eacfc9f38c5067ad72365c557818723ec03e4d69055c3c2244564b2f6fe9e52d",
+      "candidate_sha256": "3758f17eadd7576e5a5066d82e24d1290a826f76f63904a4ba771ecd8ebb10a8"
+    }
+  },
+  "validation": {
+    "related_tests": 27,
+    "assertions": 207,
+    "ci_run": 43595444776,
+    "ci_conclusion": "success",
+    "real_sms_sent": 0
+  },
+  "activation_allowed": true,
+  "production_readback": {
+    "format_schema": "1",
+    "format_column_present": true,
+    "android_enabled": true,
+    "public_capability": true,
+    "legacy_template_id": 289689,
+    "legacy_parameter_mapping": "OTP:%OTP%",
+    "legacy_settings_unchanged": true,
+    "backup": "/var/backups/digitalogic-android-sms.gazr_0re"
+  }
+}

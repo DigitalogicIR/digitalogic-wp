@@ -1639,6 +1639,7 @@ final class Digitalogic_Call_Verification {
 	 * Describe the public inbound number. Keep the PBX's trusted DID checks
 	 * independent of the display setting.
 	 *
+	 * @param string|null $country Country used only for the public number presentation.
 	 * @return array{tel:string, display:string}
 	 */
 	private static function public_dial( ?string $country = null ): array {
